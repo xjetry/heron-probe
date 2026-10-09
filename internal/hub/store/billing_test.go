@@ -16,6 +16,7 @@ var schemaV8 = append(slices.Clone(schemaV7), "CREATE TABLE setting (\n  key TEX
 // 旧库里已有的节点、规则与状态升级后取列默认值：没有计费信息，规则没有提前天数，状态没有触发时的到期日；
 // 升级后的库能照常写入新列。
 func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 8, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, stmt := range []string{
@@ -53,6 +54,7 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 
 // 计费随建节点一次写入：CreateNode 落库的五项与 UpdateNode 写进去的读法一致；空值创建没有计费。
 func TestCreateNodeStoresBilling(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	full := Billing{Price: "12.50", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-10-01", AutoRenew: true}
@@ -74,6 +76,7 @@ func TestCreateNodeStoresBilling(t *testing.T) {
 
 // 计费五项随 UpdateNode 整体替换：零值即清除。billingChanged 只看这五项与库内原值是否不同，别的字段变不算。
 func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -144,6 +147,7 @@ func TestUpdateNodeReplacesBillingAndReportsChange(t *testing.T) {
 
 // RenewExpiry 只在该行仍是推后所依据的取值时写入：到期日、周期或自动续期任一已被改过都不写。
 func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -190,6 +194,7 @@ func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 // days_before 只随到期规则落库；改它不改规则身份，状态保留；换成别的种类（同时清掉 days_before，组合合法）时，
 // 列变回 NULL，状态随身份一起清除。
 func TestAlertRuleDaysBeforeBelongsToExpiryRules(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	r := saveRule(t, s, AlertRule{Name: "到期", Kind: KindExpiry, Enabled: true, AllNodes: true, DaysBefore: 7})
@@ -223,6 +228,7 @@ func TestAlertRuleDaysBeforeBelongsToExpiryRules(t *testing.T) {
 
 // 种类与专用字段的非法组合在存储层就被拒绝，新建与修改都不写入，已有的行保持原样；报错写明字段与约束。
 func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
+	t.Parallel()
 	s, _, _, task := alertFixture(t)
 	existing := saveRule(t, s, AlertRule{Name: "离线", Kind: KindOffline, Enabled: true, AllNodes: true})
 	for _, c := range []struct {
@@ -256,6 +262,7 @@ func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 // 触发时的到期日只由写入它的那一次给出：每次写都整行替换，恢复与不带事件的写都把它清空，状态行不会带着上一次
 // 触发的日期进入下一个状态。它存在库里，重新读状态（hub 重启走的就是这条路）拿到的是同一个值。
 func TestAlertStateFiredExpiresOnFollowsEachWrite(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	r := saveRule(t, s, AlertRule{Name: "到期", Kind: KindExpiry, Enabled: true, AllNodes: true, DaysBefore: 7})

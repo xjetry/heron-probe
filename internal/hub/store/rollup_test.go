@@ -48,6 +48,7 @@ func watermark(t *testing.T, s *Store, level string) int64 {
 }
 
 func TestRollupIsExactAndIdempotent(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix() // 整点
@@ -89,6 +90,7 @@ func TestRollupIsExactAndIdempotent(t *testing.T) {
 }
 
 func TestRollupStopsAtLag(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -109,6 +111,7 @@ func TestRollupStopsAtLag(t *testing.T) {
 }
 
 func TestHourRollupOnlyUsesFrozenFiveMinuteRows(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -134,6 +137,7 @@ func TestHourRollupOnlyUsesFrozenFiveMinuteRows(t *testing.T) {
 }
 
 func TestRollupRollsBackRowsWhenWatermarkUpdateFails(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -158,6 +162,7 @@ func TestRollupRollsBackRowsWhenWatermarkUpdateFails(t *testing.T) {
 }
 
 func TestChooseLevel(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		span      int64
 		maxPoints int
@@ -189,6 +194,7 @@ func TestChooseLevel(t *testing.T) {
 }
 
 func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -220,6 +226,7 @@ func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
 }
 
 func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	now := clk.Now().Truncate(time.Hour)
@@ -314,6 +321,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 }
 
 func TestRetentionValidate(t *testing.T) {
+	t.Parallel()
 	if err := DefaultRetention.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -335,6 +343,7 @@ func TestRetentionValidate(t *testing.T) {
 }
 
 func TestRetentionMinimaMatchChooseLevelWindows(t *testing.T) {
+	t.Parallel()
 	for _, target := range levels[:2] {
 		t.Run(target.Name, func(t *testing.T) {
 			// 从真实选级函数找切换点，不复制其阈值；粗级尚未被选中的最大跨度即服务窗口。
@@ -368,6 +377,7 @@ func TestRetentionMinimaMatchChooseLevelWindows(t *testing.T) {
 }
 
 func TestNextMaintenanceAtLandsTwoSecondsPastTheMinute(t *testing.T) {
+	t.Parallel()
 	for _, wall := range []time.Time{
 		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 		time.Date(2026, 1, 1, 12, 0, 1, 999_000_000, time.UTC),
@@ -383,6 +393,7 @@ func TestNextMaintenanceAtLandsTwoSecondsPastTheMinute(t *testing.T) {
 }
 
 func TestChooseLevelCapsAlignedWindows(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name      string
 		from, to  int64
@@ -413,6 +424,7 @@ func TestChooseLevelCapsAlignedWindows(t *testing.T) {
 }
 
 func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -443,6 +455,7 @@ func TestQueryMetricsHonorsAlignedPointLimitWithoutDroppingSamples(t *testing.T)
 }
 
 func TestChooseLevelKeepsFinestStepWithinAlignedBudget(t *testing.T) {
+	t.Parallel()
 	for _, from := range []int64{0, 1, 30, 59, 3599, 1_000_000, 1_767_225_630} {
 		for _, span := range []int64{1, 60, 61, 570, 600, 6 * 3600, 6*3600 + 1, 7 * 86400, 7*86400 + 1, 30 * 86400, 400 * 86400} {
 			for _, budget := range []int{1, 2, 4, 10, 100, 720} {
@@ -463,6 +476,7 @@ func TestChooseLevelKeepsFinestStepWithinAlignedBudget(t *testing.T) {
 
 // Sum 列复用 sum/n 存储：写入、加法合并、上卷都必须把它当可加量对待。
 func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -502,6 +516,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 }
 
 func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -573,6 +588,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 }
 
 func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))

@@ -11,6 +11,7 @@ import (
 )
 
 func TestSilenceRoundTripAndScope(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	daily := Silence{Name: "夜间维护", Enabled: true, AllNodes: true, Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", Reason: "机房巡检"}
@@ -64,6 +65,7 @@ func TestSilenceRoundTripAndScope(t *testing.T) {
 }
 
 func TestCheckSilenceFieldsRejectsBadCombinations(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	valid := Silence{Name: "n", Kind: SilenceDaily, StartHHMM: "22:00", EndHHMM: "06:00", NodeIDs: ids[:1]}
@@ -99,6 +101,7 @@ func TestCheckSilenceFieldsRejectsBadCombinations(t *testing.T) {
 }
 
 func TestSaveSilenceValidatesReferencesAndScope(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	once := func() Silence { return Silence{Name: "n", Kind: SilenceOnce, FromAt: 1, UntilAt: 2, NodeIDs: ids[:1]} }
@@ -129,6 +132,7 @@ func TestSaveSilenceValidatesReferencesAndScope(t *testing.T) {
 }
 
 func TestDeleteSilenceRemovesItsRows(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	setTags(t, s, ids[0], "db")
@@ -155,6 +159,7 @@ func TestDeleteSilenceRemovesItsRows(t *testing.T) {
 
 // 一次性静默到期后保留供审计，随告警事件的保留期清理：until_at 早于同一截止点才删，每日重复的永不清理。
 func TestPruneAlertEventsRemovesOnlyExpiredOnceSilences(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	setTags(t, s, ids[0], "db")
@@ -193,6 +198,7 @@ func TestPruneAlertEventsRemovesOnlyExpiredOnceSilences(t *testing.T) {
 
 // 被静默引用的标签不能删除：与探测任务、告警规则并列的第三种引用。
 func TestDeleteTagRefusedWhileASilenceSelectsIt(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	ctx := t.Context()
 	setTags(t, s, ids[0], "db")
@@ -215,6 +221,7 @@ func TestDeleteTagRefusedWhileASilenceSelectsIt(t *testing.T) {
 }
 
 func TestParseHHMM(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		in   string
 		want int

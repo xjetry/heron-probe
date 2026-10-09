@@ -19,6 +19,7 @@ var schemaV13 = append(slices.Clone(schemaV12), "ALTER TABLE node ADD COLUMN las
 
 // 旧库的节点升级后三列都是空串：没有国家，已有的来源地址原样保留，查询开启后按它补查。
 func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 13, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at, last_source) VALUES (7, 'kept', x'00', 1, '8.8.8.8')"); err != nil {
 			t.Fatal(err)
@@ -35,6 +36,7 @@ func TestMigrationFromV13AddsEmptyCountry(t *testing.T) {
 
 // SetLookupCountry 只在 last_source 仍是所查地址时写入：地址已变时不写、返回 false；节点不存在时返回 ErrNotFound。
 func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -62,6 +64,7 @@ func TestSetLookupCountryIsConditionalOnTheAddress(t *testing.T) {
 // 写者自己维持"country 与 country_ip 同空同非空"：空地址（会匹配从未上报的节点）与不是国家码的值都返回错误、
 // 什么都不写，不靠调用方先过滤。
 func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	silent, _, _ := s.CreateNode(ctx, "never reported", Billing{}, hash(1))
@@ -93,6 +96,7 @@ func TestSetLookupCountryRejectsEmptyAddressAndNonCountry(t *testing.T) {
 
 // 显示值：pin 非空取 pin（manual），否则查得值（lookup），都空为 none。
 func TestDisplayCountry(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		n       Node
 		country string
@@ -111,6 +115,7 @@ func TestDisplayCountry(t *testing.T) {
 
 // 国家查询设置：从未保存过为开、默认服务地址；GeoUpdate 里缺席的项不改；只给外观的保存不碰它们；保存为关即关。
 func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	if g, err := s.GeoSettings(ctx); err != nil || g != (GeoSettings{Enabled: true, URL: "https://ipinfo.io/{ip}/country"}) {
@@ -138,6 +143,7 @@ func TestGeoSettingsDefaultsAndPartialUpdate(t *testing.T) {
 // 开关存 0 / 1：保存写出的就是这两个值。库里出现别的文本（手工改库、别的写法）时读设置报错，既不按关也不按开；
 // 这样的库打开时就被拒绝。运行中的库读到它时，查询器因读设置失败而不出网。
 func TestGeoEnabledIsZeroOrOneAndOtherValuesRefuseToOpen(t *testing.T) {
+	t.Parallel()
 	s, _ := openAt(t)
 	ctx := t.Context()
 	for on, want := range map[bool]string{true: "1", false: "0"} {

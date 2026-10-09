@@ -15,6 +15,7 @@ var schemaV10 = append(slices.Clone(schemaV9), "ALTER TABLE probe_task ADD COLUM
 
 // 旧库升级后簿记表存在但没有行：从未成功跑过，不能被读成"刚跑过"。
 func TestMigrationFromV10AddsEmptyMaintenanceState(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 10, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
@@ -82,6 +83,7 @@ func deref(v *int64) any {
 
 // 上卷中途失败（指标族已推进、探测族的 1h 水位写不进去）不记簿记：从未成功时仍无行，成功过的保持上次的时刻。
 func TestRollupRecordsCompletionOnlyOnSuccess(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	failProbe1h := "CREATE TRIGGER fail_rollup BEFORE UPDATE ON rollup_state WHEN NEW.level = 'probe_1h' BEGIN SELECT RAISE(ABORT, 'rollup rejected'); END"
 	execStmts(t, s, failProbe1h)
@@ -107,6 +109,7 @@ func TestRollupRecordsCompletionOnlyOnSuccess(t *testing.T) {
 
 // prune 中途失败（1h 表的过期行删不掉）同样不记；成功后记下完成时刻。
 func TestPruneRecordsCompletionOnlyOnSuccess(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	failDelete := "CREATE TRIGGER fail_prune BEFORE DELETE ON metric_1h BEGIN SELECT RAISE(ABORT, 'prune rejected'); END"
 	execStmts(t, s, "INSERT INTO metric_1h (node_id, ts) VALUES (1, 0)", failDelete)
@@ -134,6 +137,7 @@ func TestPruneRecordsCompletionOnlyOnSuccess(t *testing.T) {
 // 记成 "rollup failed"/"prune failed" 日志，不包装就只剩 SQLite 原始错误，看日志的人无法判断是上卷/清理本身
 // 失败还是簿记没写进去——后者其实已经提交，只是这一轮的完成时刻没记上。
 func TestMaintenanceRecordErrorIsWrapped(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	failRecord := "CREATE TRIGGER fail_maintenance_state BEFORE INSERT ON maintenance_state BEGIN SELECT RAISE(ABORT, 'maintenance state rejected'); END"
 	execStmts(t, s, failRecord)
@@ -158,6 +162,7 @@ func showSeries(series []SeriesHealth) string {
 // 最老桶按表分别给：六张表各造不同的 ts（另各有一行更新的），读出的是每张表自己的最小值；水位是 rollup_state 的
 // 原值；空表与从未跑过的维护是缺失而不是 0。
 func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	stats, err := s.StorageStats(t.Context())
 	if err != nil {
@@ -205,6 +210,7 @@ func TestStorageStatsReportsSeriesHealthPerTable(t *testing.T) {
 
 // 两组判定各自的边界：恰等于阈值不标红，再越过 1 秒标红；读数缺失不标红。
 func TestStalenessBoundaries(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(1_800_000_000, 0)
 	r := DefaultRetention
 	for _, lv := range levels {

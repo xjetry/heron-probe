@@ -10,6 +10,7 @@ import (
 )
 
 func TestDatabasePathsAreNotURIComponents(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, separator string }{{"hash", "#"}, {"query", "?"}, {"percent", "%23"}, {"space", " "}} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

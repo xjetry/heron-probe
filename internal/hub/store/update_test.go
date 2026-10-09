@@ -13,6 +13,7 @@ import (
 var schemaV24 = append(slices.Clone(schemaV23), `CREATE TABLE node_update (node_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`)
 
 func TestUpdateMigrationAndDeletedNode(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 23, seedMinuteRow)
 	status := &heronv1.UpdateStatus{Supported: true, Version: "v0.2.0", Task: &heronv1.UpdateTask{Id: "0123456789abcdef", Version: "v0.3.0", State: "queued", ExpiresAt: 1}}
 	if err := s.SaveNodeUpdate(t.Context(), 7, status); err != nil {
@@ -35,6 +36,7 @@ func TestUpdateMigrationAndDeletedNode(t *testing.T) {
 }
 
 func TestRestoreDoesNotReplayUpdates(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "test", Billing{}, []byte("token"))
 	if err != nil {

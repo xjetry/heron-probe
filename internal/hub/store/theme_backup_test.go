@@ -23,6 +23,7 @@ func storedPackage(t *testing.T, s *Store, id string) storedThemePackage {
 }
 
 func TestThemePackageStoredAndReplaced(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	putTheme(t, s, "a", "index.html")
 	p := storedPackage(t, s, "a")
@@ -43,6 +44,7 @@ func TestThemePackageStoredAndReplaced(t *testing.T) {
 }
 
 func TestThemePackageTransactions(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"put", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			s, _ := open(t)
@@ -89,6 +91,7 @@ func TestThemePackageTransactions(t *testing.T) {
 }
 
 func TestThemePackageDelete(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	installed := putTheme(t, s, "a", "index.html")
 	if err := s.DeleteThemeVersion(t.Context(), "a", installed.Digest); err != nil {

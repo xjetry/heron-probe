@@ -26,6 +26,7 @@ var schemaV35 = func() []string {
 }()
 
 func TestMigrationFromV34AssignsConfigIDAndBumpsVersion(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 34, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec(`INSERT INTO probe_task (id, kind, target, interval_s, timeout_ms, created_at) VALUES (7, 1, 'legacy.example', 60, 1000, 1)`); err != nil {
 			t.Fatal(err)
@@ -86,6 +87,7 @@ func TestMigrationFromV34AssignsConfigIDAndBumpsVersion(t *testing.T) {
 }
 
 func TestMigrationFromV34KeepsVersionWhenThereAreNoTasks(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 34, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec(`UPDATE probe_meta SET version = 3`); err != nil {
 			t.Fatal(err)

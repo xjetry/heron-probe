@@ -42,6 +42,7 @@ func wantOrder(t *testing.T, got []int64, want ...int64) {
 }
 
 func TestMoveNodesMovesSelectionAsAContiguousBlock(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}
@@ -89,6 +90,7 @@ func namedIDs(ids map[string]int64, names ...string) []int64 {
 }
 
 func TestMoveNodesDedupesAndIgnoresRequestOrder(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}
@@ -111,6 +113,7 @@ func TestMoveNodesDedupesAndIgnoresRequestOrder(t *testing.T) {
 // 故障注入：写事务在半途失败（触发器拒绝 sort_order 更新，等价磁盘满一类写入失败）时整批回滚，
 // 库内排序与名次保持失败前的状态。
 func TestMoveNodesWriteFailureLeavesOrderIntact(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	var ids []int64
@@ -142,6 +145,7 @@ func TestMoveNodesWriteFailureLeavesOrderIntact(t *testing.T) {
 }
 
 func TestMoveNodesRejectsEmptyIDs(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if _, _, err := s.CreateNode(context.Background(), "a", Billing{}, hash(1)); err != nil {
 		t.Fatal(err)
@@ -152,6 +156,7 @@ func TestMoveNodesRejectsEmptyIDs(t *testing.T) {
 }
 
 func TestMoveNodesRejectsOutOfRangePosition(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}
@@ -189,6 +194,7 @@ func TestMoveNodesRejectsOutOfRangePosition(t *testing.T) {
 }
 
 func TestMoveNodesRejectsUnknownIDAndLeavesEveryOrderUntouched(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}
@@ -236,6 +242,7 @@ func rawOrders(t *testing.T, s *Store) []string {
 // 名次与移动都只看 (sort_order, id) 全序：删除留下的空洞与并发补号造成的并列都不影响——并列按 id 分先后，
 // 名次仍然连续。MoveNodes 重写后空洞与并列一并消掉。
 func TestMoveNodesOverTiesAndGaps(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}
@@ -270,6 +277,7 @@ func TestMoveNodesOverTiesAndGaps(t *testing.T) {
 
 // 名次属于全部节点：标签交集、无标签与公开过滤只筛行，不重排名次。
 func TestNodePositionIsRankOverAllNodes(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	ids := map[string]int64{}

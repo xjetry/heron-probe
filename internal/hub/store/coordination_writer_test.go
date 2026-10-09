@@ -36,6 +36,7 @@ func wantGeneration(t *testing.T, s *Store, want uint64) {
 
 // 每个提交的库外写事务推进一次，回滚的不推进，hub 自己的写永不推进；同步、异步与类型化的写方法都经 runWriter。
 func TestExternalWriterAdvancesOfflineGenerationPerCommit(t *testing.T) {
+	t.Parallel()
 	hub, external, _ := openPair(t)
 	ctx := t.Context()
 	if _, _, err := hub.CreateNode(ctx, "online", Billing{}, hash(1)); err != nil {
@@ -80,6 +81,7 @@ func TestExternalWriterAdvancesOfflineGenerationPerCommit(t *testing.T) {
 
 // 推进失败（协调行缺失）时整个库外写事务回滚：不推进的库外写入运行中的 hub 永远看不到，宁可让离线命令报错。
 func TestExternalWriteRollsBackWithoutCoordinationRow(t *testing.T) {
+	t.Parallel()
 	hub, external, _ := openPair(t)
 	ctx := t.Context()
 	if err := hub.write(ctx, func(tx *sql.Tx) error {

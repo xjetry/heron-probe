@@ -55,6 +55,7 @@ func (r *snapshotRows) Close() error {
 }
 
 func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))

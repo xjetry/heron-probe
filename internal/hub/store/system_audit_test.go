@@ -6,6 +6,7 @@ import (
 )
 
 func TestLoginAuditIndependentOfNotifications(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, transition := range []Transition{TransitionLoginSuccess, TransitionLoginLocked, TransitionLoginFailed, TransitionAuthChanged} {
 		ev, err := s.RecordLoginEvent(t.Context(), AlertEvent{Transition: transition, At: s.clk.Now()})
@@ -37,6 +38,7 @@ func TestLoginAuditIndependentOfNotifications(t *testing.T) {
 }
 
 func TestBackupSuccessAuditAtomic(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec(`CREATE TRIGGER reject_success BEFORE INSERT ON alert_event BEGIN SELECT RAISE(ABORT,'audit rejected'); END`)

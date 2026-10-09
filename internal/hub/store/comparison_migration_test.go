@@ -29,6 +29,7 @@ func seedProbeByTask(t *testing.T, db *sql.DB) {
 }
 
 func TestMigrationFromV32AddsProbeByTaskIndexes(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 32, seedProbeByTask)
 	for _, table := range probeTables {
 		var n int
@@ -50,6 +51,7 @@ func TestMigrationFromV32AddsProbeByTaskIndexes(t *testing.T) {
 // v32 的指标快照恢复到空库与已有库：迁移 33 在快照副本上补建索引（快照本身不带索引，变化只是
 // 版本号与副本结构），恢复后的目标库建到 v33、索引存在，对比查询走索引。
 func TestRestoreMigratesV32MetricsSnapshotAndKeepsProbeByTaskIndexes(t *testing.T) {
+	t.Parallel()
 	source, clk := open(t)
 	ctx := t.Context()
 	id, _, err := source.CreateNode(ctx, "n", Billing{}, hash(1))

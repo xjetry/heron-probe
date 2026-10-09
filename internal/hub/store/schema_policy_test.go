@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xjetry/heron-probe/internal/clock"
@@ -18,26 +20,70 @@ import (
 func schemaPolicyFixture(t *testing.T, statements []string, version int) (string, *sql.DB) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "schema.db")
+	if err := buildSchemaFile(path, statements, version); err != nil {
+		t.Fatal(err)
+	}
+	return path, openRawFixture(t, path)
+}
+
+// buildSchemaFile 在 path 上逐条执行 statements，再把 user_version 写成 version，最后关掉连接。库按 dsn 的默认
+// 日志模式（rollback journal）写，关掉之后主文件就是完整的库，可以整文件复制。
+func buildSchemaFile(path string, statements []string, version int) (err error) {
+	db, err := sql.Open("sqlite", dsn(path, ""))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("%w in %q", err, stmt)
+		}
+	}
+	_, err = db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version))
+	return err
+}
+
+// openRawFixture 以与 Store 相同的 DSN 打开 path，不经 Open 的 schema 准入，用例借它在建好的库上直接改结构或数据。
+func openRawFixture(t *testing.T, path string) *sql.DB {
+	t.Helper()
 	db, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	for _, stmt := range statements {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
-		t.Fatal(err)
-	}
-	return path, db
+	return db
 }
 
-// frozenSchemaFixture 建一个停在指定版本的库，DDL 按版本号取自 frozenSchemas。
+// frozenTemplate 是一个冻结版本的只读模板库，每个版本在本包进程里只建一次。
+type frozenTemplate struct {
+	once sync.Once
+	path string
+	err  error
+}
+
+var frozenTemplates sync.Map // version → *frozenTemplate
+
+// frozenSchemaFixture 建一个停在指定版本的库，DDL 按版本号取自 frozenSchemas。冻结 DDL 逐条执行、每条自成一个
+// 事务，耗时随版本增长（同机 -race、负载约 20 时实测 v8 约 80ms、v20 约 0.7s、v37 约 2.7s），迁移用例与
+// TestFrozenSchemasFollowMigrations 又反复要同几个版本，所以每个版本只在 fixtureDir 里建一次模板，用例拿到的是
+// 模板的副本：库的内容与逐条执行的结果相同，用例可以随意写。
 func frozenSchemaFixture(t *testing.T, version int) (string, *sql.DB) {
 	t.Helper()
-	return schemaPolicyFixture(t, frozenSchema(t, version), version)
+	statements := frozenSchema(t, version)
+	v, _ := frozenTemplates.LoadOrStore(version, &frozenTemplate{})
+	tpl := v.(*frozenTemplate)
+	tpl.once.Do(func() {
+		path := filepath.Join(fixtureDir, fmt.Sprintf("frozen-v%d.db", version))
+		if tpl.err = buildSchemaFile(path, statements, version); tpl.err == nil {
+			tpl.path = path
+		}
+	})
+	if tpl.err != nil {
+		t.Fatalf("frozen v%d template: %v", version, tpl.err)
+	}
+	path := filepath.Join(t.TempDir(), "schema.db")
+	copyFile(t, tpl.path, path)
+	return path, openRawFixture(t, path)
 }
 
 func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
@@ -58,6 +104,7 @@ func assertSchemaLogs(t *testing.T, buf *bytes.Buffer, want ...map[string]any) {
 }
 
 func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
+	t.Parallel()
 	path, raw := frozenSchemaFixture(t, 8)
 	seedMinuteRow(t, raw)
 	before := describe(t, raw)
@@ -85,8 +132,10 @@ func TestSchemaPolicyRequiresCurrentWithoutChangingV8(t *testing.T) {
 }
 
 func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
+	t.Parallel()
 	for _, version := range []int{7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			t.Parallel()
 			path, raw := frozenSchemaFixture(t, version)
 			var logs bytes.Buffer
 			st, err := Open(path, clock.Real(), slog.New(slog.NewJSONHandler(&logs, nil)), MigrateSchema)
@@ -110,6 +159,7 @@ func TestSchemaPolicyMigratesAndLogsEachStep(t *testing.T) {
 // 让迁移 9 的第一条 ALTER 撞上已存在的同名列，使那一步的事务回滚，验证日志确实
 // 止步于最后一步已提交的迁移，不多写一行从未持久化的 to:9。
 func TestSchemaPolicyPartialMigrationLogsOnlyCommittedSteps(t *testing.T) {
+	t.Parallel()
 	path, raw := frozenSchemaFixture(t, 7)
 	if _, err := raw.Exec("ALTER TABLE node ADD COLUMN price TEXT NOT NULL DEFAULT ''"); err != nil {
 		t.Fatal(err)
@@ -130,6 +180,7 @@ func TestSchemaPolicyPartialMigrationLogsOnlyCommittedSteps(t *testing.T) {
 }
 
 func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "empty.db")
@@ -167,6 +218,7 @@ func TestSchemaPolicyCreatesAndReopensWithoutMigration(t *testing.T) {
 // 逐字节比较而不只比较表结构：journal_mode(WAL) 这类 pragma 一旦在某个连接上生效就
 // 立即改写文件头（第 18—19 字节标出日志模式），比对表结构看不出这种改写。
 func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "foreign.db")
@@ -211,6 +263,7 @@ func TestSchemaPolicyRejectsDatabaseWithTablesButNoVersion(t *testing.T) {
 // serve 升级（RequireCurrentSchema）——两条提示都假定这是本项目的旧库，跟着做都走不通。
 // 逐字节比较的理由同上一条；夹具在下面独立建成 DELETE 模式库。
 func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []SchemaPolicy{MigrateSchema, RequireCurrentSchema} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			// 不经 schemaPolicyFixture：它建夹具用的是 dsn，dsn 的 pragma 列表一旦重新
@@ -261,6 +314,7 @@ func TestSchemaPolicyRejectsNegativeVersionWithoutSuggestingServe(t *testing.T) 
 // "遗漏选择时意外迁移"。这条钉住"库被迁走"这一种副作用；空路径上的另一种副作用见
 // 下一条用例。
 func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
+	t.Parallel()
 	for _, policy := range []SchemaPolicy{0, -1, 3} {
 		t.Run(fmt.Sprint(policy), func(t *testing.T) {
 			path, raw := frozenSchemaFixture(t, 8)
@@ -288,6 +342,7 @@ func TestSchemaPolicyRejectsInvalidPolicy(t *testing.T) {
 // panic。这条钉住"文件被建出"，与上一条钉住的"库被迁走"是两种不同的副作用，各自
 // 只覆盖自己这条路径上的挪动。
 func TestSchemaPolicyRejectsInvalidPolicyBeforeTouchingAMissingFile(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "invalid.db")
 	defer func() {
 		if got := recover(); got != "store.Open requires a valid SchemaPolicy" {

@@ -89,6 +89,7 @@ func waitRegistryMutex(t *testing.T, id, method string, progressed func() bool) 
 }
 
 func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
+	t.Parallel()
 	r, st, id := registryRaceStore(t)
 	release, pending, drain := st.HoldWriterForTest()
 	defer release()
@@ -134,6 +135,7 @@ func TestRegistryForgetCannotBeRevivedByEarlierSave(t *testing.T) {
 }
 
 func TestRegistryDeleteSerializesFollowingSave(t *testing.T) {
+	t.Parallel()
 	r, st, id := registryRaceStore(t)
 	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "localhost", IntervalS: 5, TimeoutMs: 1000}
 	d, _, err := r.Save(t.Context(), task, store.NodeSelector{AllNodes: false, NodeIDs: []int64{id}})

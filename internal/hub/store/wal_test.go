@@ -19,6 +19,7 @@ type statFunc func(string) (fs.FileInfo, error)
 func (f statFunc) Stat(path string) (fs.FileInfo, error) { return f(path) }
 
 func TestStorageStatsWALObservation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		size   int64
@@ -91,6 +92,7 @@ func TestStorageStatsWALObservation(t *testing.T) {
 }
 
 func TestWALLifecycleObservation(t *testing.T) {
+	t.Parallel()
 	s, path := openAt(t)
 	if _, _, err := s.CreateNode(t.Context(), "wal", Billing{}, hash(99)); err != nil {
 		t.Fatal(err)
@@ -124,6 +126,7 @@ func TestWALLifecycleObservation(t *testing.T) {
 // 一次超过上限的大写入之后，下一次普通写入重启 WAL 时把文件截回 walSizeLimit，不留在峰值（迁移、补数之后的常态）。
 // 先确认大写入确实把 WAL 撑过了上限，否则「写完不超过上限」证明不了截断。
 func TestWALTruncatedToLimitAfterBurst(t *testing.T) {
+	t.Parallel()
 	s, path := openAt(t)
 	walBytes := func() int64 {
 		t.Helper()

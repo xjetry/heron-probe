@@ -29,6 +29,7 @@ var schemaV20 = func() []string {
 }()
 
 func TestMigrationFromV19PreservesMetricsAndStartsWithoutFactors(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 19, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		if _, err := db.Exec("INSERT INTO admin VALUES (1,'kept-password',1)"); err != nil {

@@ -16,6 +16,7 @@ func httpsProbe() *heronv1.ProbeTask {
 }
 
 func TestSaveProbeTaskRegeneratesConfigIDOnlyWhenContentChanges(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -53,6 +54,7 @@ func TestSaveProbeTaskRegeneratesConfigIDOnlyWhenContentChanges(t *testing.T) {
 }
 
 func TestCertWriteRejectsStaleIdentityAndUnassignedNode(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -109,6 +111,7 @@ func TestCertWriteRejectsStaleIdentityAndUnassignedNode(t *testing.T) {
 }
 
 func TestRestoreForgetsIdentitiesCreatedAfterTheSnapshot(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -156,6 +159,7 @@ func TestRestoreForgetsIdentitiesCreatedAfterTheSnapshot(t *testing.T) {
 
 // 证书观测与候选按解析出的 scheme 判断 https：目标写成 "HTTPS://" 的任务同样落库，与 agent 取证书的判据一致。
 func TestCertObservationsFollowTheParsedScheme(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))

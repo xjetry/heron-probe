@@ -10,6 +10,7 @@ import (
 )
 
 func TestPruneAlertEventsKeepsBoundaryAndDeletesDeliveries(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	var logs bytes.Buffer
 	s.log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -47,6 +48,7 @@ func TestPruneAlertEventsKeepsBoundaryAndDeletesDeliveries(t *testing.T) {
 }
 
 func TestPruneAlertEventsRollsBackDeliveriesOnFailure(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -68,6 +70,7 @@ func TestPruneAlertEventsRollsBackDeliveriesOnFailure(t *testing.T) {
 // 维护每分钟在写事务里清理事件，全表扫描会随事件量线性占用单写协程。
 // 直接检查生产 SQL 的计划，避免新建与迁移同时漏掉索引时结构对照仍通过。
 func TestPruneAlertEventsUsesTimeIndex(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, tc := range []struct {
 		name  string
@@ -105,6 +108,7 @@ func TestPruneAlertEventsUsesTimeIndex(t *testing.T) {
 }
 
 func TestAlertRetentionMinimum(t *testing.T) {
+	t.Parallel()
 	if DefaultRetention.AlertEvents != 90*24*time.Hour {
 		t.Fatalf("default=%v", DefaultRetention.AlertEvents)
 	}

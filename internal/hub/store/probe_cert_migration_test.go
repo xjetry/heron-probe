@@ -20,6 +20,7 @@ var schemaV30 = append(slices.Clone(schemaV29),
 // 旧库升级前没有证书观测，升级后的 probe_cert 必须是空表："没有行"即"无读数"，
 // 不是任何证书状态，证书到期评估对无行的 (节点, 任务) 不评估。
 func TestMigrationFromV29CreatesProbeCert(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 29, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (name, token_hash, created_at) VALUES ('legacy', x'01', 0)"); err != nil {
 			t.Fatal(err)

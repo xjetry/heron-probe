@@ -8,6 +8,7 @@ import (
 )
 
 func TestBackupMarkerAndEventAtomic(t *testing.T) {
+	t.Parallel()
 	for _, transition := range []Transition{TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled} {
 		t.Run(string(transition), func(t *testing.T) {
 			s, _ := open(t)
@@ -59,6 +60,7 @@ func TestBackupMarkerAndEventAtomic(t *testing.T) {
 }
 
 func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	c, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{Name: "backup", Kind: ChannelWebhook, Config: `{"url":"https://example.test"}`})
 	if err != nil {
@@ -106,6 +108,7 @@ func TestBackupEventsUseCurrentChannelsWithoutRuleState(t *testing.T) {
 }
 
 func TestBackupSuccessRejectsUnknownLayer(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if err := s.RecordBackupSuccess(t.Context(), "other"); err == nil {
 		t.Fatal("unknown backup layer accepted")
@@ -121,6 +124,7 @@ func TestBackupSuccessRejectsUnknownLayer(t *testing.T) {
 
 // 触发只在调用方没有读到有效标记时发生；库里若留着读不懂的坏值，触发以本次首次失败时刻覆盖它。
 func TestBackupFiringOverwritesCorruptMarker(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	err := s.write(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("INSERT INTO setting (key, value) VALUES ('backup.config_failing_since', 'x')")

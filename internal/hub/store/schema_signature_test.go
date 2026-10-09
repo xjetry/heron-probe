@@ -235,6 +235,7 @@ func asciiLower(s string) string {
 }
 
 func TestNormalizeSQL(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ in, want string }{
 		{"CREATE TABLE t (\n  -- 注释\n  a INTEGER /* 注释 */ NOT NULL ,\n  b TEXT\n)", "create table t(a integer not null,b text)"},
 		{"CHECK (v IN ('A  b', 'it''s -- x /* y */ \"Q\"'))", `check(v in('A  b','it''s -- x /* y */ "Q"'))`},
@@ -271,6 +272,7 @@ func schemaDifference(left, right []string, leftLabel, rightLabel string) string
 }
 
 func TestSchemaDifferenceIgnoresInputOrder(t *testing.T) {
+	t.Parallel()
 	got := schemaDifference([]string{"c", "a", "b"}, []string{"d", "b", "a"}, "左", "右")
 	if want := "左有: c\n右有: d"; got != want {
 		t.Fatalf("schema difference of unsorted inputs = %q, want %q", got, want)
@@ -278,6 +280,7 @@ func TestSchemaDifferenceIgnoresInputOrder(t *testing.T) {
 }
 
 func TestSchemaSignatureDistinguishesStructure(t *testing.T) {
+	t.Parallel()
 	const table = `CREATE TABLE sample (id INTEGER NOT NULL PRIMARY KEY, value TEXT)`
 	const tableSQL = `table_sql table_name="sample" sql=`
 	const indexSQL = `index_sql table_name="sample" index_name="by_value" sql=`
@@ -350,6 +353,7 @@ func TestSchemaSignatureDistinguishesStructure(t *testing.T) {
 // 结构相同、写法或建法不同的两库签名必须相同。premise 在右侧库上求值且必须为真：它钉住右侧确实带着
 // 要被忽略的那种差异，否则两侧相同证明不了签名忽略了它。
 func TestSchemaSignatureIgnoresEquivalentSchemas(t *testing.T) {
+	t.Parallel()
 	const (
 		sample  = `CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT UNIQUE CHECK (value <> 'a  b'))`
 		other   = `CREATE TABLE other (id INTEGER PRIMARY KEY AUTOINCREMENT)`

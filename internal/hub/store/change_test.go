@@ -41,6 +41,7 @@ func (permitPolicy) Scope(context.Context, ChangeReader, *Change, *APIToken) err
 func (permitPolicy) Resource(context.Context, ChangeReader, *Change, *APIToken) error { return nil }
 
 func TestAgenticMigrationKeepsLegacyReadOnly(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 24, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO api_token(name,token_hash,created_at) VALUES('legacy',?,1)", hash(1)); err != nil {
 			t.Fatal(err)
@@ -68,6 +69,7 @@ func TestAgenticMigrationKeepsLegacyReadOnly(t *testing.T) {
 }
 
 func TestAgenticDeferredCommitFailure(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, stmt := range []string{
 		"PRAGMA foreign_keys=ON",
@@ -131,6 +133,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 }
 
 func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	p, err := s.CreateAPIToken(t.Context(), "writer", sha256.Sum256([]byte("writer")), clk.Now(), 100, &TokenGrant{Permissions: []Permission{PermissionRegister, PermissionUpdate}})
 	if err != nil {
@@ -173,6 +176,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 }
 
 func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	create := func(id string, b byte) *Change {
@@ -274,6 +278,7 @@ func rename(name string) NodeEdit { return NodeEdit{Name: name, TrafficResetDay:
 // 节点快照不含凭据哈希，回执差异为空，随后的凭据写绕过审计。按操作比对时它在开事务之前被拒绝，库里没有任何
 // 行变化，主写机会随之用掉，后面真正的凭据写也被拒绝。
 func TestChangeTargetRejectsSiblingFirstWrite(t *testing.T) {
+	t.Parallel()
 	for _, preview := range []bool{false, true} {
 		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
 			f := newTargetFixture(t)
@@ -296,6 +301,7 @@ func TestChangeTargetRejectsSiblingFirstWrite(t *testing.T) {
 }
 
 func TestChangeTargetMatchesActionAndResource(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	other, _, err := f.s.CreateNode(t.Context(), "other", Billing{}, hash(3))
 	if err != nil {
@@ -327,6 +333,7 @@ func TestChangeTargetMatchesActionAndResource(t *testing.T) {
 
 // 普通写永不消费变更：主写之前的普通写照常提交、不审计，主写仍是被审计的那一次；主写之后的派生写同样照常。
 func TestPlainWritesNeverConsumeTheChange(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, false)
 	ctx := WithChange(t.Context(), c)
@@ -348,6 +355,7 @@ func TestPlainWritesNeverConsumeTheChange(t *testing.T) {
 }
 
 func TestChangeTargetPreviewRollsBack(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, true)
 	if _, err := f.s.UpdateNode(WithChange(t.Context(), c), f.node, rename("previewed")); !errors.Is(err, ErrPreview) {
@@ -363,6 +371,7 @@ func TestChangeTargetPreviewRollsBack(t *testing.T) {
 
 // 一次变更只有一个主写：第二次 writeChange 被拒绝，第一次已提交的业务写与回执保留。
 func TestChangeTargetRejectsSecondPrimaryWrite(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	c := f.change(t, ActionUpdateNode, false)
 	ctx := WithChange(t.Context(), c)
@@ -387,6 +396,7 @@ func TestChangeTargetRejectsSecondPrimaryWrite(t *testing.T) {
 
 // 业务拒绝发生在主写之前：变更没有被使用，库与回执都不变。
 func TestBusinessRejectionLeavesChangeUnclaimed(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	c := &Change{Operation: Operation{RequestID: "probe", RequestHash: "h"}, Action: ActionSaveProbeTask, Policy: permitPolicy{}}
 	var err error
@@ -405,6 +415,7 @@ func TestBusinessRejectionLeavesChangeUnclaimed(t *testing.T) {
 }
 
 func TestWithChangeRejectsMisassembly(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string]*Change{
 		"nil policy":          {Action: ActionDeleteTag},
 		"unregistered action": {Policy: permitPolicy{}},
@@ -423,6 +434,7 @@ func TestWithChangeRejectsMisassembly(t *testing.T) {
 // 开始与取消更新共用 saveNodeUpdate，但各自声明目标：取消的变更下调用开始更新的写被拒绝，节点更新状态不变；
 // 后台对账的 SaveNodeUpdate 不声明目标，不会用掉变更。
 func TestNodeUpdateSiblingsDeclareDistinctTargets(t *testing.T) {
+	t.Parallel()
 	f := newTargetFixture(t)
 	initial := &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "queued", State: "queued"}}
 	if err := f.s.SaveNodeUpdate(t.Context(), f.node, initial); err != nil {

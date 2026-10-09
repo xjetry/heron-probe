@@ -18,6 +18,7 @@ var schemaV36 = append(slices.Clone(schemaV35),
 )
 
 func TestMigrationFromV35AddsTrafficQuota(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 35, seedMinuteRow)
 	n, err := s.GetNode(t.Context(), 7)
 	if err != nil || n.TrafficQuotaBytes != 0 || n.TrafficQuotaMode != "sum" {
@@ -33,6 +34,7 @@ func TestMigrationFromV35AddsTrafficQuota(t *testing.T) {
 }
 
 func TestTrafficQuotaSnapshotRestore(t *testing.T) {
+	t.Parallel()
 	for _, version := range []int{35, 36} {
 		for _, withMetrics := range []bool{false, true} {
 			t.Run(fmt.Sprintf("v%d/metrics=%t", version, withMetrics), func(t *testing.T) {

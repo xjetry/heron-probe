@@ -6,6 +6,7 @@ import (
 )
 
 func TestDeleteAlertStateDeletesOnlyThePair(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	a := saveRule(t, s, AlertRule{Name: "a", Kind: KindOffline, AllNodes: true, Enabled: true})
 	b := saveRule(t, s, AlertRule{Name: "b", Kind: KindOffline, AllNodes: true, Enabled: true})
@@ -29,6 +30,7 @@ func TestDeleteAlertStateDeletesOnlyThePair(t *testing.T) {
 }
 
 func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"kind", "task", "metric", "threshold", "name"} {
 		t.Run(change, func(t *testing.T) {
 			s, ids, _, task := alertFixture(t)

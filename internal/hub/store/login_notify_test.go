@@ -9,6 +9,7 @@ import (
 )
 
 func TestLoginNotifyDeleteIsAtomic(t *testing.T) {
+	t.Parallel()
 	s, _, cs, _ := alertFixture(t)
 	ids := []int64{cs[0].ID, cs[1].ID}
 	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{LoginChannels: &ids}); err != nil {
@@ -38,6 +39,7 @@ func TestLoginNotifyDeleteIsAtomic(t *testing.T) {
 }
 
 func TestLoginNotifyEventTransaction(t *testing.T) {
+	t.Parallel()
 	s, _, cs, _ := alertFixture(t)
 	ids := []int64{cs[0].ID, cs[1].ID}
 	if _, err := s.SaveSettings(t.Context(), SettingsUpdate{LoginChannels: &ids}); err != nil {
@@ -60,6 +62,7 @@ func TestLoginNotifyEventTransaction(t *testing.T) {
 // 系统事件的种类由 transition 决定；写侧各收各的 transition，被拒时什么都不写。库里 0/0 的行因此都带系统
 // 事件的 transition、规则事件的行都不带，投递队列按 transition 推出的标签才与 0/0 一致。
 func TestSystemEventTransitionsStayWithTheirWriter(t *testing.T) {
+	t.Parallel()
 	for tr, want := range map[Transition]string{
 		TransitionLoginSuccess: SystemKindLogin, TransitionLoginLocked: SystemKindLogin,
 		TransitionBackupFailed: SystemKindBackup, TransitionBackupRecovered: SystemKindBackup, TransitionBackupDisabled: SystemKindBackup,
@@ -98,6 +101,7 @@ func TestSystemEventTransitionsStayWithTheirWriter(t *testing.T) {
 // （只可能来自 hub 之外改库，saveChannelIDs 与删渠道维持列表只含存在的渠道）时整条事件失败、什么都不写，不会留下
 // 指向不存在渠道的投递。另写一份插入语句、漏掉引用检查的写者在这里红。
 func TestSystemEventsCheckChannelReferences(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string]struct {
 		list  NotifyList
 		write func(s *Store) error

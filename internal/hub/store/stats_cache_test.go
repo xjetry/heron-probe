@@ -56,6 +56,7 @@ func startStats(t *testing.T, s *Store, ctx context.Context) <-chan statsResult 
 }
 
 func TestStorageStatsSharesConcurrentComputation(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	var calls atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -93,6 +94,7 @@ func TestStorageStatsSharesConcurrentComputation(t *testing.T) {
 }
 
 func TestStorageStatsReusesSQLButObservesWALEachTime(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	var calls atomic.Int32
 	start := clk.Now().Unix()
@@ -137,6 +139,7 @@ func TestStorageStatsReusesSQLButObservesWALEachTime(t *testing.T) {
 }
 
 func TestStorageStatsWaitCancellationDoesNotCancelComputation(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	var calls atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -175,6 +178,7 @@ func TestStorageStatsWaitCancellationDoesNotCancelComputation(t *testing.T) {
 }
 
 func TestStorageStatsCloseCancelsAndWaits(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	defer close(release)
@@ -217,6 +221,7 @@ func TestStorageStatsCloseCancelsAndWaits(t *testing.T) {
 }
 
 func TestStorageStatsFailureIsSharedButNotCached(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	want := errors.New("statistics failed")
 	var calls atomic.Int32
@@ -245,6 +250,7 @@ func TestStorageStatsFailureIsSharedButNotCached(t *testing.T) {
 }
 
 func TestStorageStatsSnapshotMatchesDirectQueries(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, f := range families {
 		for i, table := range f.tables {
@@ -313,6 +319,7 @@ func TestStorageStatsSnapshotMatchesDirectQueries(t *testing.T) {
 }
 
 func TestStorageStatsConnectionIsReadOnly(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if _, err := s.stats.db.Exec("DELETE FROM rollup_state"); err == nil {
 		t.Fatal("stats connection allowed a write")
@@ -323,6 +330,7 @@ func TestStorageStatsConnectionIsReadOnly(t *testing.T) {
 }
 
 func TestStorageStatsMissingSeriesTableIsNotEmpty(t *testing.T) {
+	t.Parallel()
 	for _, f := range families {
 		for _, table := range f.tables {
 			t.Run(table, func(t *testing.T) {
@@ -337,6 +345,7 @@ func TestStorageStatsMissingSeriesTableIsNotEmpty(t *testing.T) {
 }
 
 func TestStorageStatsQueryPlans(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	var version string
 	if err := s.stats.db.QueryRow("SELECT sqlite_version()").Scan(&version); err != nil {

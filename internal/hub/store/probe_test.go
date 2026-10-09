@@ -30,6 +30,8 @@ func probeRow(nodeID int64, ts int64, task uint64, rtts []uint32, lost, errs uin
 	return metric.ProbeRow{NodeID: nodeID, TS: ts, TaskID: task, Bucket: b}
 }
 
+// 不并行：它临时改包级的 family.states（metricFamily、probeFamily 被所有 Store 共用），并行用例的
+// WriteMinuteBatch 与上卷会按改过的水位键去查 rollup_state，查不到行。
 func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 	for _, f := range families {
 		t.Run(f.name, func(t *testing.T) {
@@ -69,6 +71,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 }
 
 func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -126,6 +129,7 @@ func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 }
 
 func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
+	t.Parallel()
 	for _, frozen := range []string{"probe_5m", "5m"} {
 		t.Run(frozen, func(t *testing.T) {
 			s, _ := open(t)
@@ -151,6 +155,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 }
 
 func TestQueryProbesRebucketsPerTask(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 	var input []metric.ProbeRow
@@ -192,6 +197,7 @@ func taskForTest() *heronv1.ProbeTask {
 
 // dns_server 随任务落库并原样读回；更新整体替换该列，其他任务行互不影响。
 func TestProbeTaskDNSServerRoundTripsThroughStore(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	task := &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_DNS, Target: "example.com", IntervalS: 5, TimeoutMs: 1000, DnsServer: "[2001:4860:4860::8888]:53"}
@@ -223,6 +229,7 @@ func TestProbeTaskDNSServerRoundTripsThroughStore(t *testing.T) {
 }
 
 func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -260,6 +267,7 @@ func TestSaveProbeTaskAssignsAndBumpsVersion(t *testing.T) {
 }
 
 func TestProbeVersionUsesClockAndIncreases(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	var previous uint64
 	for i := range 3 {
@@ -306,6 +314,7 @@ func assertTasks(t *testing.T, s *Store, wantVersion uint64, want []ProbeTaskRec
 }
 
 func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, created, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -343,6 +352,7 @@ func TestSaveProbeTaskEnforcesPerNodeLimit(t *testing.T) {
 }
 
 func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -359,6 +369,7 @@ func TestDuplicateProbeAssignmentRollsBackReplacement(t *testing.T) {
 }
 
 func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -411,6 +422,7 @@ func seedProbeLevels(t *testing.T, s *Store, ids []int64) {
 }
 
 func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -435,6 +447,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 }
 
 func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -455,6 +468,7 @@ func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
 }
 
 func TestProbeBucketMergeMeanAndBatchEmpty(t *testing.T) {
+	t.Parallel()
 	b := &metric.ProbeBucket{}
 	if mean, ok := b.RttMean(); mean != 0 || ok {
 		t.Fatalf("empty mean=%d/%v", mean, ok)
@@ -505,6 +519,7 @@ func formatProbeRows(rows []metric.ProbeRow) string {
 }
 
 func TestProbeBucketIgnoresMissingOutcome(t *testing.T) {
+	t.Parallel()
 	for _, input := range []*heronv1.ProbeResult{nil, {TaskId: 7}} {
 		b := probeRow(1, 0, 7, []uint32{100}, 1, 1).Bucket
 		want := *b

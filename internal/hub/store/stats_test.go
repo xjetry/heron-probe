@@ -41,6 +41,7 @@ func openAt(t *testing.T) (*Store, string) {
 // 统计恰好覆盖 schemaStatements 建出的每一张表，不多不少，行数与表一一对应。新库的 sqlite_master 就是执行这些
 // 语句建出来的，所以按它列表的实现自然满足；统计若改成手写的表名清单，以后新增表而漏改清单时这个用例会红。
 func TestStorageStatsCoversEveryTableAndCountsRows(t *testing.T) {
+	t.Parallel()
 	s, _ := openAt(t)
 	for i := range 3 {
 		if _, _, err := s.CreateNode(t.Context(), fmt.Sprint("n", i), Billing{}, hash(byte(i))); err != nil {
@@ -74,6 +75,7 @@ func TestStorageStatsCoversEveryTableAndCountsRows(t *testing.T) {
 
 // db_bytes 是逻辑大小 page_count × page_size：WAL 检查点之前主文件可能远小于它，之后二者相等。
 func TestStorageStatsReportsLogicalDatabaseSize(t *testing.T) {
+	t.Parallel()
 	s, path := openAt(t)
 	for i := range 200 {
 		if _, _, err := s.CreateNode(t.Context(), "n", Billing{}, hash(byte(i))); err != nil {

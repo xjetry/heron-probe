@@ -6,6 +6,7 @@ import (
 )
 
 func TestNodeUpdateScopeReadFailureRollsBackAllWrites(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "original", Billing{}, hash(1))
 	if err != nil {

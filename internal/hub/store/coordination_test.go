@@ -32,6 +32,7 @@ func setOfflineGeneration(t *testing.T, s *Store, g int64) {
 }
 
 func TestMigrationFromV36SeedsOfflineGeneration(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 36, seedMinuteRow)
 	if g, err := s.OfflineGeneration(t.Context()); err != nil || g != 0 {
 		t.Fatalf("migrated offline generation = %d, %v; want 0", g, err)
@@ -39,6 +40,7 @@ func TestMigrationFromV36SeedsOfflineGeneration(t *testing.T) {
 }
 
 func TestOfflineGenerationOnFreshDatabase(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if g, err := s.OfflineGeneration(t.Context()); err != nil || g != 0 {
 		t.Fatalf("fresh offline generation = %d, %v; want 0", g, err)
@@ -48,6 +50,7 @@ func TestOfflineGenerationOnFreshDatabase(t *testing.T) {
 // 缺行与负值都是库损坏：读侧报错，不能被当成"没有库外变更"而让 hub 永远不重载。负值写不进去（CHECK），
 // 夹具关掉约束检查直接写，模拟约束之外改坏的库。
 func TestOfflineGenerationRejectsMissingOrNegativeRow(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, corrupt, want string
 	}{
@@ -89,6 +92,7 @@ func TestOfflineGenerationRejectsMissingOrNegativeRow(t *testing.T) {
 
 // 代数不进任何备份层：36 与 37 的配置层（可带指标层）快照恢复到新建库或已有代数的库，代数都重新种子为 0。
 func TestOfflineGenerationSnapshotRestore(t *testing.T) {
+	t.Parallel()
 	for _, version := range []int{36, 37} {
 		for _, withMetrics := range []bool{false, true} {
 			for _, existing := range []bool{false, true} {

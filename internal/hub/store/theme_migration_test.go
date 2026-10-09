@@ -28,6 +28,7 @@ var schemaV22 = append(slices.Clone(schemaV21),
 )
 
 func TestMigrationFromV18PreservesThemesAndRestoreRecords(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 18, func(t *testing.T, db *sql.DB) {
 		for _, stmt := range []string{
 			`INSERT INTO theme (id,name,version,preview,uploaded_at,enabled) VALUES ('kept','Kept','1','preview.png',123,1)`,

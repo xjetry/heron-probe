@@ -37,6 +37,7 @@ func (r *notifiedTasks) Forget(id int64) {
 }
 
 func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

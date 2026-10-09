@@ -73,6 +73,7 @@ func seedLegacyTheme(t *testing.T, db *sql.DB, content []byte) {
 }
 
 func TestMigrationFromV21ArchivesLegacyTheme(t *testing.T) {
+	t.Parallel()
 	content := themeZIP(t, "legacy", "one", 0)
 	s := migrateFrom(t, 21, func(t *testing.T, db *sql.DB) { seedLegacyTheme(t, db, content) })
 	list, err := s.ListThemes(t.Context())
@@ -129,6 +130,7 @@ func restoreThemesFixture(t *testing.T, config, dir string) *Store {
 }
 
 func TestThemeSnapshotRestoresAllVersionsAndSelection(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	a := installZIP(t, s, themeZIP(t, "a", "one", 1))
 	b := installZIP(t, s, themeZIP(t, "a", "two", 1))
@@ -176,6 +178,7 @@ func TestThemeSnapshotRestoresAllVersionsAndSelection(t *testing.T) {
 }
 
 func TestThemeReuploadRemovesMissingArchivePlaceholder(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 21, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO theme(id,name,version,preview,uploaded_at,enabled) VALUES('a','A','old','',1,1)"); err != nil {
 			t.Fatal(err)
@@ -199,6 +202,7 @@ func TestThemeReuploadRemovesMissingArchivePlaceholder(t *testing.T) {
 }
 
 func TestDeleteThemeClearsOnlyItsSelections(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	a := installZIP(t, s, themeZIP(t, "a", "one", 1))
 	b := installZIP(t, s, themeZIP(t, "b", "two", 1))
@@ -230,6 +234,7 @@ func TestDeleteThemeClearsOnlyItsSelections(t *testing.T) {
 }
 
 func TestLegacyThemeSnapshotMigration(t *testing.T) {
+	t.Parallel()
 	for _, format := range []bool{false, true} {
 		t.Run(fmt.Sprint(format), func(t *testing.T) {
 			path, db := frozenSchemaFixture(t, 21)
@@ -255,6 +260,7 @@ func TestLegacyThemeSnapshotMigration(t *testing.T) {
 }
 
 func TestThemeRestoreRejectsUnmatchedIdentityAndVersion(t *testing.T) {
+	t.Parallel()
 	for _, query := range []string{"DELETE FROM theme", "INSERT INTO theme(id) VALUES('orphan')", "DELETE FROM snapshot_theme"} {
 		t.Run(query, func(t *testing.T) {
 			s, _ := open(t)
@@ -286,6 +292,7 @@ func TestThemeRestoreRejectsUnmatchedIdentityAndVersion(t *testing.T) {
 }
 
 func TestLegacyMetricsSnapshotRejectsUnknownFormat(t *testing.T) {
+	t.Parallel()
 	path, _ := frozenSchemaFixture(t, 21)
 	s, _ := open(t)
 	config, metrics := filepath.Join(t.TempDir(), "config.db"), filepath.Join(t.TempDir(), "metrics.db")

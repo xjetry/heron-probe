@@ -7,6 +7,7 @@ import (
 )
 
 func TestSetAdminPasswordRevokesEverySession(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	if err := s.SetAdminPassword(ctx, "original"); err != nil {
@@ -50,6 +51,7 @@ func lookupSession(t *testing.T, s *Store, h [32]byte) (Session, bool) {
 }
 
 func TestNoAdminIsReportedExplicitly(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if _, ok, err := s.AdminPasswordHash(context.Background()); ok || err != nil {
 		t.Fatalf("empty admin table: ok=%v err=%v, want false nil", ok, err)
@@ -57,6 +59,7 @@ func TestNoAdminIsReportedExplicitly(t *testing.T) {
 }
 
 func TestSessionLifecycle(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	if err := s.SetAdminPassword(ctx, "original"); err != nil {

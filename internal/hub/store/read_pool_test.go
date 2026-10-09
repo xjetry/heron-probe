@@ -90,6 +90,7 @@ func holdReadConns(t *testing.T, db *sql.DB, n int) (release func()) {
 // 池满时再来一条读：它必须排队（WaitCount 增长）而不是另开第 limit+1 个连接；连接归还后全部
 // 留作空闲（MaxIdleClosed 不变），下一条读复用它们而不是关掉重开。两个读池各验一遍。
 func TestReadPoolQueuesAtLimitAndKeepsReturnedConnections(t *testing.T) {
+	t.Parallel()
 	for _, pc := range readPoolCases() {
 		t.Run(pc.name, func(t *testing.T) {
 			s, _ := open(t)
@@ -144,6 +145,7 @@ func TestReadPoolQueuesAtLimitAndKeepsReturnedConnections(t *testing.T) {
 
 // 真实读方法、并发数是较大上限的四倍：两个池的连接数始终不超过各自上限，归还的连接被复用而不是关掉重开。
 func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	cases := readPoolCases()
@@ -232,6 +234,7 @@ func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 // 面板每 POLL_MS（2 秒）拉一次；一次轮询用过、归还的连接，到下一次轮询时必须还在池里。等 3 秒：
 // 一个轮询间隔，加上 database/sql 回收协程至少 1 秒一轮的扫描粒度。两个池同时验，共用这一次等待。
 func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	cases := readPoolCases()
 	before := make([]sql.DBStats, len(cases))
@@ -255,6 +258,7 @@ func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
 // 对比候选读）照常拿到连接、哪个池都不排队；轻池被占满时，经 queryFamily 的四个历史入口以超过
 // lightScanRows 的窗口照常执行、哪个池都不排队。任何一条读走错了池，就会在被占满的那个池上排队到超时。
 func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -319,6 +323,7 @@ func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
 // 计序列。它的预计扫描量在 lightScanRows 之内，所以历史池被大扫描占满时它不排队——告警判定的时效
 // 不随公开端的历史负载变化。
 func TestReadPoolRoutesAlertShapedReadsToLightPool(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -354,6 +359,8 @@ func TestReadPoolRoutesAlertShapedReadsToLightPool(t *testing.T) {
 //	HERON_POOL_BENCH=1 go test ./internal/hub/store/ -run TestReadPoolScanCost -v -count=1
 //
 // 单序列指标、1m 级，每档窗口串行查 scanCostRuns 次（无并发、无排队），步长取到不超过 720 点（面板默认点数）。
+//
+// 不并行：它量的是耗时，与同包其它用例并行时数字里混进它们的负载，失去同机对照的意义。
 func TestReadPoolScanCost(t *testing.T) {
 	if os.Getenv("HERON_POOL_BENCH") == "" {
 		t.Skip("set HERON_POOL_BENCH=1 to run the scan cost measurement")
@@ -411,6 +418,8 @@ func TestReadPoolScanCost(t *testing.T) {
 //
 // 单池各组让历史读也走轻池（hr 临时指向 r），拆池组即生产的两个池与取值。每种负载下各组交错重复
 // poolBenchReps 次取中位数；每次开跑前关掉全部空闲连接，各组都从冷池开始。延迟只作同机对照。
+//
+// 不并行：它量的是耗时，与同包其它用例并行时数字里混进它们的负载，失去同机对照的意义。
 func TestReadPoolLoadComparison(t *testing.T) {
 	if os.Getenv("HERON_POOL_BENCH") == "" {
 		t.Skip("set HERON_POOL_BENCH=1 to run the read pool comparison")

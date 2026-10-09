@@ -18,6 +18,7 @@ type logWriterFunc func([]byte) (int, error)
 func (f logWriterFunc) Write(b []byte) (int, error) { return f(b) }
 
 func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -63,6 +64,7 @@ func TestMaintenanceAfterRollupErrorKeepsSeriesButPrunesEvents(t *testing.T) {
 }
 
 func TestPruneWaitsForConsumer(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	id, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -102,6 +104,7 @@ func TestPruneWaitsForConsumer(t *testing.T) {
 }
 
 func TestRollupUsesPrimaryKeyRanges(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, f := range families {
 		for i, lv := range levels {
@@ -190,6 +193,7 @@ func readFamilyLevel(t *testing.T, s *Store, f *family, i int, nodeID int64) [][
 }
 
 func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
+	t.Parallel()
 	for _, f := range families {
 		for i := 1; i < len(levels); i++ {
 			lv := levels[i]
@@ -262,6 +266,7 @@ func TestRollupCatchupCommitsBoundedSlices(t *testing.T) {
 }
 
 func TestNodeCreationAppendsAfterReorder(t *testing.T) {
+	t.Parallel()
 	for _, registered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "CreateNode", true: "RegisterNode"}[registered], func(t *testing.T) {
 			s, clk := open(t)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestAPITokenLifecycle(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("heron_at_x"))
@@ -38,6 +39,7 @@ func TestAPITokenLifecycle(t *testing.T) {
 
 // 吊销按 id 进行：id 若被复用，针对旧 token 写下的吊销命令会落到新 token 上。
 func TestAPITokenIDsAreNotReused(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	first, _ := s.CreateAPIToken(ctx, "a", sha256.Sum256([]byte("a")), clk.Now(), 100, nil)
@@ -51,6 +53,7 @@ func TestAPITokenIDsAreNotReused(t *testing.T) {
 }
 
 func TestAPITokenLimitIsDecidedInsideTheWriteTransaction(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	const limit = 5
@@ -78,6 +81,7 @@ func TestAPITokenLimitIsDecidedInsideTheWriteTransaction(t *testing.T) {
 }
 
 func TestTouchRecordsUseAndNeverResurrects(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	h := sha256.Sum256([]byte("t"))
@@ -105,6 +109,7 @@ func TestTouchRecordsUseAndNeverResurrects(t *testing.T) {
 }
 
 func TestDeleteAllAPITokens(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	for i := 0; i < 3; i++ {
@@ -117,6 +122,7 @@ func TestDeleteAllAPITokens(t *testing.T) {
 
 // grant 的形状错误是输入校验（ErrInvalidGrant），不是授权拒绝；引用不存在的节点是 ErrNotFound。三者都不落库。
 func TestCreateAPITokenRejectsInvalidGrant(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	node, _, err := s.CreateNode(t.Context(), "node", Billing{}, hash(1))
 	if err != nil {

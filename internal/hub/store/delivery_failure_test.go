@@ -10,6 +10,7 @@ import (
 )
 
 func TestUpdateDeliveryRejectsInconsistentResult(t *testing.T) {
+	t.Parallel()
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// 每个用例只违反一条规则，其余字段取合法值，才能说明被拒是因为那一条。
 	for _, tc := range []struct {
@@ -55,6 +56,7 @@ func TestUpdateDeliveryRejectsInconsistentResult(t *testing.T) {
 
 // 可重试的两类（transport、http_status）允许非终态写入，其余拒绝的只是上面列出的组合。
 func TestUpdateDeliveryAcceptsRetryableFailureBeforeDone(t *testing.T) {
+	t.Parallel()
 	for _, r := range []DeliveryResult{
 		{Failure: FailureTransport, Error: "refused"},
 		{Failure: FailureHTTPStatus, HTTPStatus: 503, Error: "busy"},
@@ -71,6 +73,7 @@ func TestUpdateDeliveryAcceptsRetryableFailureBeforeDone(t *testing.T) {
 }
 
 func TestUpdateDeliveryStoresFailureAndClearsItOnSuccess(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -98,6 +101,7 @@ func TestUpdateDeliveryStoresFailureAndClearsItOnSuccess(t *testing.T) {
 }
 
 func TestGetDeliveryError(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -115,6 +119,7 @@ func TestGetDeliveryError(t *testing.T) {
 var schemaV6 = append(slices.Clone(schemaV5), "CREATE TABLE api_token (\n  -- AUTOINCREMENT：id 永不复用。吊销按 id 进行，复用会让针对旧 token 的吊销落到新 token 上。\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  name TEXT NOT NULL,\n  -- 整串明文（含前缀）的 SHA-256；明文不落库。\n  token_hash BLOB NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL,\n  -- NULL 表示从未使用。只供展示：距已落库值满一分钟才刷新。\n  last_used_at INTEGER\n)")
 
 func TestMigrationFromV6ClassifiesDeliveryFailures(t *testing.T) {
+	t.Parallel()
 	type seedRow struct {
 		ok, done  bool
 		lastError string
@@ -150,6 +155,7 @@ func TestMigrationFromV6ClassifiesDeliveryFailures(t *testing.T) {
 		14: {seedRow{false, true, "HTTP 099 x: y"}, row{FailureUnclassified, none, "HTTP 099 x: y"}},
 	} {
 		t.Run(fmt.Sprint(id), func(t *testing.T) {
+			t.Parallel()
 			seed := func(t *testing.T, db *sql.DB) {
 				seedMinuteRow(t, db)
 				if _, err := db.Exec("INSERT INTO alert_delivery (id, event_id, channel_id, attempts, ok, done, last_error) VALUES (?, 1, 1, 1, ?, ?, ?)", id, tc.seed.ok, tc.seed.done, tc.seed.lastError); err != nil {

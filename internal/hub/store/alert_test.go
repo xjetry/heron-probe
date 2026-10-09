@@ -72,6 +72,7 @@ func assertAlertRows(t *testing.T, s *Store, table, where string, want int) {
 }
 
 func TestAlertRuleRoundTripAndScope(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, task := alertFixture(t)
 	a := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, Enabled: true})
 	b := saveRule(t, s, AlertRule{Name: "probe", Kind: KindProbe, Enabled: true, TaskID: task,
@@ -105,6 +106,7 @@ func TestAlertRuleRoundTripAndScope(t *testing.T) {
 }
 
 func TestSaveAlertRuleRejectsMissingReferences(t *testing.T) {
+	t.Parallel()
 	s, _, _, task := alertFixture(t)
 	for _, tc := range []struct {
 		kind ObjectKind
@@ -136,6 +138,7 @@ func TestSaveAlertRuleRejectsMissingReferences(t *testing.T) {
 }
 
 func TestDeleteAlertRuleCascadesButKeepsEvents(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline, NodeIDs: ids, ChannelIDs: []int64{cs[0].ID}})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -152,6 +155,7 @@ func TestDeleteAlertRuleCascadesButKeepsEvents(t *testing.T) {
 }
 
 func TestDeleteNotifyChannelInUse(t *testing.T) {
+	t.Parallel()
 	s, _, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "bound", Kind: KindOffline, ChannelIDs: []int64{cs[0].ID}})
 	assertInUse(t, s.DeleteNotifyChannel(t.Context(), cs[0].ID), ObjectNotifyChannel, cs[0].ID)
@@ -175,6 +179,7 @@ func assertInUse(t *testing.T, err error, kind ObjectKind, id int64) {
 }
 
 func TestDeleteProbeTaskInUseByRule(t *testing.T) {
+	t.Parallel()
 	s, _, _, task := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "bound", Kind: KindProbe, TaskID: task})
 	_, err := s.DeleteProbeTask(t.Context(), task)
@@ -188,6 +193,7 @@ func TestDeleteProbeTaskInUseByRule(t *testing.T) {
 }
 
 func TestRecordTransitionWritesStateEventAndDeliveries(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
@@ -209,6 +215,7 @@ func TestRecordTransitionWritesStateEventAndDeliveries(t *testing.T) {
 }
 
 func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {
@@ -227,6 +234,7 @@ func TestRecordTransitionRollsBackOnDeliveryFailure(t *testing.T) {
 }
 
 func TestUpdateBatchAndPending(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[1].ID})
@@ -271,6 +279,7 @@ func TestUpdateBatchAndPending(t *testing.T) {
 }
 
 func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -292,6 +301,7 @@ func TestDeliveryTerminalStateCannotBeReopened(t *testing.T) {
 
 // 续投按批次号装填，批次读写按批次号定位：两类查询各走自己的索引，续投不为去重与排序建临时 B 树。
 func TestDeliveryBatchQueriesUseIndexes(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, tc := range []struct{ query, index string }{
 		{selectPendingBatches, "USING COVERING INDEX alert_delivery_pending"},
@@ -324,6 +334,7 @@ func TestDeliveryBatchQueriesUseIndexes(t *testing.T) {
 }
 
 func TestListAlertEventsCursor(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	var events []AlertEvent
@@ -346,6 +357,7 @@ func TestListAlertEventsCursor(t *testing.T) {
 }
 
 func TestDeleteNodeCleansAlertScopeAndState(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline, NodeIDs: ids})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})
@@ -367,6 +379,7 @@ func TestDeleteNodeCleansAlertScopeAndState(t *testing.T) {
 }
 
 func TestNodeOfflineGraceRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	for _, grace := range []int{90, 0} {
 		if _, err := s.UpdateNode(t.Context(), ids[0], NodeEdit{Name: "n", TrafficResetDay: 1, OfflineGraceS: grace}); err != nil {
@@ -384,6 +397,7 @@ func TestNodeOfflineGraceRoundTrip(t *testing.T) {
 }
 
 func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	a := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})
 	b := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, NodeIDs: ids})
@@ -417,6 +431,7 @@ func TestSaveAlertRulePrunesStatesWithScope(t *testing.T) {
 }
 
 func TestProbeTaskNodeIDs(t *testing.T) {
+	t.Parallel()
 	s, ids, _, task := alertFixture(t)
 	got, err := s.ProbeTaskNodeIDs(t.Context(), task)
 	if err != nil || !reflect.DeepEqual(got, ids) {
@@ -429,6 +444,7 @@ func TestProbeTaskNodeIDs(t *testing.T) {
 }
 
 func TestNotifyChannelRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, _, cs, _ := alertFixture(t)
 	want := []NotifyChannel{
 		{ID: cs[0].ID, Name: "0", Kind: ChannelWebhook, Config: `{}`, CreatedAt: s.clk.Now()},
@@ -450,6 +466,7 @@ func TestNotifyChannelRoundTrip(t *testing.T) {
 }
 
 func TestAlertScopeDoesNotWidenAfterLastNodeDeletion(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	scoped := saveRule(t, s, AlertRule{Name: "scoped", Kind: KindOffline, Enabled: true, NodeIDs: ids[:1]})
 	all := saveRule(t, s, AlertRule{Name: "all", Kind: KindOffline, Enabled: true, AllNodes: true})
@@ -483,6 +500,7 @@ func assertAlertNotFound(t *testing.T, err error, kind ObjectKind, id int64) {
 }
 
 func TestAlertWritesRejectDeletedReferences(t *testing.T) {
+	t.Parallel()
 	for _, missing := range []ObjectKind{ObjectNode, ObjectAlertRule, ObjectNotifyChannel} {
 		t.Run(string(missing), func(t *testing.T) {
 			s, ids, cs, _ := alertFixture(t)
@@ -519,6 +537,7 @@ func TestAlertWritesRejectDeletedReferences(t *testing.T) {
 }
 
 func TestSaveAlertRulePrunesDisabledButKeepsEnabledAll(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline, Enabled: true, AllNodes: true})
 	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
@@ -532,6 +551,7 @@ func TestSaveAlertRulePrunesDisabledButKeepsEnabledAll(t *testing.T) {
 }
 
 func TestSaveAlertRuleRollsBackWhenStatePruningFails(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "kept", Kind: KindOffline, Enabled: true, NodeIDs: ids})
 	if err := s.SetAlertState(t.Context(), r.ID, ids[0], StateFiring, s.clk.Now(), time.Time{}); err != nil {
@@ -557,6 +577,7 @@ func TestSaveAlertRuleRollsBackWhenStatePruningFails(t *testing.T) {
 }
 
 func TestAlertMissingObjects(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, tc := range []struct {
 		name string
@@ -582,6 +603,7 @@ func TestAlertMissingObjects(t *testing.T) {
 }
 
 func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID, cs[0].ID, cs[1].ID})
@@ -607,6 +629,7 @@ func TestDeleteNotifyChannelTerminatesPendingDeliveries(t *testing.T) {
 }
 
 func TestListAlertEventsUsesNodeIndex(t *testing.T) {
+	t.Parallel()
 	s, _, _, _ := alertFixture(t)
 	for _, before := range []int64{0, 99} {
 		where, args := alertEventWindow(1, before, 2)

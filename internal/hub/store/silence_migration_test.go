@@ -39,6 +39,7 @@ var schemaV27 = append(slices.Clone(schemaV26),
 
 // 旧行的静默列一律取默认值：升级前的节点未被置于维护、历史事件与状态也不得被标成已静默。
 func TestMigrationFromV26AddsSilenceStructure(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 26, seedMinuteRow)
 	var maintenance int
 	if err := migrated.r.QueryRow("SELECT maintenance FROM node WHERE id = 7").Scan(&maintenance); err != nil {

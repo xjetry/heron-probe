@@ -17,6 +17,7 @@ import (
 var schemaV23 = append(slices.Clone(schemaV22), `ALTER TABLE node_facts ADD COLUMN network TEXT NOT NULL DEFAULT '{}'`)
 
 func TestNetworkWritesRejectInvalidTime(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "bounded", Billing{}, hash(1))
 	if err != nil {
@@ -31,6 +32,7 @@ func TestNetworkWritesRejectInvalidTime(t *testing.T) {
 }
 
 func TestNetworkSnapshotsRejectInvalidData(t *testing.T) {
+	t.Parallel()
 	for _, network := range []string{`{"ipv4":{"state":2,"checkedAt":"9223372036854775807"}}`, `{"ipv6":{"state":1,"address":"8.8.8.8","checkedAt":"100"}}`, `{invalid`} {
 		t.Run(network, func(t *testing.T) {
 			s, _ := open(t)
@@ -67,6 +69,7 @@ func TestNetworkSnapshotsRejectInvalidData(t *testing.T) {
 }
 
 func TestNetworkFactsRoundTripAndRestore(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "network", Billing{}, hash(1))
 	if err != nil {
@@ -114,6 +117,7 @@ func TestNetworkFactsRoundTripAndRestore(t *testing.T) {
 }
 
 func TestNetworkMigrationFromV22PreservesUnknown(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 22, func(t *testing.T, db *sql.DB) {
 		for _, q := range []string{`INSERT INTO node(id,name,token_hash,created_at) VALUES(1,'old',x'01',0)`, `INSERT INTO node_facts VALUES(1,42,'old-host','','','','','',0,'old-agent',0,123)`} {
 			if _, err := db.Exec(q); err != nil {
@@ -128,6 +132,7 @@ func TestNetworkMigrationFromV22PreservesUnknown(t *testing.T) {
 }
 
 func TestNetworkOldSnapshotRestoresWithoutInventingAddresses(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "old", Billing{}, hash(1))
 	if err != nil {

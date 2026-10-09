@@ -13,6 +13,7 @@ var schemaV32 = append(slices.Clone(schemaV31),
 // 旧库升级前没有公开备注，升级后旧节点的 public_remark 取空串：空串即"没有"，公开端对空串不下发有意义的字段，
 // 不把升级伪装成站长写过什么。seedMinuteRow 建的节点是 7 号。
 func TestMigrationFromV31AddsPublicRemark(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 31, seedMinuteRow)
 	var remark string
 	if err := migrated.r.QueryRow("SELECT public_remark FROM node WHERE id = 7").Scan(&remark); err != nil {

@@ -9,6 +9,7 @@ import (
 )
 
 func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	got, err := s.SiteSettings(t.Context())
 	if err != nil || got != (SiteSettings{Theme: DefaultTheme, PublicEnabled: true}) {
@@ -36,6 +37,7 @@ func TestSiteSettingsDefaultAndWholeReplacement(t *testing.T) {
 // 外观的每个字段都要经 fields 登记才存得进库。逐字段填入各不相同的值（用字段名），保存后必须原样读回：
 // 漏登记的字段读回空串，两个字段共用一个键则其中一个读回另一个的值。字段按反射枚举，新增的字段自动纳入。
 func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	var want SiteAppearance
 	v := reflect.ValueOf(&want).Elem()
@@ -58,6 +60,7 @@ func TestSiteAppearanceRoundTripsEveryField(t *testing.T) {
 // 触发器拦写入顺序里最后一个键 notify.login_channels（SaveSettings 先写外观、总闸与国家查询，再由 saveBackup 写备份，
 // 登录通知的渠道列表在最后），失败时其余键都已写过：拆成多个事务提交的实现会把其中已提交的新值留在库里。
 func TestSaveSettingsIsAllOrNothing(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	var channels []int64
@@ -109,6 +112,7 @@ func TestSaveSettingsIsAllOrNothing(t *testing.T) {
 // 各组彼此独立：只给总闸、只给国家查询、只给备份或只给登录通知渠道的保存不写外观键，库里的外观原样保留；回显的外观在同一个写事务里
 // 读回，是库里的值而不是空的外观。
 func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	full := SiteAppearance{Title: "状态", Theme: "dark", AccentColor: "#112233", Logo: "data:image/png;base64,AAAA", CustomCSS: "body{}"}
@@ -140,6 +144,7 @@ func TestSaveSettingsLeavesAbsentAppearance(t *testing.T) {
 
 // 登录通知的渠道列表与备份的一样是必须合法才能解释的编码：值损坏时读设置报错并点名键，不按"不通知"猜。
 func TestSettingsRejectCorruptLoginChannels(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	if _, err := s.SaveSettings(ctx, SettingsUpdate{LoginChannels: &[]int64{}}); err != nil {
@@ -159,6 +164,7 @@ var schemaV7 = append(slices.Clone(schemaV6),
 	"ALTER TABLE alert_delivery ADD COLUMN http_status INTEGER")
 
 func TestMigrationFromV7MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 7, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)

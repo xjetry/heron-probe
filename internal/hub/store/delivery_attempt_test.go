@@ -7,6 +7,7 @@ import (
 )
 
 func TestBeginBatchAttemptAtomicallyCapsStarts(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordEvent(t, s, r.ID, ids[0], []int64{cs[0].ID})

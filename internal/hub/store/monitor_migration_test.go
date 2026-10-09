@@ -27,6 +27,7 @@ var schemaV21 = func() []string {
 }()
 
 func TestMigrationFromV20KeepsHistoryAndTaskOrder(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 20, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, statement := range []string{
@@ -58,6 +59,7 @@ func TestMigrationFromV20KeepsHistoryAndTaskOrder(t *testing.T) {
 }
 
 func TestRestoreV20AndV21PreservesOrderAndPeakSemantics(t *testing.T) {
+	t.Parallel()
 	for _, version := range []int{20, 21} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path, db := frozenSchemaFixture(t, version)

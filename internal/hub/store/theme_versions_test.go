@@ -5,6 +5,7 @@ import (
 )
 
 func TestThemeInstallationRetainsBothVersions(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, version := range []string{"one", "two"} {
 		_, err := s.PutTheme(t.Context(), Theme{ID: "a", Name: "A", Version: version, SDK: 1},

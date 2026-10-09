@@ -21,6 +21,7 @@ var schemaV14 = append(slices.Clone(schemaV13),
 
 // 旧库升级后与新建库结构相同，节点原样保留且没有标签；升级后的库能挂标签。
 func TestMigrationFromV14AddsTagTables(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 14, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node (id, name, token_hash, created_at, country_pin) VALUES (7, 'kept', x'00', 1, 'JP')"); err != nil {
 			t.Fatal(err)
@@ -62,6 +63,7 @@ func nodeNames(nodes []Node) []string {
 
 // 三个节点分别挂 {a}、{a,b}、{b}：多选取交集，空选择返回全部，不存在的标签让结果为空。
 func TestListNodesByTagsIsAnIntersection(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	for i, tags := range [][]string{{"a"}, {"a", "b"}, {"b"}} {
@@ -99,6 +101,7 @@ func TestListNodesByTagsIsAnIntersection(t *testing.T) {
 // ListUntaggedNodes 返回没有任何标签的节点：判据是 node_tag 关联行而不是 tag 行，标签行失去最后一个关联后仍在、节点
 // 已算无标签；顺序与 ListNodes 相同；带主体范围时只含范围内的节点。
 func TestListUntaggedNodes(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	var ids []int64
@@ -167,6 +170,7 @@ func TestListUntaggedNodes(t *testing.T) {
 
 // db 与 DB 是同一个标签，沿用先建的写法；节点的标签按折叠后的名字排序。
 func TestTagsFoldCaseAndKeepTheFirstSpelling(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	first, _, _ := s.CreateNode(ctx, "first", Billing{}, hash(1))
@@ -196,6 +200,7 @@ func TestTagsFoldCaseAndKeepTheFirstSpelling(t *testing.T) {
 
 // 整体替换：新集合替掉旧集合，空集合清空；标签行不随最后一个关联消失。
 func TestUpdateNodeReplacesTheTagSet(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -219,6 +224,7 @@ func TestUpdateNodeReplacesTheTagSet(t *testing.T) {
 
 // 删除标签只解除关联：节点仍在、别的标签不动；按任一写法都能删，删不存在的标签得 ErrNotFound。
 func TestDeleteTagOnlyDetachesIt(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -244,6 +250,7 @@ func TestDeleteTagOnlyDetachesIt(t *testing.T) {
 
 // 删节点后它的关联行一行不剩，别的节点的关联与标签本身都在。
 func TestDeleteNodeRemovesItsTagRows(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	gone, _, _ := s.CreateNode(ctx, "gone", Billing{}, hash(1))
@@ -264,6 +271,7 @@ func TestDeleteNodeRemovesItsTagRows(t *testing.T) {
 
 // TagFold 的等价关系与 strings.EqualFold（简单折叠）相同。
 func TestTagFoldMatchesEqualFold(t *testing.T) {
+	t.Parallel()
 	words := []string{"db", "DB", "Db", "σ", "ς", "Σ", "k", "K", "K", "ß", "ss", "SS", "ẞ", "客户A", "客户a", "İ", "i", "I", "ı"}
 	for _, a := range words {
 		for _, b := range words {
@@ -277,6 +285,7 @@ func TestTagFoldMatchesEqualFold(t *testing.T) {
 // ddlNodeTag 注释里每条访问路径的依据：对 tag.go 里的语句本身跑 EXPLAIN QUERY PLAN，库里没有统计信息（store 从不跑
 // ANALYZE，与生产一致）。计划的措辞属于所钉的 SQLite 版本；换驱动版本后这里红了，按新输出重新核对注释，不只改字符串。
 func TestNodeTagQueryPlans(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	for i := range 30 {
@@ -342,6 +351,8 @@ func queryPlan(t *testing.T, s *Store, query string, args ...any) []string {
 
 // 节点行与它的标签来自同一个快照：写者每次同时改名字与标签（n<i> 配 t<i>），读者读到的名字后缀必须与标签后缀相同。
 // 标签若在另一个只读事务里读，两次读之间提交的写会让名字与标签错配，这条用例随之变红。
+//
+// 不并行：单处理器的机器上它把进程级的 GOMAXPROCS 提到 2，并行用例会在这期间被改变调度。
 func TestNodeRowAndTagsComeFromOneSnapshot(t *testing.T) {
 	s, _ := open(t)
 	ctx := t.Context()

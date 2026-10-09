@@ -13,6 +13,7 @@ var schemaV11 = append(slices.Clone(schemaV10), "CREATE TABLE maintenance_state 
 
 // 旧库的状态行升级后 recovered_at 为 NULL，读出是零值（从未恢复过），不会被读成 1970 年恢复过。
 func TestMigrationFromV11AddsRecoveredAtAsNull(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 11, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, stmt := range []string{
@@ -39,6 +40,7 @@ func TestMigrationFromV11AddsRecoveredAtAsNull(t *testing.T) {
 
 // 两个写入口都整行写 recovered_at：给出的时刻原样读回，零值写 NULL、读回零值。
 func TestAlertStateWritesRecoveredAt(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))

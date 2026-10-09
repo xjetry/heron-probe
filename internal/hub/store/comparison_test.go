@@ -82,6 +82,7 @@ func assertSearch(t *testing.T, s *Store, table, query string, args ...any) {
 
 // 每族、每级的源查询与额度计数都必须经前导键定位；对比查询另须命中 by_task 索引。
 func TestQueryFamilySourceQueriesUseLeadingKeys(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	for _, f := range families {
 		for i, lv := range levels {
@@ -159,6 +160,7 @@ func comparisonFixture(t *testing.T, s *Store) (taskID uint64, base int64, a, b 
 // 与逐节点 QueryProbes 过滤该任务后的样本逐桶相同。覆盖三级表与再分桶步长：粗级来源先在
 // 源查询里展开成行，再按请求步长二次分桶，与单节点路径的运算一致。
 func TestProbeComparisonMatchesSingleNodeAcrossLevels(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	task, base, a, b := comparisonFixture(t, s)
 	// 上卷冻结粗级行：粗级来源参与查询。
@@ -248,6 +250,7 @@ func TestProbeComparisonMatchesSingleNodeAcrossLevels(t *testing.T) {
 
 // 请求窗口边缘未对齐步长时按对齐后的窗口读取：首尾桶包含窗口外的分钟行，与单节点路径同一口径。
 func TestProbeComparisonAlignsUnalignedWindowEdges(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	task, base, a, _ := comparisonFixture(t, s)
 	rows, err := s.QueryProbeComparison(t.Context(), task, []int64{a}, base+130, base+700, levels[0], 300)
@@ -271,6 +274,7 @@ func TestProbeComparisonAlignsUnalignedWindowEdges(t *testing.T) {
 // 水位交界处两侧数据经同一快照拼接：把 5m 水位摆回窗口中间，对比查询的桶与逐节点查询仍一致，
 // 且确实落在纯粗级与纯细级都不同的结果上（交界拼接被走到）。
 func TestProbeComparisonAcrossWatermarkBoundary(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	task, base, a, b := comparisonFixture(t, s)
 	if err := s.Rollup(t.Context()); err != nil {
@@ -307,6 +311,7 @@ func TestProbeComparisonAcrossWatermarkBoundary(t *testing.T) {
 
 // 全丢包或全错误的桶没有 rtt 样本（min/max 为 NULL），聚合后 RttN 为 0、不伪造成 0µs 读数。
 func TestProbeComparisonKeepsNullRttBuckets(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	a, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
 	if err != nil {
@@ -342,6 +347,7 @@ func TestProbeComparisonKeepsNullRttBuckets(t *testing.T) {
 
 // 任务删除后历史仍在（§8.3），对比查询照旧按行返回；没有历史的任务结果为空。
 func TestProbeComparisonServesDeletedTaskHistory(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	a, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
 	if err != nil {
@@ -442,14 +448,12 @@ func fillProbeRowsStep(ctx context.Context, db *sql.DB, table string, node, task
 // 超过额度：错误给出额度、水位时刻与建议，聚合一次都没有执行；同一段历史上额度权重更大的
 // 对比查询（N_max 条序列）仍在额度内照常服务。
 func TestReadQuotaRejectsBeforeAggregation(t *testing.T) {
-	s, _ := open(t)
-	counter := countReads(t, s)
+	t.Parallel()
 	// 一个节点一个任务，行数超过单节点探测额度 64×12000；水位与窗口都盖住全部行。
 	const rows = quotaRowsPerSeries*probelimit.MaxTasksPerNode + 1
+	s, _ := openProbeHistory(t, rows)
+	counter := countReads(t, s)
 	end := (int64(rows) + 1) * 3600
-	if err := fillProbeRows(t.Context(), s.w, "probe_1h", 1, 1, rows); err != nil {
-		t.Fatal(err)
-	}
 	setWatermark(t, s, "probe_1h", end)
 	setWatermark(t, s, "probe_5m", end)
 	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400)
@@ -484,6 +488,7 @@ func TestReadQuotaRejectsBeforeAggregation(t *testing.T) {
 // 常见窗口全部放行：两级水位健康、窗口覆盖细级与粗级、告警评估的整段 for_minutes 窗口
 // （上限 60 分钟 × 每节点上限 64 个任务、外加一个已删除任务的历史行）都在额度内。
 func TestReadQuotaAdmitsCommonWindows(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	base := int64(3600 * 24)
 	var rows []metric.ProbeRow
@@ -524,12 +529,10 @@ func TestReadQuotaAdmitsCommonWindows(t *testing.T) {
 // 任务更替让每节点的任务数恒为上限，历史行仍随更替增长：1h 表在保留期内堆过 64×B 行时，
 // 长窗口按声明被拒；行数是额度关心的事实，与展示步长无关（max_points=1 会把步长放大）。
 func TestReadQuotaRejectsTaskTurnoverHistory(t *testing.T) {
-	s, _ := open(t)
+	t.Parallel()
 	const rows = quotaRowsPerSeries*probelimit.MaxTasksPerNode + 24
+	s, _ := openProbeHistory(t, rows)
 	end := int64(rows) * 3600
-	if err := fillProbeRows(t.Context(), s.w, "probe_1h", 1, 1, rows); err != nil {
-		t.Fatal(err)
-	}
 	setWatermark(t, s, "probe_1h", end)
 	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400)
 	var quota ReadQuotaError
@@ -540,8 +543,13 @@ func TestReadQuotaRejectsTaskTurnoverHistory(t *testing.T) {
 
 // 额度计数的 LIMIT 提前终止：行数翻倍，带剩余额度上限的计数耗时几乎不变，而无上限计数随行数
 // 增长（对照组）。断言钉住同一条性质的两面：计数不会在读满之前扫完全表。
+//
+// 断言是耗时比值，仍与其它用例并行：阈值是无上限计数的四分之一，比有上限计数的正常耗时大两个数量级（同机开 -race、
+// 与本包其余用例并行、机器负载 40–50 时实测：有上限计数 1.4–3ms，20 万行无上限计数 590–680ms、阈值约 150ms），
+// 负载要让一次毫秒级的计数停顿上百毫秒才会误红；LIMIT 失效时有上限计数与无上限计数同量级，照样越过阈值。
 func TestReadQuotaCountStopsAtLimit(t *testing.T) {
-	s, _ := open(t)
+	t.Parallel()
+	s, _ := openProbeHistory(t, probeHistoryRows)
 	bounded := func(limit int64) time.Duration {
 		start := time.Now()
 		var n int64
@@ -550,13 +558,11 @@ func TestReadQuotaCountStopsAtLimit(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	for _, size := range []int64{200000, 800000} {
-		if _, err := s.w.Exec("DELETE FROM probe_1h WHERE node_id = 1"); err != nil {
-			t.Fatal(err)
-		}
-		if err := fillProbeRows(t.Context(), s.w, "probe_1h", 1, 1, size); err != nil {
-			t.Fatal(err)
-		}
+	// 先量模板的全部行，再截到四分之一量第二次：两次的行数与逐次重灌时相同，截短只删不灌。
+	have := int64(probeHistoryRows)
+	for _, size := range []int64{probeHistoryRows, probeHistoryRows / 4} {
+		truncateProbeHistory(t, s, have, size)
+		have = size
 		boundedAt := bounded(101)
 		var all int64
 		start := time.Now()
@@ -575,6 +581,7 @@ func TestReadQuotaCountStopsAtLimit(t *testing.T) {
 
 // 对比候选：同一事务读任务标注、选择器与可见候选；候选按节点全序，空候选与不存在的任务同形。
 func TestListComparisonNodes(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	mk := func(name string, public bool, order int64) int64 {
@@ -636,6 +643,7 @@ func TestListComparisonNodes(t *testing.T) {
 
 // 经迁移 33 升上来的库带对比索引，且对比查询走索引。
 func TestMigratedComparisonLookupUsesByTaskIndex(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 32, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO probe_1m (node_id, ts, task_id, sent, lost, errors, rtt_sum_us) VALUES (7, 60, 1, 2, 1, 0, 300)"); err != nil {
 			t.Fatal(err)
@@ -657,6 +665,7 @@ func TestMigratedComparisonLookupUsesByTaskIndex(t *testing.T) {
 // 只读库与写协程挂起只影响写入口：历史查询（含对比）只占读池，照常返回。api 层拿不到
 // store 的这两个私有句柄，但入口调用的正是这些读方法，故障只可能来自这两个私有侧。
 func TestComparisonReadsSurviveWriteFaults(t *testing.T) {
+	t.Parallel()
 	s, path := openAt(t)
 	ctx := t.Context()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -713,6 +722,7 @@ func TestComparisonReadsSurviveWriteFaults(t *testing.T) {
 // 每任务一行，61 分钟 × 满配 64 个分配槽 + 已删任务的残留行也只有几千行，距
 // 64 × quotaRowsPerSeries 很远。这里的用例按上限满打满算地钉住这一点。
 func TestAlertWindowStaysWithinQuota(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -746,21 +756,16 @@ func TestAlertWindowStaysWithinQuota(t *testing.T) {
 // 额度按对齐后的窗口计数：对齐把窗口向上取整到 step，恰好把一行挤过额度时必须被拒。
 // 若把计数换成原始窗口（读取仍是对齐窗口），这行会被漏数——用例在额度边界上钉住。
 func TestReadQuotaCountsAlignedWindow(t *testing.T) {
-	s, _ := open(t)
-	ctx := t.Context()
-	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Parallel()
 	const rows = quotaRowsPerSeries*probelimit.MaxTasksPerNode + 1
 	// 行在 1h 层，水位盖过全部数据；原始窗口 [0, rows*3600-1] 恰含 rows-1 行，7d 步长的对齐把最后一行拉进来。
-	if err := fillProbeRows(t.Context(), s.w, "probe_1h", id, 1, rows); err != nil {
-		t.Fatal(err)
-	}
+	s, _ := openProbeHistory(t, rows)
+	ctx := t.Context()
+	id := createHistoryNode(t, s)
 	end := int64(rows) * 3600
 	setProbeWatermarks(t, s, end+3600, end+3600)
 	lv, _ := LevelByName("1h")
-	_, err = s.QueryProbes(ctx, id, 0, end-1, lv, 7*86400)
+	_, err := s.QueryProbes(ctx, id, 0, end-1, lv, 7*86400)
 	var quota ReadQuotaError
 	if !errors.As(err, &quota) {
 		t.Fatalf("aligned window must push the last row over quota: err = %v", err)
@@ -770,6 +775,7 @@ func TestReadQuotaCountsAlignedWindow(t *testing.T) {
 // 额度包含水位之后的细级尾巴：粗级行数远在额度内、细级尾巴超过额度时必须被拒。
 // 若计数漏掉细级（只数所选级别），这里会被放过——用例钉住"各级都要数"。
 func TestReadQuotaCountsFineTail(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -793,6 +799,20 @@ func TestReadQuotaCountsFineTail(t *testing.T) {
 	}
 }
 
+// createHistoryNode 在 openProbeHistory 的库上建节点。模板的探测行属于节点 1，库里此前没有节点，AUTOINCREMENT
+// 发出的第一个 id 就是 1；这里核对它，id 对不上时用例查的是一个没有历史的节点。
+func createHistoryNode(t *testing.T, s *Store) int64 {
+	t.Helper()
+	id, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 1 {
+		t.Fatalf("node id = %d, want 1 (the node the template's probe rows belong to)", id)
+	}
+	return id
+}
+
 func setProbeWatermarks(t *testing.T, s *Store, wm5m, wm1h int64) {
 	t.Helper()
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {
@@ -810,20 +830,15 @@ func setProbeWatermarks(t *testing.T, s *Store, wm5m, wm1h int64) {
 // 额度权重按满配任务槽（64）而不是当前任务数：历史里有 65 个任务编号的行、当前只分配了
 // 10 个任务时，760k 行仍在 768k 额度内照常服务。若权重改按当前任务数计，这里会被误拒。
 func TestReadQuotaUsesFullTaskSlots(t *testing.T) {
-	s, _ := open(t)
+	t.Parallel()
+	// 760,000 行摊在 65 个任务编号上（10 个在配、55 个已撤/已删），≤ 64×12000。
+	s, _ := openProbeHistory(t, 760000)
 	ctx := t.Context()
-	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := createHistoryNode(t, s)
 	for k := 1; k <= 10; k++ {
 		if _, _, err := s.SaveProbeTask(ctx, &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: fmt.Sprintf("192.0.2.%d", k), IntervalS: 60, TimeoutMs: 1000}, NodeSelector{NodeIDs: []int64{id}}); err != nil {
 			t.Fatal(err)
 		}
-	}
-	// 760,000 行摊在 65 个任务编号上（10 个在配、55 个已撤/已删），≤ 64×12000。
-	if err := fillProbeRows(ctx, s.w, "probe_1h", id, 1, 760000); err != nil {
-		t.Fatal(err)
 	}
 	end := int64(768001) * 3600
 	setProbeWatermarks(t, s, end, end)

@@ -18,6 +18,7 @@ import (
 //   - 每条写入在两库上各执行一次。SQLite 拒绝时点名未命名 CHECK 的表达式原文，据此断言拒绝它的正是配给它的那条，
 //     而不是同表的另一条。
 func TestEveryCheckConstraintRefusesItsViolation(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 1, seedMinuteRow)
 	fresh, _ := open(t)
 	checkViolations := []struct{ table, check, write string }{

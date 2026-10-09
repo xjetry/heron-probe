@@ -49,6 +49,7 @@ var schemaV28 = append(slices.Clone(schemaV27),
 
 // 旧行的新列一律取 0/0/0：n=0 就是这一分钟没有采样，老历史不得被伪装成测到的零速率或零占用。
 func TestMigrationFromV27AddsMetricColumns(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 27, seedMinuteRow)
 	columns := []string{
 		"disk_read_bps_sum", "disk_read_bps_n", "disk_read_bps_max",
@@ -78,6 +79,7 @@ func TestMigrationFromV27AddsMetricColumns(t *testing.T) {
 // 描述表是单一事实源：这里枚举它，确认四个新指标在内存桶与三张指标表的 SQL 列里都有位置，
 // 既有的按描述表枚举的用例（如 TestMissingMetricReadsBackAsNoData、上卷与查询）因此自动覆盖新列。
 func TestMetricDescriptionCoversFourNewColumns(t *testing.T) {
+	t.Parallel()
 	wanted := map[string]bool{
 		"disk_read_bps": true, "disk_write_bps": true, "cpu_steal_pct": true, "cpu_iowait_pct": true,
 	}

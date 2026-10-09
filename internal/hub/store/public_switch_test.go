@@ -14,6 +14,7 @@ import (
 )
 
 func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "hub.db")
 	clk := clock.NewFake(time.Now())
 	s, err := Open(path, clk, slog.Default(), MigrateSchema)
@@ -61,6 +62,9 @@ func TestPublicSwitchPersistenceAndMemory(t *testing.T) {
 // 这依赖当前 runtime 的调度行为：单处理器上写协程先后唤醒 A、B 且不让出时，调度器先运行最后被唤醒的 B
 // （-race 下随机化，约一半），于是 B 先发布、A 后发布，库里是 B 而内存是 A。runtime 若改了这一点，去锁时
 // 本用例只会变绿而不会误红，届时要换一种制造错序的手法。
+//
+// 不并行：GOMAXPROCS 是进程级设置，并行用例会在它取 1 的期间被压到单处理器上，它们的写协程也会和这里争唯一的处理器，
+// 错序依赖的"写协程不让出"不再成立。
 func TestPublicSwitchMemoryMatchesDatabaseUnderConcurrentSaves(t *testing.T) {
 	prev := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(prev)
@@ -98,6 +102,7 @@ func TestPublicSwitchMemoryMatchesDatabaseUnderConcurrentSaves(t *testing.T) {
 }
 
 func TestPublicSwitchFailedSaveKeepsMemory(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if err := s.write(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("CREATE TRIGGER reject_gate BEFORE INSERT ON setting WHEN NEW.key = 'site.public_enabled' BEGIN SELECT RAISE(ABORT, 'gate rejected'); END")
@@ -122,6 +127,7 @@ func TestPublicSwitchFailedSaveKeepsMemory(t *testing.T) {
 }
 
 func TestPublicSwitchInvalidStoredValueRefused(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "hub.db")
 	s, err := Open(path, clock.NewFake(time.Now()), slog.Default(), MigrateSchema)
 	if err != nil {

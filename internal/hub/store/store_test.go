@@ -35,6 +35,7 @@ func open(t *testing.T) (*Store, *clock.Fake) {
 func hash(b byte) []byte { h := make([]byte, 32); h[0] = b; return h }
 
 func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
+	t.Parallel()
 	for _, async := range []bool{false, true} {
 		t.Run(fmt.Sprint(async), func(t *testing.T) {
 			s, err := Open(filepath.Join(t.TempDir(), "closed.db"), clock.Real(), slog.Default(), MigrateSchema)
@@ -64,6 +65,7 @@ func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
 }
 
 func TestCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -74,6 +76,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 }
 
 func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	var v int
 	if err := s.r.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
@@ -92,6 +95,7 @@ func TestOpenCreatesSchemaAtCurrentVersion(t *testing.T) {
 }
 
 func TestReopenKeepsData(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	clk := clock.NewFake(time.Unix(0, 0))
 	s, err := Open(filepath.Join(dir, "t.db"), clk, slog.Default(), MigrateSchema)
@@ -115,6 +119,7 @@ func TestReopenKeepsData(t *testing.T) {
 }
 
 func TestDeletedNodeIDIsNotReused(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -128,6 +133,7 @@ func TestDeletedNodeIDIsNotReused(t *testing.T) {
 }
 
 func TestTokenHashesAndRotate(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -150,6 +156,7 @@ func TestTokenHashesAndRotate(t *testing.T) {
 
 // 比较并换发：期望值不是库里的当前凭据（调用方的映射落后于库）时不改库，与节点不存在区分开。
 func TestSetTokenHashComparesAndSwaps(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -184,6 +191,7 @@ func TestSetTokenHashComparesAndSwaps(t *testing.T) {
 }
 
 func TestRegisterNodeConsumesWindow(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	if _, _, err := s.RegisterNode(ctx, hash(5), "x", hash(1)); !errors.Is(err, ErrNoWindow) {
@@ -211,6 +219,7 @@ func TestRegisterNodeConsumesWindow(t *testing.T) {
 }
 
 func TestExpiredWindowIsClosed(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := context.Background()
 	_ = s.SetRegisterWindow(ctx, hash(5), clk.Now().Add(time.Minute), 5)
@@ -221,6 +230,7 @@ func TestExpiredWindowIsClosed(t *testing.T) {
 }
 
 func TestFacts(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -247,6 +257,7 @@ func bucket(cpu float64) *metric.Bucket {
 }
 
 func TestHalfBucketsMergeAdditively(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -268,6 +279,7 @@ func TestHalfBucketsMergeAdditively(t *testing.T) {
 }
 
 func TestMissingMetricReadsBackAsNoData(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -285,6 +297,7 @@ func TestMissingMetricReadsBackAsNoData(t *testing.T) {
 }
 
 func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -305,6 +318,7 @@ func TestWriterRejectsRowsBeforeRollupWatermark(t *testing.T) {
 }
 
 func TestStoreDoesNotExposeWatermarkMutation(t *testing.T) {
+	t.Parallel()
 	var s any = (*Store)(nil)
 	if _, ok := s.(interface {
 		SetRollupWatermark(context.Context, string, int64) error
@@ -314,6 +328,7 @@ func TestStoreDoesNotExposeWatermarkMutation(t *testing.T) {
 }
 
 func TestWriteMinuteBatchUpdatesLastSeen(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -326,6 +341,7 @@ func TestWriteMinuteBatchUpdatesLastSeen(t *testing.T) {
 }
 
 func TestDeleteNodeRemovesDependentRows(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -350,6 +366,7 @@ var keptOnNodeDelete = []string{"alert_event"}
 // 且 keptOnNodeDelete 中的历史与另一个节点的行都保留。
 // schema 与清单的集合完备性由 TestNodeDependentTablesComplete 校验。
 func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	gone, _, _ := s.CreateNode(ctx, "gone", Billing{}, hash(1))
@@ -462,6 +479,7 @@ func nodeRows(t *testing.T, s *Store, table string, node int64) int64 {
 }
 
 func TestDeleteNodeRemovesTraffic(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "traffic", Billing{}, hash(1))
 	if err != nil {
@@ -487,6 +505,7 @@ func TestDeleteNodeRemovesTraffic(t *testing.T) {
 }
 
 func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -508,6 +527,7 @@ func TestAsyncCallbackObservesCommittedWrite(t *testing.T) {
 
 // 已入队但尚未开始的事务在 ctx 取消后不执行，调用方得到 ctx.Err() 且库无变化。
 func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	gate := make(chan struct{})
 	started := make(chan struct{})
@@ -549,6 +569,7 @@ func TestCancelBeforeStartSkipsTransaction(t *testing.T) {
 
 // 已开始的事务不受取消影响，调用方必须拿到真实结果：nil 且库里有行。
 func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -577,6 +598,7 @@ func TestCancelDuringTransactionStillReportsCommit(t *testing.T) {
 }
 
 func TestListNodesCarriesFactsAndOrder(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -606,6 +628,7 @@ func TestListNodesCarriesFactsAndOrder(t *testing.T) {
 }
 
 func TestReorderNodesRejectsAnythingButAFullPermutation(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -622,6 +645,7 @@ func TestReorderNodesRejectsAnythingButAFullPermutation(t *testing.T) {
 }
 
 func TestUpdateNodeReplacesEditableFields(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "old", Billing{}, hash(1))
@@ -641,6 +665,7 @@ func TestUpdateNodeReplacesEditableFields(t *testing.T) {
 }
 
 func TestDeleteNodeClearsEveryLevel(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -669,6 +694,7 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 }
 
 func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -690,6 +716,7 @@ func TestUpdateNodePersistsResetDayAndCreateUsesTheDefault(t *testing.T) {
 
 // SQLite 打开失败的报错不带文件名；容器里 /data 不可写时，路径是报错里唯一能指向原因的线索。
 func TestOpenErrorNamesTheDatabasePath(t *testing.T) {
+	t.Parallel()
 	// 父路径是普通文件：谁来运行测试都打不开，失败不依赖权限位。
 	parent := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(parent, nil, 0o600); err != nil {
@@ -707,6 +734,7 @@ func TestOpenErrorNamesTheDatabasePath(t *testing.T) {
 }
 
 func TestPublicNodeQueriesSeeOnlyPublicNodes(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	var ids []int64

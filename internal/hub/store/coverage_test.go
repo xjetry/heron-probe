@@ -32,6 +32,7 @@ func insertMetricFixture(table string) string {
 }
 
 func TestCoverageSQLiteTruthTables(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	values := []any{nil, 0, 1}
 	or := [][]any{{nil, nil, 1}, {nil, 0, 1}, {1, 1, 1}}
@@ -54,6 +55,7 @@ func TestCoverageSQLiteTruthTables(t *testing.T) {
 }
 
 func TestMigrationFromV30Coverage(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 30, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, q := range []string{
@@ -76,6 +78,7 @@ func TestMigrationFromV30Coverage(t *testing.T) {
 }
 
 func TestCoverageMergeOrderAndNullRollup(t *testing.T) {
+	t.Parallel()
 	for _, order := range [][]bool{{false, true}, {true, false}, {false, true, true}, {true, false, false}} {
 		t.Run(fmt.Sprint(order), func(t *testing.T) {
 			s, clk := open(t)
@@ -114,6 +117,7 @@ func TestCoverageMergeOrderAndNullRollup(t *testing.T) {
 }
 
 func TestCoverageSummaryUsesCompleteSourcesAndRequestWindow(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 	for ts := int64(600); ts < 1200; ts += 60 {
@@ -146,6 +150,7 @@ func TestCoverageSummaryUsesCompleteSourcesAndRequestWindow(t *testing.T) {
 }
 
 func TestCoverageRestoreLayerAndResurrectedNode(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	oldConfig := filepath.Join(t.TempDir(), "empty.db")
@@ -208,6 +213,7 @@ func TestCoverageRestoreLayerAndResurrectedNode(t *testing.T) {
 }
 
 func TestCoverageStartBatchOrderAndRollbackData(t *testing.T) {
+	t.Parallel()
 	for _, order := range [][]int64{{660, 600}, {600, 660}} {
 		s, _ := open(t)
 		id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
@@ -242,6 +248,7 @@ func TestCoverageStartBatchOrderAndRollbackData(t *testing.T) {
 
 // 覆盖事实矛盾的行按行拒绝：同批其他节点的行照常写入，被拒的行既不留下指标行，也不留下覆盖起点。
 func TestCoverageInconsistentRowsRejectedPerRow(t *testing.T) {
+	t.Parallel()
 	sampled := metric.NewBucket()
 	sampled.AddSum(0, 1)
 	for name, bad := range map[string]metric.Row{
@@ -277,6 +284,7 @@ func TestCoverageInconsistentRowsRejectedPerRow(t *testing.T) {
 }
 
 func TestCoverageEmptyAndPrunedShortWindowsRemainUnknown(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 	_, c, err := s.QueryMetricsCoverage(t.Context(), id, 600, 1200, levels[0], 60)

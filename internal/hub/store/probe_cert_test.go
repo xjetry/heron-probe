@@ -19,6 +19,7 @@ func certTask(t *testing.T, ctx context.Context, s *Store, target string, kind h
 }
 
 func TestUpsertProbeCert(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -51,6 +52,7 @@ func TestUpsertProbeCert(t *testing.T) {
 
 // 删任务同事务删掉它的证书观测；观测不是历史，任务没了"最新值"也就没有载体。
 func TestDeleteProbeTaskRemovesProbeCert(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -72,6 +74,7 @@ func TestDeleteProbeTaskRemovesProbeCert(t *testing.T) {
 
 // 证书观测随节点消失（nodeDependentTables），删除节点不留下孤儿观测。
 func TestDeleteNodeRemovesProbeCert(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -92,6 +95,7 @@ func TestDeleteNodeRemovesProbeCert(t *testing.T) {
 }
 
 func TestCheckKindFieldsCertExpiry(t *testing.T) {
+	t.Parallel()
 	base := AlertRule{Kind: KindCertExpiry, TaskID: 7, DaysBefore: 30}
 	if err := CheckKindFields(base); err != nil {
 		t.Fatalf("valid cert_expiry rule rejected: %v", err)
@@ -123,6 +127,7 @@ func TestCheckKindFieldsCertExpiry(t *testing.T) {
 }
 
 func TestSaveAlertRuleCertExpiry(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
 	node, _, err := s.CreateNode(ctx, "n", Billing{}, hash(1))

@@ -26,6 +26,7 @@ var schemaV9 = append(slices.Clone(schemaV8),
 
 // 旧库里的任务升级后 all_nodes 取默认值 0：仍按原来的分配行覆盖，不会被放宽到全部节点。
 func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 9, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, stmt := range []string{
@@ -72,6 +73,7 @@ func TestMigrationFromV9MatchesFreshSchemaAndKeepsTaskScope(t *testing.T) {
 // all_nodes 任务不写分配行，覆盖在读取时从节点表展开：保存时已有的节点、之后新建的节点都在内，删除的节点不在；
 // 请求只带一个作用域模式，不能混入显式分配。
 func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -101,6 +103,7 @@ func TestAllNodesTaskCoversEveryNodeWithoutAssignmentRows(t *testing.T) {
 
 // all_nodes 为假时分配行就是全部覆盖：空集不覆盖任何节点，之后新建的节点也不纳入；从全部节点改回显式空集也不例外。
 func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -127,6 +130,7 @@ func TestExplicitEmptyScopeCoversNoNode(t *testing.T) {
 
 // 建节点改变新节点的清单，推进版本（两个入口都推）；删节点不推。
 func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	stored := func() uint64 {
@@ -162,6 +166,7 @@ func TestCreatingNodesBumpsProbeVersionDeletingDoesNot(t *testing.T) {
 // 两个建节点入口返回的 TaskIDs 就是提交后库里新节点的覆盖，升序，Version 就是库里的版本：all_nodes 任务在内，
 // 显式分配给别的节点的任务与显式空集不在。注册表的建节点增量只取这份结果，它错了内存索引就跟着错。
 func TestCreatingNodeReturnsItsCoverage(t *testing.T) {
+	t.Parallel()
 	for name, create := range map[string]func(t *testing.T, s *Store) (int64, NewNodeTasks, error){
 		"create": func(t *testing.T, s *Store) (int64, NewNodeTasks, error) {
 			return s.CreateNode(t.Context(), "new", Billing{}, hash(9))
@@ -231,6 +236,7 @@ func saveAllNodesTasks(t *testing.T, s *Store, n int) []ProbeTaskRecord {
 
 // all_nodes 任务计入每个现有节点，与显式分配合计；第 65 个被拒并整体回滚。
 func TestSavingAllNodesTaskCountsTowardEveryNodesLimit(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
@@ -260,6 +266,7 @@ func TestSavingAllNodesTaskCountsTowardEveryNodesLimit(t *testing.T) {
 // 没有节点时 all_nodes 任务可以多于 64 个（保存时没有节点可超限）；此时建节点与注册都失败并说明，事务整体回滚：
 // 节点不建、版本不变、窗口名额不消耗。恰好 64 个时新节点正好到上限，放行。
 func TestCreatingNodeRejectsInheritingMoreThanTheLimit(t *testing.T) {
+	t.Parallel()
 	s, clk := open(t)
 	ctx := t.Context()
 	tasks := saveAllNodesTasks(t, s, probelimit.MaxTasksPerNode+1)

@@ -28,6 +28,7 @@ func openTraffic(t *testing.T) (*Store, int64) {
 }
 
 func TestTrafficRoundTripUpsertsBaselineAndTotalsTogether(t *testing.T) {
+	t.Parallel()
 	st, id := openTraffic(t)
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	rec := TrafficRecord{NodeID: id, BootID: "b1", LastRx: 100, LastTx: 200, TotalRx: 1000, TotalTx: 2000, PeriodRx: 10, PeriodTx: 20, PeriodStart: start}
@@ -71,6 +72,7 @@ func TestTrafficRoundTripUpsertsBaselineAndTotalsTogether(t *testing.T) {
 }
 
 func TestTrafficCounterEpochValidationAndAtomicWrite(t *testing.T) {
+	t.Parallel()
 	st, id := openTraffic(t)
 	rec := TrafficRecord{NodeID: id, BootID: "boot", NetCounterEpoch: strings.Repeat("a", 64), TotalRx: 100, PeriodStart: time.Unix(0, 0).UTC()}
 	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
@@ -91,6 +93,7 @@ func TestTrafficCounterEpochValidationAndAtomicWrite(t *testing.T) {
 }
 
 func TestTrafficReadAndRestoreRejectInvalidEpoch(t *testing.T) {
+	t.Parallel()
 	st, id := openTraffic(t)
 	rec := TrafficRecord{NodeID: id, BootID: "boot", NetCounterEpoch: strings.Repeat("a", 64), TotalRx: 100, PeriodStart: time.Unix(0, 0).UTC()}
 	if _, err := st.WriteTraffic(t.Context(), []TrafficRecord{rec}); err != nil {
@@ -126,6 +129,7 @@ func TestTrafficReadAndRestoreRejectInvalidEpoch(t *testing.T) {
 }
 
 func TestTrafficWriteSkipsDeletedNodes(t *testing.T) {
+	t.Parallel()
 	st, id := openTraffic(t)
 	if err := st.DeleteNode(t.Context(), id); err != nil {
 		t.Fatal(err)
@@ -141,6 +145,7 @@ func TestTrafficWriteSkipsDeletedNodes(t *testing.T) {
 }
 
 func TestTrafficResetDaysComeFromNodeTable(t *testing.T) {
+	t.Parallel()
 	st, id := openTraffic(t)
 	err := st.write(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("UPDATE node SET traffic_reset_day = 15 WHERE id = ?", id)

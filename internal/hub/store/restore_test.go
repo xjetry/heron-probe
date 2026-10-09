@@ -14,6 +14,7 @@ import (
 
 // 快照、指标层与目标库都可能见过已清理的投递行。恢复后新批次必须越过三者的高水位，不能只越过现存行。
 func TestRestoreThenRecordTransitionPreservesBatchSequence(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name             string
 		metrics          bool
@@ -82,6 +83,7 @@ func TestRestoreThenRecordTransitionPreservesBatchSequence(t *testing.T) {
 }
 
 func TestNodeDependentTablesComplete(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	actual := tablesWithNodeID(t, s)
 	want := append(slices.Clone(nodeDependentTables), keptOnNodeDelete...)
@@ -110,6 +112,7 @@ var schemaV16 = append(slices.Clone(schemaV15),
 )`)
 
 func TestRestoreRecordMigration(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 16, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		if _, err := db.Exec("INSERT INTO theme (id,name,version,preview,uploaded_at,enabled) VALUES ('kept','Kept','1','',1,1)"); err != nil {
@@ -136,6 +139,7 @@ func TestRestoreRecordMigration(t *testing.T) {
 }
 
 func TestRestoreRecordUnion(t *testing.T) {
+	t.Parallel()
 	source, _ := open(t)
 	target, _ := open(t)
 	const a = "00000000000000000000000000000001"

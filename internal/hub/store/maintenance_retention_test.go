@@ -8,6 +8,7 @@ import (
 )
 
 func TestMaintenanceRejectsZeroRetentionBeforeDeletingEvents(t *testing.T) {
+	t.Parallel()
 	s, ids, _, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, AllNodes: true})
 	ev := recordEvent(t, s, r.ID, ids[0], nil)

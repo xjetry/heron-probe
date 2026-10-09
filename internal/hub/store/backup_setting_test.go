@@ -14,6 +14,7 @@ import (
 )
 
 func TestBackupSecretAndDisabled(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	secret := "secret"
 	u := &BackupSettingsUpdate{Endpoint: "https://s3.example", Bucket: "backups", Region: "auto", AccessKey: "access", Secret: &secret}
@@ -53,6 +54,7 @@ func TestBackupSecretAndDisabled(t *testing.T) {
 }
 
 func TestBackupSettingsAtomicAndChannels(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	channel, err := s.SaveNotifyChannel(ctx, NotifyChannel{Name: "backup", Kind: ChannelTelegram, Config: `{}`})
@@ -112,6 +114,7 @@ func storedSetting(t *testing.T, s *Store, key string) string {
 
 // 渠道列表的存储形态：缺席不写，显式空写 []（不是 JSON null），给出的列表排序去重。
 func TestBackupChannelsStoredForm(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	var ids []int64
@@ -147,6 +150,7 @@ func TestBackupChannelsStoredForm(t *testing.T) {
 // 数值范围只有一张表：写侧出范围返回 BackupRangeError 且不写入；读侧遇到库里的坏值报错，但不是 BackupRangeError，
 // api 不会把库的问题当作请求的 InvalidArgument。Open 读一次全部设置，这样的库（连同解析不了的渠道列表）打开时就被拒绝。
 func TestBackupNumbersRangeOnBothSides(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	keep := uint32(24)

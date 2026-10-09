@@ -31,6 +31,7 @@ var schemaV34 = func() []string {
 // 旧行的新列取缺省：execution 是 'null'（没有上报），facts_rev 是 0（摘要还不能算当前字段集合已确认），
 // 按核负载 n=0（这一分钟没有采样）。已有的 cpu 与主机名必须原样留下。
 func TestMigrationFromV33AddsExecutionAndPerCoreLoad(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 33, func(t *testing.T, db *sql.DB) {
 		seedMinuteRow(t, db)
 		for _, q := range []string{
@@ -70,6 +71,7 @@ func TestMigrationFromV33AddsExecutionAndPerCoreLoad(t *testing.T) {
 // v33 的配置与指标快照恢复到空库与已有库：迁移补上 execution、facts_rev 与按核负载列，旧事实与 cpu 仍在，
 // 新列取缺省（未上报、未采样）。快照从当前库拷出后先撤列再回填版本号，否则 ADD COLUMN 会撞上重复列。
 func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
+	t.Parallel()
 	source, clk := open(t)
 	ctx := t.Context()
 	id, _, err := source.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -151,6 +153,7 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 
 // 快照里的 execution 必须是能通过同一校验的 JSON。语法合法但 kind 未指定的对象要拒绝，不能只检查能解开。
 func TestRestoreRejectsIllegalExecution(t *testing.T) {
+	t.Parallel()
 	source, clk := open(t)
 	ctx := t.Context()
 	id, _, err := source.CreateNode(ctx, "n", Billing{}, hash(1))

@@ -19,6 +19,7 @@ var schemaV15 = append(slices.Clone(schemaV14),
 	"CREATE INDEX node_tag_by_tag ON node_tag (tag_id)")
 
 func TestThemePreviewAllocationIgnoresUnrelatedFiles(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	version, err := s.PutTheme(t.Context(), Theme{ID: "preview", Name: "Preview", SDK: 1, Preview: "preview.png"}, []ThemeFile{
 		{Path: "index.html", Content: []byte("index")}, {Path: "preview.png", Content: []byte("image")}, {Path: "unused.bin", Content: []byte{}},
@@ -56,6 +57,7 @@ func TestThemePreviewAllocationIgnoresUnrelatedFiles(t *testing.T) {
 }
 
 func TestMigrationFromV15AddsThemeTables(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 15, func(t *testing.T, db *sql.DB) {
 		if _, err := db.Exec("INSERT INTO node(id,name,token_hash,created_at) VALUES(7,'kept',x'00',1)"); err != nil {
 			t.Fatal(err)
@@ -113,6 +115,7 @@ func themeFiles(t *testing.T, s *Store, id string) map[string]string {
 }
 
 func TestThemeSelectionRetainsRollbackAndPublishedVersions(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a := putTheme(t, s, "a", "index.html", "old.js")
@@ -165,6 +168,7 @@ func TestThemeSelectionRetainsRollbackAndPublishedVersions(t *testing.T) {
 }
 
 func TestThemeInstallIdempotentAndAtomic(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	a := putTheme(t, s, "a", "index.html")
 	before, _ := s.ListThemes(t.Context())
@@ -189,6 +193,7 @@ func TestThemeInstallIdempotentAndAtomic(t *testing.T) {
 }
 
 func TestThemeLimitsAreAtomic(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	var wg sync.WaitGroup
@@ -237,6 +242,7 @@ func TestThemeLimitsAreAtomic(t *testing.T) {
 }
 
 func TestThemeGenerationAndWholePackage(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
 	a := putTheme(t, s, "a", "index.html", "a.js")

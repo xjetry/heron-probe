@@ -7,6 +7,7 @@ import (
 )
 
 func TestSecurityAuditFailureRollsBackCredentialChanges(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"password", "reset", "factor"} {
 		t.Run(operation, func(t *testing.T) {
 			s, clk := open(t)

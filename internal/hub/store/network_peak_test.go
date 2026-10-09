@@ -10,6 +10,7 @@ import (
 )
 
 func TestNetworkPeaksSurviveEveryRollupAndQueryBucket(t *testing.T) {
+	t.Parallel()
 	rx, tx := metric.Index("net_rx_bps"), metric.Index("net_tx_bps")
 	if rx < 0 || tx < 0 {
 		t.Fatal("network rate columns are missing")

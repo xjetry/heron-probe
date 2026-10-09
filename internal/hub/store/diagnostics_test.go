@@ -20,6 +20,7 @@ var schemaV26 = append(slices.Clone(schemaV25),
 )
 
 func TestDiagnosticsFactsRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "diagnostics", Billing{}, hash(1))
 	if err != nil {
@@ -66,6 +67,7 @@ func TestDiagnosticsFactsRoundTrip(t *testing.T) {
 }
 
 func TestDiagnosticsWritesRejectInvalidData(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	id, _, err := s.CreateNode(t.Context(), "diagnostics", Billing{}, hash(1))
 	if err != nil {
@@ -86,6 +88,7 @@ func TestDiagnosticsWritesRejectInvalidData(t *testing.T) {
 }
 
 func TestDiagnosticsReadAndRestoreRejectInvalidData(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{`{"failedCollectors":[99]}`, `{"netInterfaces":["eth0"]}`, `{"secret":"not allowed"}`, `{invalid`, "\u00a0null"} {
 		t.Run(text, func(t *testing.T) {
 			s, _ := open(t)
@@ -128,6 +131,7 @@ func TestDiagnosticsReadAndRestoreRejectInvalidData(t *testing.T) {
 }
 
 func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
+	t.Parallel()
 	s := migrateFrom(t, 25, func(t *testing.T, db *sql.DB) {
 		for _, q := range []string{
 			`INSERT INTO node(id,name,token_hash,created_at) VALUES(1,'old',x'01',0)`,

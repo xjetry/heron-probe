@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,26 +125,37 @@ func frozenSchema(t *testing.T, version int) []string {
 	return stmts
 }
 
+var freshSignature struct {
+	once sync.Once
+	desc []string
+	ok   bool
+}
+
+// freshSchema 是经 Open 新建的库的结构签名（describe）。新建走 createSchema，每个新库的结构相同，所以进程里只建一个、
+// 签名求一次，之后只读：schemaDifference 不改它的参数。求签名的用例失败时 ok 留在 false，其余用例据此报错，
+// 不拿空签名去比。
+func freshSchema(t *testing.T) []string {
+	t.Helper()
+	freshSignature.once.Do(func() {
+		s, err := Open(filepath.Join(fixtureDir, "fresh.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.Default(), MigrateSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		freshSignature.desc = describe(t, s.r)
+		freshSignature.ok = true
+	})
+	if !freshSignature.ok {
+		t.Fatal("fresh schema fixture failed to build; see the first test that reported an error")
+	}
+	return freshSignature.desc
+}
+
 // migrateFrom 用 version 版的冻结 DDL 建旧库、交给 seed 写入数据，再由 Open 迁到当前版本。
 func migrateFrom(t *testing.T, version int, seed func(*testing.T, *sql.DB)) *Store {
 	t.Helper()
-	stmts := frozenSchema(t, version)
-	dir := t.TempDir()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-
-	old := filepath.Join(dir, "old.db")
-	raw, err := sql.Open("sqlite", dsn(old, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, stmt := range stmts {
-		if _, err := raw.Exec(stmt); err != nil {
-			t.Fatalf("%v in %q", err, stmt)
-		}
-	}
-	if _, err := raw.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
-		t.Fatal(err)
-	}
+	old, raw := frozenSchemaFixture(t, version)
 	seed(t, raw)
 	raw.Close()
 
@@ -152,21 +164,17 @@ func migrateFrom(t *testing.T, version int, seed func(*testing.T, *sql.DB)) *Sto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { migrated.Close() })
-	fresh, err := Open(filepath.Join(dir, "fresh.db"), clk, slog.Default(), MigrateSchema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { fresh.Close() })
 
 	// 逐版迁移用例经此入口建库，结构比较随入口自动生效，用例不必各自再比结构。
 	// TestEveryMigrationHasMigrateFromCase 要求 migrations 的每一步都有一条从上一版本出发、经此入口的用例。
-	if diff := schemaDifference(describe(t, migrated.r), describe(t, fresh.r), "迁移后", "新建"); diff != "" {
+	if diff := schemaDifference(describe(t, migrated.r), freshSchema(t), "迁移后", "新建"); diff != "" {
 		t.Fatalf("migrated schema differs from fresh schema:\n%s", diff)
 	}
 	return migrated
 }
 
 func TestMigrationFromV1MatchesFreshSchema(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 1, seedMinuteRow)
 
 	if v := userVersion(t, migrated.r); v != schemaVersion {
@@ -179,6 +187,7 @@ func TestMigrationFromV1MatchesFreshSchema(t *testing.T) {
 }
 
 func TestOpenRefusesNewerSchema(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "future.db")
 	raw, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
@@ -302,6 +311,7 @@ var schemaV3 = []string{
 }
 
 func TestMigrationFromV3MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 3, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
@@ -437,6 +447,7 @@ var schemaV4 = []string{
 }
 
 func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 4, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
@@ -448,6 +459,7 @@ func TestMigrationFromV4MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 }
 
 func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
+	t.Parallel()
 	// 对象清单取自迁移 5 实际执行的冻结语句；手工维护会漏掉新增对象的同名冲突断言。
 	// 每条语句必须生成一个对象，解析失败直接终止，不能静默缩小覆盖范围。
 	statements := alertStatementsV5
@@ -486,6 +498,7 @@ func TestAlertMigrationRejectsExistingObjects(t *testing.T) {
 }
 
 func TestMigrationFromV2MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 2, seedMinuteRow)
 	rows, err := migrated.ReadMinuteRows(t.Context(), 7, 0, 120)
 	if err != nil || len(rows) != 1 {
@@ -541,6 +554,7 @@ var schemaV5 = []string{
 }
 
 func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 5, seedMinuteRow)
 	if v := userVersion(t, migrated.r); v != schemaVersion {
 		t.Fatalf("user_version = %d, want %d", v, schemaVersion)
@@ -557,9 +571,11 @@ func TestMigrationFromV5MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 // 所以另要求相邻两版结构不同：某步迁移若只改数据，这里会红，届时需要把数据纳入比较。
 // 当前版本也登记冻结 DDL；冻结链核对每一步，migrateFrom 另将最终结构与新建库比较。
 func TestFrozenSchemasFollowMigrations(t *testing.T) {
+	t.Parallel()
 	// 每个版本是否登记不另查：步骤循环对 v−1 与 v 都调用 frozenSchemaFixture，覆盖 1 到当前版本，缺版本时它报错终止。
 	for v := 2; v <= schemaVersion; v++ {
 		t.Run(fmt.Sprint(v), func(t *testing.T) {
+			t.Parallel()
 			step, ok := migrations[v]
 			if !ok {
 				t.Fatalf("migrations has no step %d", v)
@@ -604,14 +620,15 @@ func parseTestFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 // migrateFrom 两个辅助函数，由这条测试保证。三类名字各自只许出现在下列顶层声明里：
 //   - schemaV<n>：包级 var schemaV<m> 的定义（后一版可由前一版追加而来）与 var frozenSchemas 的定义。
 //   - frozenSchemas：它自身的定义与 func frozenSchema。
-//   - frozenSchema：它自身的定义、func migrateFrom 与 func frozenSchemaFixture，后二者从同一个 version 参数同时得到
-//     DDL 与 user_version。
+//   - frozenSchema：它自身的定义与 func frozenSchemaFixture，后者从同一个 version 参数同时得到 DDL 与 user_version；
+//     migrateFrom 经 frozenSchemaFixture 建旧库。
 //
 // 在别处拿到冻结 DDL，就得在旁边另写一遍版本号，例如 schemaPolicyFixture(t, frozenSchema(t, 7), 8)；两处可以
 // 写得不一致，而 TestFrozenSchemasFollowMigrations 只核对登记表里的配对。检查以名字为单位：用例经两个辅助
 // 函数拿到库之后对库的任何利用（Exec 改结构或 user_version、读回 sqlite_schema 再另建库）都不在范围内，那是
 // 有意构造的夹具。冻结定义一行一个名字：多名字的 var 没有单一的属主名，会被判红，报错指向定义自身。
 func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
+	t.Parallel()
 	frozenName := regexp.MustCompile(`^schemaV[0-9]+$`)
 	// owner 是名字所在的顶层声明："func 函数名"、"method 方法名"，或 "var 变量名"（多个名字以逗号分隔）。
 	// 方法另立前缀：放行项都是包级函数，与 migrateFrom 或 frozenSchemaFixture 同名的方法不能借名字放行。
@@ -622,7 +639,7 @@ func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
 		case name == "frozenSchemas":
 			return true, owner == "var frozenSchemas" || owner == "func frozenSchema"
 		case name == "frozenSchema":
-			return true, owner == "func frozenSchema" || owner == "func migrateFrom" || owner == "func frozenSchemaFixture"
+			return true, owner == "func frozenSchema" || owner == "func frozenSchemaFixture"
 		}
 		return false, true
 	}
@@ -670,6 +687,7 @@ func TestFrozenSchemasReachedOnlyByVersion(t *testing.T) {
 // 写成变量就读不出版本，放进辅助函数就确认不了 go test 会执行它，两种都直接判失败。
 // 起点版本对应的冻结 DDL 由 frozenSchemas 给出，二者相符由 TestFrozenSchemasFollowMigrations 核对。
 func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
+	t.Parallel()
 	fset, files := parseTestFiles(t)
 	covered := map[int]bool{}
 	for _, file := range files {
@@ -715,6 +733,7 @@ func TestEveryMigrationHasMigrateFromCase(t *testing.T) {
 
 // 迁移只引用冻结的 DDL：schema.go 里的顶层名字（当前 DDL 与生成函数）一个都不能出现在 migrations.go。
 func TestMigrationsReferenceOnlyFrozenDDL(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	schema, err := parser.ParseFile(fset, "schema.go", nil, 0)
 	if err != nil {

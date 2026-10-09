@@ -40,6 +40,7 @@ var schemaV18 = append(slices.Clone(schemaV17),
 // 升级前每行各自发送过：旧行各成一批，未终态的仍按原行续投，其余各列原样保留；旧渠道按种类取缺省节奏。重建表带上
 // 旧序列：id 50 的行已被清理，新行必须从 51 起，否则批次号会被复用。
 func TestMigrationFromV17AddsBatchesAndChannelRates(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 17, func(t *testing.T, db *sql.DB) {
 		for _, stmt := range []string{
 			"INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'n', x'07', 1)",
@@ -87,6 +88,7 @@ func TestMigrationFromV17AddsBatchesAndChannelRates(t *testing.T) {
 
 // 不写批次号的插入在写时失败（新建库与迁移库都是）：之后每个读这一列的查询都依赖它非空。
 func TestDeliveryInsertWithoutBatchFails(t *testing.T) {
+	t.Parallel()
 	migrated := migrateFrom(t, 17, func(*testing.T, *sql.DB) {})
 	fresh, _ := open(t)
 	for _, s := range []*Store{fresh, migrated} {
@@ -111,6 +113,7 @@ func recordTargets(t *testing.T, s *Store, rule, node int64, targets ...Delivery
 
 // 新行只加入还没开始尝试、且发往同一渠道的批次；其余情形新开一批（批次号即自己的 id）。
 func TestRecordTransitionJoinsOnlyOpenBatchOfSameChannel(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	first := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
@@ -149,6 +152,7 @@ func TestRecordTransitionJoinsOnlyOpenBatchOfSameChannel(t *testing.T) {
 
 // 一次尝试与它的结果写到整批的每一行，别的批次不受影响；批次读出的行与事件一一对应。
 func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	a := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
@@ -208,6 +212,7 @@ func TestBatchAttemptAndResultCoverWholeBatch(t *testing.T) {
 // 名额（attempts = 3）却未终态的一行不会被计数的 UPDATE 命中，同样要被发现；not_before 不一致时按首行判断等不等，
 // 会让另一行早于它自己的最早时刻被发出。
 func TestBeginBatchAttemptRejectsNonUniformBatch(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, set string
 		value     int64
@@ -243,6 +248,7 @@ func TestBeginBatchAttemptRejectsNonUniformBatch(t *testing.T) {
 // 开始尝试只覆盖调用方拼消息时读到的那组行：少了后加入的行、多了已清理的行、或者一行都没给，都拒绝且不消耗名额；
 // 调用方重读后用批次当前的行集合（顺序不限）才能开始。
 func TestBeginBatchAttemptRejectsChangedRowSet(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	a := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
@@ -266,6 +272,7 @@ func TestBeginBatchAttemptRejectsChangedRowSet(t *testing.T) {
 
 // 下一次尝试的时刻只属于还会重试的失败：成功或终态的结果带着它被拒绝，不写库。
 func TestDeliveryResultRejectsNotBeforeOnFinishedResult(t *testing.T) {
+	t.Parallel()
 	s, ids, cs, _ := alertFixture(t)
 	r := saveRule(t, s, AlertRule{Kind: KindOffline})
 	ev := recordTargets(t, s, r.ID, ids[0], DeliveryTarget{ChannelID: cs[0].ID})
@@ -282,6 +289,7 @@ func TestDeliveryResultRejectsNotBeforeOnFinishedResult(t *testing.T) {
 
 // 节奏上限原样往返，更新时改写。取值约束（非负）由列上的 CHECK 承载，见 TestEveryCheckConstraintRefusesItsViolation。
 func TestNotifyChannelRateRoundTrip(t *testing.T) {
+	t.Parallel()
 	s, _ := open(t)
 	saved, err := s.SaveNotifyChannel(t.Context(), NotifyChannel{Name: "tg", Kind: ChannelTelegram, Config: `{}`, RatePerMinute: 7})
 	if err != nil {
