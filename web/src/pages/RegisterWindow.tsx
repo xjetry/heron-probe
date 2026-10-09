@@ -1,6 +1,6 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
@@ -26,10 +26,13 @@ export function RegisterWindow() {
   const snapshot = useQuery(AdminService.method.getSnapshot, {});
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [key, setKey] = useState<string | null>(null);
-  const clearKey = useCallback(() => setKey(null), []);
-  useEffect(() => {
-    if (status.data?.open === false) clearKey();
-  }, [status.data?.open, clearKey]);
+  // 轮询看到窗口关了（到期、名额用完或在别处关闭），这把 key 已不能注册，在渲染期清掉，不先画出一帧失效的 key。
+  const windowOpen = status.data?.open;
+  const [seenOpen, setSeenOpen] = useState(windowOpen);
+  if (seenOpen !== windowOpen) {
+    setSeenOpen(windowOpen);
+    if (windowOpen === false) setKey(null);
+  }
   // 开窗与关窗是操作，错误生命周期独立于窗口状态的轮询。
   const { error, mutationOptions } = useLatestError();
   const open = useMutation(AdminService.method.openRegisterWindow, {
@@ -38,7 +41,7 @@ export function RegisterWindow() {
   });
   const close = useMutation(AdminService.method.closeRegisterWindow, {
     ...mutationOptions,
-    onSuccess: () => { clearKey(); void refresh(); },
+    onSuccess: () => { setKey(null); void refresh(); },
   });
   const gate = queryGate(status);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);

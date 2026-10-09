@@ -75,7 +75,7 @@ export function HeartbeatSettingsForm({ current }: { current: Heartbeat | undefi
             </label>
             <label>
               方法
-              <select value={form.method} onChange={(e) => edit({ method: Number(e.target.value) as HeartbeatMethod })}>
+              <select value={form.method} onChange={(e) => edit({ method: Number(e.target.value) })}>
                 <option value={HeartbeatMethod.GET}>GET</option>
                 <option value={HeartbeatMethod.POST}>POST（带计数）</option>
                 <option value={HeartbeatMethod.HEAD}>HEAD</option>

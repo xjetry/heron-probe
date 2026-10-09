@@ -48,9 +48,9 @@ async function queryChunks(
   to: number,
   signal: AbortSignal,
 ): Promise<{ chunks: ComparisonChunk[]; level: string }> {
-  const results: (ComparisonChunk & { level: string })[] = new Array(chunks.length);
+  const results = new Array<ComparisonChunk & { level: string }>(chunks.length);
   let next = 0;
-  let failure: unknown;
+  let failure: Error | undefined;
   const worker = async () => {
     for (;;) {
       // next++ 与 failure 的读写都在 await 之前，单线程下不会交叉。失败后不再发后面的块。
@@ -68,7 +68,7 @@ async function queryChunks(
         const message = resp.message;
         results[i] = { level: message.level, stepS: message.stepS, series: message.series, unavailableNodeIds: message.unavailableNodeIds };
       } catch (err) {
-        if (failure === undefined) failure = err;
+        if (failure === undefined) failure = err instanceof Error ? err : new Error(String(err), { cause: err });
         return;
       }
     }
@@ -102,6 +102,16 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
   const [focusedId, setFocusedId] = useState<bigint | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("label");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // 一次请求由任务、窗口、重试次数与两个方法、transport 决定；任何一个变了就是一次新请求。状态在渲染期切成
+  // "更新中"，不先画出一帧上一次请求的错误或结果状态；effect 只负责发请求与收结果。
+  const requestKey = `${taskId}|${from}|${to}|${rangeLabel}|${attempt}`;
+  const [requested, setRequested] = useState({ key: requestKey, list: methods.list, query: methods.query, transport });
+  if (requested.key !== requestKey || requested.list !== methods.list || requested.query !== methods.query || requested.transport !== transport) {
+    setRequested({ key: requestKey, list: methods.list, query: methods.query, transport });
+    setUpdating(true);
+    setError(null);
+    setNotFound(false);
+  }
   // 换任务不能沿用上一张图：那是另一个任务的节点。换窗口则留着，直到新窗口自己的块到齐。
   if (holdTask !== taskId) {
     setHoldTask(taskId);
@@ -123,15 +133,12 @@ export function ProbeComparison({ taskId, methods, nodes, now }: { taskId: bigin
   useEffect(() => {
     const ac = new AbortController();
     let active = true;
-    setUpdating(true);
-    setError(null);
-    setNotFound(false);
     const fail = (message: string) => {
       if (!active) return;
       setError(message);
       setUpdating(false);
     };
-    (async () => {
+    void (async () => {
       let listed;
       try {
         listed = await transport.unary(methods.list, ac.signal, undefined, undefined, { taskId });

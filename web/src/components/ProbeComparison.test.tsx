@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, type HandlerContext } from "@connectrpc/connect";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { createRef, useImperativeHandle, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AlignedData } from "uplot";
 import { ProbeComparison, type ProbeComparisonMethods } from "./ProbeComparison";
@@ -39,11 +39,17 @@ const names = [
 ];
 
 const HUB_NOW = 1_700_000_000;
-let advanceHub: () => void;
+// 当前挂载的 TimedComparison 经 useImperativeHandle 把推进 hub now 的函数挂到这个 ref 上；渲染期不写组件外的变量。
+const hubClock = createRef<{ advance: () => void }>();
+
+function advanceHub() {
+  if (!hubClock.current) throw new Error("TimedComparison is not mounted");
+  hubClock.current.advance();
+}
 
 function TimedComparison({ nodes = names }: { nodes?: typeof names }) {
   const [now, setNow] = useState(HUB_NOW);
-  advanceHub = () => setNow((previous) => previous + 60);
+  useImperativeHandle(hubClock, () => ({ advance: () => setNow((previous) => previous + 60) }), []);
   return <ProbeComparison taskId={9n} methods={methods} nodes={nodes} now={now} />;
 }
 
@@ -205,6 +211,9 @@ it("部分块失败显示错误与重试，不自动再请求", async () => {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
   expect(queryProbeComparison).toHaveBeenCalledTimes(calls);
   fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  // 重试是一次新请求：上一次的错误立即撤下、回到加载中，不等新请求的结果。
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("加载中…")).toBeInTheDocument();
   await waitFor(() => expect(queryProbeComparison.mock.calls.length).toBeGreaterThan(calls));
 });
 

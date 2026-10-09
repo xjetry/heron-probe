@@ -93,7 +93,7 @@ export function Nodes() {
     ...mutationOptions,
     onSuccess: async () => {
       try { await refresh({ throwOnError: true }); }
-      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
+      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`, { cause: error }); }
     },
   });
   const batchUpdate = useMutation(AdminService.method.batchUpdateNodeTags, {
@@ -102,7 +102,7 @@ export function Nodes() {
       setBatchEditor(null);
       setSelected([]);
       try { await refresh({ throwOnError: true }); }
-      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
+      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`, { cause: error }); }
     },
   });
   const remove = useMutation(AdminService.method.deleteNode, {

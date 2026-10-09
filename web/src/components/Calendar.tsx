@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react";
 import { isDate } from "../lib/format";
 import { Icon } from "./Icon";
 
@@ -38,8 +38,8 @@ export function Calendar({ label, value, onPick, onClose }: { label: string; val
   const [focus, setFocus] = useState(() => selected || today());
   const keyboard = useRef(true);
   const root = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  // 监听只在挂载时注册一次；关闭时调用的是父组件这一次渲染给的 onClose，不是挂载那一刻的。
+  const closeOutside = useEffectEvent(() => onClose(false));
   useEffect(() => {
     if (!keyboard.current) return;
     root.current?.querySelector<HTMLButtonElement>(`[data-ymd="${focus}"]`)?.focus();
@@ -47,7 +47,7 @@ export function Calendar({ label, value, onPick, onClose }: { label: string; val
   useEffect(() => {
     // 所属控件（含打开弹层的按钮）之内的点击由控件自己处理，否则按钮的 mousedown 先关、click 又开。
     const owner = root.current?.closest(".date-box") ?? root.current;
-    const onPointer = (event: PointerEvent) => { if (owner && !owner.contains(event.target as Node)) closeRef.current(false); };
+    const onPointer = (event: PointerEvent) => { if (owner && !owner.contains(event.target as Node)) closeOutside(); };
     document.addEventListener("pointerdown", onPointer, true);
     return () => document.removeEventListener("pointerdown", onPointer, true);
   }, []);

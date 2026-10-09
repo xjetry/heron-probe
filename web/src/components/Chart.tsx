@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useEffectEvent, useRef, useState } from "react";
 import uPlot, { type AlignedData, type Options } from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { formatUnit } from "../lib/format";
@@ -56,24 +56,21 @@ type ChartProps = {
 export function Chart({ data, labels, unit, height = 180, soft, bands = [], legend = true, hidden, onHiddenChange, onFocus }: ChartProps) {
   const el = useRef<HTMLDivElement>(null);
   const plot = useRef<uPlot | null>(null);
-  const initialData = useRef(data);
   const key = labels.join("|");
-  const softFlags = useMemo(() => labels.map((_, i) => soft?.[i] ?? false), [key, soft]);
+  const softFlags = labels.map((_, i) => soft?.[i] ?? false);
   const softKey = softFlags.map((s) => (s ? 1 : 0)).join("");
   const bandKey = bands.map((b) => `${b.lower}-${b.upper}`).join("|");
-  const colors = useMemo(() => seriesColors(softFlags), [softKey]);
+  const colors = seriesColors(softFlags);
   const scheme = useColorScheme();
   const gap = gapMessage(readingGap(yColumns(data), labels));
   const [cursorIdx, setCursorIdx] = useState<number | null>(null);
   const [ownHidden, setOwnHidden] = useState<ReadonlySet<number>>(() => new Set());
   const shownHidden = hidden ?? ownHidden;
-  const onFocusRef = useRef(onFocus);
-  onFocusRef.current = onFocus;
-  const hiddenRef = useRef(shownHidden);
-  hiddenRef.current = shownHidden;
-  useEffect(() => {
-    const host = el.current;
-    if (!host) return;
+  // 悬停回调由 uPlot 在图的生命周期里随时触发，调的是最近一次提交的 onFocus，不是建图那一刻的。
+  const reportFocus = useEffectEvent((index: number | null) => onFocus?.(index));
+  // 建图读的是最近一次提交的全部输入（数据、标签、配色、填充带、隐藏集合）；何时重建只由下面 effect 的
+  // 依赖决定。数组每次渲染都是新对象，不能直接做依赖，否则每次渲染都重建，所以依赖是由它们派生的字符串 key。
+  const createPlot = useEffectEvent((host: HTMLDivElement): uPlot => {
     const axisColor = resolveColor(host, "var(--muted)");
     const gridColor = resolveColor(host, "var(--line)");
     // 刻度画在 canvas 上，不继承 CSS：字体从 --font-mono 取，与页面里的 .num 读数同一个等宽栈。
@@ -124,13 +121,18 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
         // 悬停高亮经 cursor.focus 触发 setSeries 且 opts 带 focus；本组件自己调 setSeries 切显示时 opts 只有 show。
         setSeries: [(_u, idx, seriesOpts: { focus?: boolean; show?: boolean }) => {
           if (!("focus" in seriesOpts)) return;
-          onFocusRef.current?.(idx == null ? null : idx - 1);
+          reportFocus(idx == null ? null : idx - 1);
         }],
       },
     };
-    const u = new uPlot(opts, initialData.current, host);
-    plot.current = u;
-    for (const i of hiddenRef.current) u.setSeries(i + 1, { show: false });
+    const u = new uPlot(opts, data, host);
+    for (const i of shownHidden) u.setSeries(i + 1, { show: false });
+    return u;
+  });
+  useEffect(() => {
+    const host = el.current;
+    if (!host) return;
+    plot.current = createPlot(host);
     const ro = new ResizeObserver(() => plot.current?.setSize({ width: host.clientWidth, height }));
     ro.observe(host);
     // canvas 不会在字体到达后自己重画：内嵌字体晚于首帧加载完时，就绪后重算一次坐标轴，刻度不停在回退字体上。
@@ -142,17 +144,18 @@ export function Chart({ data, labels, unit, height = 180, soft, bands = [], lege
       plot.current?.destroy();
       plot.current = null;
     };
-    // 标签、单位、尺寸、明暗、浅线与填充带改变才重建；下面的数据 effect 维护最近提交的数据快照并应用当前数据。
-  }, [key, unit, height, scheme, softKey, bandKey, colors]);
+    // 标签、单位、尺寸、明暗、浅线与填充带改变才重建（配色由浅线标记决定，随 softKey 变）；数据与隐藏集合变化
+    // 由下面两个 effect 原地应用到现有的图上，不重建。
+  }, [key, unit, height, scheme, softKey, bandKey]);
   useEffect(() => {
-    initialData.current = data;
     plot.current?.setData(data);
   }, [data]);
+  const seriesCount = labels.length;
   useEffect(() => {
     const u = plot.current;
     if (!u) return;
-    labels.forEach((_, i) => u.setSeries(i + 1, { show: !shownHidden.has(i) }));
-  }, [shownHidden, key]);
+    for (let i = 0; i < seriesCount; i++) u.setSeries(i + 1, { show: !shownHidden.has(i) });
+  }, [shownHidden, seriesCount]);
   const toggle = (i: number) => {
     const next = new Set(shownHidden);
     if (next.has(i)) next.delete(i);

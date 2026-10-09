@@ -132,7 +132,7 @@ function SilenceDrawer({ title, submitLabel, nodes, initial, pending, error, ope
             <div className="row">
               <label>名称<input data-autofocus required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
               <label>类型
-                <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) as SilenceKind })}>
+                <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) })}>
                   <option value={SilenceKind.DAILY}>每日重复</option>
                   <option value={SilenceKind.ONCE}>一次性</option>
                 </select>

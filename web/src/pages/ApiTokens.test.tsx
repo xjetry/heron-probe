@@ -182,7 +182,7 @@ it("复制的油猴脚本填好本站地址、不带 token", async () => {
   render({});
   fireEvent.click(await screen.findByRole("button", { name: "复制油猴脚本" }));
   await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-  const source = writeText.mock.calls[0][0] as string;
+  const source = writeText.mock.calls[0][0];
   expect(source).toContain("==UserScript==");
   expect(source).toContain(`const BUILTIN_HUB = "${window.location.origin}";`);
   expect(source).toContain('const BUILTIN_TOKEN = "";');
@@ -218,6 +218,10 @@ it("剪贴板被拒时退回手动复制弹窗", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "复制油猴脚本" }));
   const box = await screen.findByRole("textbox", { name: "油猴脚本源码" });
   expect((box as HTMLTextAreaElement).value).toContain("==UserScript==");
+  // 关闭后焦点还给打开它的按钮。
+  fireEvent.click(screen.getByRole("button", { name: "关闭弹窗" }));
+  expect(screen.queryByRole("textbox", { name: "油猴脚本源码" })).toBeNull();
+  expect(screen.getByRole("button", { name: "复制油猴脚本" })).toHaveFocus();
 });
 
 it("没有 token 时不画只有表头的空表，空态与接入方式各自成块", async () => {
