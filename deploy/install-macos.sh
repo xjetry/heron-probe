@@ -264,9 +264,48 @@ command -v shasum >/dev/null 2>&1 || { echo "shasum is required to verify downlo
 
 work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
+BIN_BAK="$BIN.bak"
+# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
+# 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak。
+ROLLBACK=0
+HAD_PREVIOUS=0
+BACKED_UP=0
+# 停服务之后、启动确认成功之前的任何失败退出都由这里调到：换过二进制就把 .bak 换回来，再按原样载入旧版本，启停的
+# 确认口径与安装路径相同。停服务时没有旧二进制（首次安装）就没有可回滚的版本，保持服务停着、脚本非零退出。plist
+# 不回滚：旧二进制在新的 plist 下启动。它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告。
+rollback_agent() {
+  [ "$HAD_PREVIOUS" = 1 ] || return 0
+  echo "installation failed after heron-agent was stopped; rolling back to the previous version" >&2
+  # 新版本可能已被载入（起来后秒退时 KeepAlive 还在反复拉起它），先卸下、确认进程退出，才能换回二进制重新载入。
+  if ! stop_service; then
+    echo "failed to stop the new heron-agent; the previous binary is kept at $BIN_BAK" >&2
+    return 0
+  fi
+  if [ "$BACKED_UP" = 1 ]; then
+    if ! mv -f "$BIN_BAK" "$BIN"; then
+      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      return 0
+    fi
+    echo "restored the previous binary" >&2
+  fi
+  if [ -f "$PLIST" ] && launchctl enable "system/$LABEL" </dev/null && launchctl bootstrap system "$PLIST" </dev/null && confirm_service_started; then
+    echo "the previous heron-agent is running again" >&2
+  else
+    echo "failed to restart the previous heron-agent" >&2
+    start_log_hint
+    # 换二进制的 mv 与记下 BACKED_UP 之间被信号打断时，旧二进制只剩 .bak 这一份；on_exit 不删它。
+    [ ! -e "$BIN_BAK" ] || echo "the previous binary is kept at $BIN_BAK" >&2
+  fi
+}
 # EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出；INT、TERM、HUP 转成 exit 1，
-# Ctrl-C 或 SSH 断开时也会清掉工作目录与写了一半的临时二进制。
-trap 'rm -rf "$work"; rm -f "$BIN_TMP"' EXIT
+# Ctrl-C 或 SSH 断开时也会回滚、清掉工作目录与写了一半的临时二进制。
+# .bak 不在这里删：回滚用 mv 把它换回 BIN，成功安装在启动确认之后才删；回滚换不回去时它是旧版本仅存的一份。
+on_exit() {
+  rc=$?
+  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_agent; fi
+  rm -rf "$work"; rm -f "$BIN_TMP"
+}
+trap on_exit EXIT
 trap 'exit 1' INT TERM HUP
 
 is_https() { case "$1" in https://*) return 0;; esac; return 1; }
@@ -292,7 +331,7 @@ mkdir -p "$(dirname "$BIN")"
 install -m 0755 "$work/heron-agent" "$BIN_TMP"
 # 依赖外部条件的操作（注册或 configure、账户、目录与文件的属主权限）都在停服务之前完成：它们失败时旧服务照常运行。停服务
 # 之后只剩换二进制、写 plist、enable/bootstrap 与启动确认，这几步本身也可能失败（bootout 刚返回就 bootstrap 可能报
-# EIO、磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出并留下报错，但不再有需要回滚的外部副作用。注册可能因 hub
+# EIO、磁盘满、新二进制秒退），失败时由 on_exit 换回旧二进制并重新载入旧版本（rollback_agent）。注册可能因 hub
 # 不可达失败；对服务用户自己的文件 chown、chmod 也可能失败：文件带 uchg 标志时，本机以属主身份实测 chmod
 # 报 Operation not permitted，以 root 执行时是否同样被拦本机验证不了（chflags(2) 只写 "may not be changed"）。
 # 停服务之后只剩替换二进制、写 plist、bootstrap。这些操作都不需要服务停下：agent 只在启动时读一次配置
@@ -375,7 +414,15 @@ chmod 0600 "$CFG"
 chmod -N "$CFG"
 
 stop_service
+# 从这里起旧服务已停：之后任何失败退出都由 on_exit 回滚（rollback_agent），直到启动确认成功。
+[ ! -e "$BIN" ] || HAD_PREVIOUS=1
+ROLLBACK=1
 # 同目录 rename 原子替换目录项：launchd 执行 $BIN 时看到的始终是完整的旧文件或完整的新文件。
+# 旧二进制先留成同目录 .bak，回滚时换回来；首次安装没有 $BIN，也就没有 .bak。
+if [ "$HAD_PREVIOUS" = 1 ]; then
+  mv -f "$BIN" "$BIN_BAK"
+  BACKED_UP=1
+fi
 mv -f "$BIN_TMP" "$BIN"
 
 # plist 每次覆盖，改动随升级下发。它决定以什么身份运行什么程序，只能由 root 改：root:wheel、0644。
@@ -389,4 +436,6 @@ chown root:wheel "$PLIST"
 launchctl enable "system/$LABEL" </dev/null
 launchctl bootstrap system "$PLIST" </dev/null
 confirm_service_started
+ROLLBACK=0
+rm -f "$BIN_BAK"
 echo "heron-agent installed and started (launchd, $ARCH, $PKG)"

@@ -200,28 +200,41 @@ confirm_service_started() {
   return 1
 }
 
-# 新二进制没能留在运行状态时把旧二进制换回来并按原 init 重启旧版本；停止与启动的确认口径与安装路径相同，
-# 保证"回滚完成"和"安装成功"是同一把尺子。备份不存在表示首次安装：没有可回滚的版本，保持调用方的退出码。
-# 回滚路径里读 stdin 的命令都显式 </dev/null：脚本本身经 curl | sh 从 stdin 来，吞掉 stdin 会让余下脚本消失。
+# 停服务之后、启动确认成功之前的任何失败退出（某一步命令失败、新版本起不来或没留在运行、被信号打断）都由 on_exit
+# 调到这里，把节点恢复成停服务之前的样子：换过二进制就把 .bak 换回来，再按原 init 启动旧版本。启停的确认口径与安装
+# 路径相同，保证"回滚完成"和"安装成功"是同一把尺子。停服务时没有旧二进制（首次安装）就没有可回滚的版本，保持服务
+# 停着、脚本非零退出。服务定义与更新器的文件不回滚：旧二进制在新的服务定义下启动。
+# 它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告，不中断 on_exit 余下的清理。
+# 读 stdin 的命令都显式 </dev/null：脚本本身经 curl | sh 从 stdin 来，吞掉 stdin 会让余下脚本消失。
 rollback_agent() {
-  [ ! -e "$BIN_BAK" ] || {
-    case "$INIT" in
-      systemd) systemctl stop heron-agent </dev/null || true;;
-      openrc) rc-service heron-agent stop </dev/null || true;;
-    esac
-    mv -f "$BIN_BAK" "$BIN"
-    echo "the new heron-agent did not start; restored the previous binary" >&2
-    case "$INIT" in
-      systemd) systemctl start heron-agent </dev/null || true;;
-      openrc) rc-service heron-agent start </dev/null || true;;
-    esac
-    if confirm_service_started; then
-      echo "the previous heron-agent is running again" >&2
-    else
-      echo "failed to restart the previous heron-agent" >&2
-      start_log_hint
+  [ "$HAD_PREVIOUS" = 1 ] || return 0
+  echo "installation failed after heron-agent was stopped; rolling back to the previous version" >&2
+  case "$INIT" in
+    systemd) systemctl stop heron-agent </dev/null || true;;
+    openrc) rc-service heron-agent stop </dev/null || true;;
+  esac
+  if [ "$BACKED_UP" = 1 ]; then
+    if ! mv -f "$BIN_BAK" "$BIN"; then
+      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      return 0
     fi
-  }
+    echo "restored the previous binary" >&2
+  fi
+  if start_service && confirm_service_started; then
+    echo "the previous heron-agent is running again" >&2
+  else
+    echo "failed to restart the previous heron-agent" >&2
+    start_log_hint
+    # 换二进制的 mv 与记下 BACKED_UP 之间被信号打断时，旧二进制只剩 .bak 这一份；on_exit 不删它。
+    [ ! -e "$BIN_BAK" ] || echo "the previous binary is kept at $BIN_BAK" >&2
+  fi
+}
+
+start_service() {
+  case "$INIT" in
+    systemd) systemctl start heron-agent </dev/null;;
+    openrc) rc-service heron-agent start </dev/null;;
+  esac
 }
 
 # 是否发 stop 以服务定义是否安装为准，stop 命令失败即失败；确认一步不依赖它，总是执行：
@@ -450,10 +463,21 @@ work=$(mktemp -d)
 BIN_TMP="$BIN.tmp.$$"
 BIN_BAK="$BIN.bak"
 UPDATER_TMP="$UPDATER_BIN.tmp.$$"
+# 回滚状态（rollback_agent 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有
+# 旧二进制；BACKED_UP 记旧二进制是否已改名成 .bak。
+ROLLBACK=0
+HAD_PREVIOUS=0
+BACKED_UP=0
 # EXIT trap 覆盖正常结束、exit 与 set -e 触发的退出。dash 与 busybox ash 被信号终止时不执行 EXIT trap，
-# 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会清掉工作目录与写了一半的临时二进制。
-# .bak 也在这里清：回滚用 mv 把它换回 BIN，成功安装则在确认之后才删，trap 只兜住中途失败留下的那一份。
-trap 'rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP" "$BIN_BAK"; restore_updater' EXIT
+# 所以把 INT、TERM、HUP 转成 exit 1，Ctrl-C 或 SSH 断开时也会回滚、清掉工作目录与写了一半的临时文件。
+# .bak 不在这里删：回滚用 mv 把它换回 BIN，成功安装在启动确认之后才删；回滚换不回去时它是旧版本仅存的一份。
+on_exit() {
+  rc=$?
+  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_agent; fi
+  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
+  restore_updater
+}
+trap on_exit EXIT
 trap 'exit 1' INT TERM HUP
 
 dl() {
@@ -474,7 +498,7 @@ GOT_SHA256=${GOT_SHA256%% *}
 
 # 依赖外部条件的操作都在停服务之前做完：解包、检查包内文件、写临时二进制、注册或 configure、设配置的属主与权限。
 # 这些失败时正在运行的旧服务不受影响；停服务之后只剩替换二进制、装服务定义、启动，这几步本身也可能失败
-# （磁盘满、新二进制秒退），失败时服务已停、脚本以非零退出。前面的步骤都不需要服务停下：
+# （磁盘满、新二进制秒退），失败时由 on_exit 换回旧二进制并重启旧版本（rollback_agent）。前面的步骤都不需要服务停下：
 # agent 只在启动时读一次配置（cmd/agent 的 run 只调用 LoadConfig）。
 tar -xzf "$work/$PKG" -C "$work"
 for f in heron-agent heron-agent.service heron-agent.openrc; do
@@ -526,10 +550,15 @@ chown "$SVC_USER:$SVC_USER" "$CFG"
 chmod 0600 "$CFG"
 
 stop_service
+# 从这里起旧服务已停：之后任何失败退出都由 on_exit 回滚（rollback_agent），直到启动确认成功。
+[ ! -e "$BIN" ] || HAD_PREVIOUS=1
+ROLLBACK=1
 # 同目录 rename 原子替换目录项：exec $BIN 看到的始终是完整的旧文件或完整的新文件；
-# 写了一半的临时文件由上面的 trap 删除。旧二进制先留成同目录 .bak，新二进制起不来时由 rollback_agent
-# 换回来；首次安装没有 $BIN，没有 .bak，rollback_agent 直接返回。
-[ ! -e "$BIN" ] || mv -f "$BIN" "$BIN_BAK"
+# 写了一半的临时文件由 on_exit 删除。旧二进制先留成同目录 .bak，回滚时换回来；首次安装没有 $BIN，也就没有 .bak。
+if [ "$HAD_PREVIOUS" = 1 ]; then
+  mv -f "$BIN" "$BIN_BAK"
+  BACKED_UP=1
+fi
 mv -f "$BIN_TMP" "$BIN"
 
 # 服务定义每次覆盖，单元的改动随升级下发。
@@ -537,26 +566,27 @@ mv -f "$BIN_TMP" "$BIN"
 # 所以用 start，不依赖 restart 对已停服务等价于 start。
 case "$INIT" in
   systemd)
-    # 更新器在本分支末尾 start 才启动，启动时读来源配置：先写配置再换二进制。
+    # 更新器在 agent 确认运行之后才 start，启动时读来源配置：先写配置再换二进制。
     write_update_source
     mv -f "$UPDATER_TMP" "$UPDATER_BIN"
     install -m 0644 "$work/updater/heron-updater-agent.service" "$UPDATER_UNIT"
     install -m 0644 "$work/heron-agent.service" "$SYSTEMD_UNIT"
     systemctl daemon-reload </dev/null
-    systemctl enable heron-agent </dev/null
-    systemctl start heron-agent </dev/null || { rollback_agent; exit 1; }
-    systemctl enable heron-updater-agent </dev/null
-    systemctl start heron-updater-agent </dev/null
-    UPDATER_RESTORE=0;;
+    systemctl enable heron-agent </dev/null;;
   openrc)
     install -m 0755 "$work/heron-agent.openrc" "$OPENRC_SCRIPT"
     # 重跑时它已在 default runlevel 里；只在不在时才加，不依赖 rc-update 对重复 add 的退出码。
-    [ -L "$OPENRC_LINK" ] || rc-update add heron-agent default </dev/null
-    rc-service heron-agent start </dev/null || { rollback_agent; exit 1; };;
+    [ -L "$OPENRC_LINK" ] || rc-update add heron-agent default </dev/null;;
 esac
-if ! confirm_service_started; then
-  rollback_agent
-  exit 1
-fi
+start_service
+confirm_service_started
+ROLLBACK=0
 rm -f "$BIN_BAK"
+# 更新器在 agent 确认运行之后才启动：它起不来不该把已经在跑的新 agent 回滚掉。失败时脚本非零退出；更新器原本在运行的话，
+# on_exit 的 restore_updater 会再拉起它一次。
+if [ "$INIT" = systemd ]; then
+  systemctl enable heron-updater-agent </dev/null
+  systemctl start heron-updater-agent </dev/null
+  UPDATER_RESTORE=0
+fi
 echo "heron-agent installed and started ($INIT, $ARCH, $PKG)"
