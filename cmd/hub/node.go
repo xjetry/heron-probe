@@ -34,7 +34,9 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	// 库被新建的信号就是这一行；建立状态的子命令（passwd、node create、window open）因此
 	// 必须放出它，否则退出码与其余输出跟"库已存在、操作在原库上完成"完全一样。
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema)
+	// 离线子命令是 hub 进程之外的写者：每个提交的写事务都推进离线变更代数，运行中的 hub 据此重载（见 store.ExternalWriter）。
+	// 除 restore（要求 hub 已停止，见 store.Restore）外，离线入口都经这个函数打开库，这里是它们共同的声明处。
+	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema, store.ExternalWriter())
 	if err != nil {
 		return nil, nil, err
 	}

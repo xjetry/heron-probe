@@ -53,6 +53,9 @@ type Store struct {
 	// themeGen 是主题版本与全站选择的代数；在线写者统一经 writeTheme 推进。
 	themeGen     atomic.Uint64
 	themeChanges chan struct{}
+	// external 由 Open 的 ExternalWriter 选项给出，打开后不变：为真时 runWriter 在每个写事务提交前推进离线变更代数
+	// （见 coordination.go）。
+	external bool
 }
 
 type writeReq struct {
@@ -93,21 +96,34 @@ const (
 	RequireCurrentSchema
 )
 
+// OpenOption 调整 Open 打开的 Store 在库的写者中的角色。不给任何选项即运行中的 hub 自己。
+type OpenOption func(*openConfig)
+
+type openConfig struct{ external bool }
+
+// ExternalWriter 声明打开库的是 hub 进程之外的写者（离线子命令）：这样的 Store 在每个提交的写事务里推进离线
+// 变更代数，运行中的 hub 据此发现库外写入并重载缓存。离线入口漏给这个选项，它的写入不会被运行中的 hub 看到。
+func ExternalWriter() OpenOption { return func(c *openConfig) { c.external = true } }
+
 // Open 按 policy 检查或迁移 schema。SQLite 打开失败的报错不带文件名（如 unable to open database file (14)）；
 // serve 与离线子命令都经这里打开库，打开过程的每一种失败都在这一层补上路径，报错才指得出是哪个文件、
 // 该查哪个目录的权限。
-func Open(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy) (*Store, error) {
+func Open(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy, opts ...OpenOption) (*Store, error) {
 	if policy != MigrateSchema && policy != RequireCurrentSchema {
 		panic("store.Open requires a valid SchemaPolicy")
 	}
-	s, err := openStore(path, clk, log, policy)
+	var cfg openConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	s, err := openStore(path, clk, log, policy, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", path, err)
 	}
 	return s, nil
 }
 
-func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy) (*Store, error) {
+func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPolicy, cfg openConfig) (*Store, error) {
 	w, err := sql.Open("sqlite", dsn(path, ""))
 	if err != nil {
 		return nil, err
@@ -155,7 +171,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	statsDB.SetMaxOpenConns(1)
 	statsCtx, cancelStats := context.WithCancel(context.Background())
 	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, hr: hr, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1),
-		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}}
+		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}, external: cfg.external}
 	s.publicEnabled.Store(settings.Site.PublicEnabled)
 	go s.runWriter()
 	return s, nil
@@ -263,7 +279,11 @@ func (s *Store) runWriter() {
 		if req.ctx != nil && req.ctx.Err() != nil {
 			err = req.ctx.Err()
 		} else {
-			err = inTx(s.w, req.fn)
+			fn := req.fn
+			if s.external {
+				fn = advancingOfflineGeneration(fn)
+			}
+			err = inTx(s.w, fn)
 		}
 		if req.res != nil {
 			req.res <- err
