@@ -45,6 +45,37 @@ func TestWithoutURLKeepsOperationAndCause(t *testing.T) {
 	}
 }
 
+// 两个构造函数的客户端各有自己的连接池（为什么见 client.go 里 NewClient 上方的说明）：Transport 不是共享的
+// http.DefaultTransport，两次调用各得一份，设置取自 DefaultTransport 的克隆（代理与空闲连接设置相同）。
+func TestClientsOwnTheirTransport(t *testing.T) {
+	shared := http.DefaultTransport.(*http.Transport)
+	for _, c := range []struct {
+		name string
+		new  func() *http.Client
+	}{
+		{"NewClient", func() *http.Client { return NewClient(time.Second) }},
+		{"NewTransferClient", func() *http.Client { return NewTransferClient(time.Second, time.Second) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			first, second := c.new(), c.new()
+			tr, ok := first.Transport.(*http.Transport)
+			if !ok || tr == nil {
+				t.Fatalf("Transport = %T %v, want a *http.Transport of its own", first.Transport, first.Transport)
+			}
+			if first.Transport == http.DefaultTransport {
+				t.Fatal("Transport is the shared http.DefaultTransport")
+			}
+			if first.Transport == second.Transport {
+				t.Fatal("two clients share one Transport")
+			}
+			if tr.Proxy == nil || tr.MaxIdleConns != shared.MaxIdleConns || tr.IdleConnTimeout != shared.IdleConnTimeout || tr.ForceAttemptHTTP2 != shared.ForceAttemptHTTP2 {
+				t.Errorf("Transport settings: proxy set %v, MaxIdleConns %d, IdleConnTimeout %v, ForceAttemptHTTP2 %v; want those of http.DefaultTransport (%d, %v, %v)",
+					tr.Proxy != nil, tr.MaxIdleConns, tr.IdleConnTimeout, tr.ForceAttemptHTTP2, shared.MaxIdleConns, shared.IdleConnTimeout, shared.ForceAttemptHTTP2)
+			}
+		})
+	}
+}
+
 func TestZeroTimeoutsAreRejected(t *testing.T) {
 	for name, build := range map[string]func(){
 		"NewClient":              func() { NewClient(0) },

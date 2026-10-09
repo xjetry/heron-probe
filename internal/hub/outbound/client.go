@@ -13,13 +13,19 @@ import (
 // Go 1.27.1 实测跨不同主机去掉 Authorization，同主机或原主机的子域保留；不能把去掉此头当作整个请求不泄密。
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
+// 出站客户端的连接池只属于自己：进程里任何一方对 http.DefaultTransport 调 CloseIdleConnections（标准库
+// httptest.Server.Close 就会调），都会关掉共享池里的连接，连带打断经它在飞的请求——应答没有正文时，Go 1.27.2 的
+// Transport 先把连接放回空闲池、再把应答交给等待的请求（net/http transport.go 的 readLoop），这段时间里连接被关，
+// 服务端已经答复的请求也以 "http: CloseIdleConnections called" 失败。所以两个构造函数都克隆 http.DefaultTransport
+// 的设置（代理取自环境、拨号与空闲超时相同）而连接池独立；TestClientsOwnTheirTransport 断言这一点。
+
 // NewClient 是有总时限的出站客户端：timeout 覆盖建连、写请求与读完应答体，适合请求与应答都有小上界的消费方。
 // 0 在 http.Client 里表示不限时，是放宽方向，这里拒绝它。
 func NewClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		panic("outbound.NewClient: timeout must be positive")
 	}
-	return &http.Client{Timeout: timeout, CheckRedirect: noRedirect}
+	return &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone(), Timeout: timeout, CheckRedirect: noRedirect}
 }
 
 // NewTransferClient 不设总时限，给体量随对象变化的传输：总时长由调用方按对象体量与所属周期给 context 截止时间，客户端只限
