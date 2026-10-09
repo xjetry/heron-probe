@@ -162,18 +162,18 @@ it("下载的 SKILL.md 就是 hub 下发的 guide", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const blobs: Blob[] = [];
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:card"; });
+  vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:skill"; });
   const clicked: HTMLAnchorElement[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
-  render({ getApiReference: async () => ({ guide: "---\nname: heron-hub\n---\n卡片", files: [] }) });
+  render({ getApiReference: async () => ({ guide: "---\nname: heron-hub\n---\n技能文件", files: [] }) });
   fireEvent.click(await screen.findByRole("button", { name: "下载 SKILL.md" }));
   await waitFor(() => expect(clicked).toHaveLength(1));
   expect(clicked[0].download).toBe("SKILL.md");
   // undici 的 Response 不认 jsdom 的 Blob，读出来是 "[object Blob]"；这个 jsdom 实现了 Blob.text。
-  expect(await blobs[0].text()).toBe("---\nname: heron-hub\n---\n卡片");
+  expect(await blobs[0].text()).toBe("---\nname: heron-hub\n---\n技能文件");
   expect(revoke).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(60_000);
-  expect(revoke).toHaveBeenCalledWith("blob:card");
+  expect(revoke).toHaveBeenCalledWith("blob:skill");
 });
 
 it("列表挂起时显示加载中", async () => {

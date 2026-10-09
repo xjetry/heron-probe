@@ -19,6 +19,6 @@
 - **自描述**：语义写在 proto 注释里——它同时是人和 agent 的接口文档。
 - **错误自解释**：说清哪个字段、违反了什么约束、期望什么取值。agent 手上只有这个字符串，人还能去翻日志。
 - **数据自带语义**：单位、时间基准、采样窗口随数据走，不靠"看图才懂"。缺读数与读数为 0 在协议层可区分（`optional`），不用零值冒充。
-- **Skill 是入口卡片**：写 base URL、凭据怎么取、schema 在哪、时间与分页约定，以及两三个可直接跑的例子。它补的是 Connect 给不了的那部分——"这个 API 在哪、怎么进门"——不是 CLI 手册。卡片在 `proto/SKILL.md`，与 proto 同目录、随 hub 嵌入并经 `GetApiReference` 下发；其中的例子由 e2e 执行，失效即红。
+- **技能文件（Skill）只管进门**：写 base URL、凭据怎么取、schema 在哪、时间与分页约定，以及两三个可直接跑的例子。它补的是 Connect 给不了的那部分——"这个 API 在哪、怎么进门"——不是 CLI 手册。技能文件是 `proto/SKILL.md`，与 proto 同目录、随 hub 嵌入并经 `GetApiReference` 下发；其中的例子由 e2e 执行，失效即红。
 
-**schema 的取得**：`AdminService.GetApiReference`（只读，API token 可调）返回入口卡片与全部 proto 源文件，均在构建时嵌入 hub——不在仓库里的 agent 由此取得与 hub 同版本的 schema，注释即文档（§5.6）。不开 gRPC reflection：它是双向流，不能以纯 HTTP+JSON POST 调用，与"可直接调用"冲突；未鉴权时还等于向任何能连上的人公开 API 形状。也不另开端点：它是 `AdminService` 的一个方法，对外服务仍是三个。
+**schema 的取得**：`AdminService.GetApiReference`（只读，API token 可调）返回技能文件与全部 proto 源文件，均在构建时嵌入 hub——不在仓库里的 agent 由此取得与 hub 同版本的 schema，注释即文档（§5.6）。不开 gRPC reflection：它是双向流，不能以纯 HTTP+JSON POST 调用，与"可直接调用"冲突；未鉴权时还等于向任何能连上的人公开 API 形状。也不另开端点：它是 `AdminService` 的一个方法，对外服务仍是三个。

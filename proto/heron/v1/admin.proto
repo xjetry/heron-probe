@@ -324,7 +324,7 @@ service AdminService {
   rpc DeleteApiToken(DeleteApiTokenRequest) returns (DeleteApiTokenResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
-  // 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+  // 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
   rpc GetApiReference(GetApiReferenceRequest) returns (GetApiReferenceResponse) {
     option (heron.v1.access) = ACCESS_READ;
   }
@@ -1484,7 +1484,7 @@ message DeleteApiTokenResponse {}
 
 message GetApiReferenceRequest {}
 message GetApiReferenceResponse {
-  // 入口卡片（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
+  // 技能文件 SKILL.md（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
   string guide = 1;
   // 按路径升序。
   repeated ProtoFile files = 2;

@@ -43,7 +43,7 @@ function Operations({ ownerId }: { ownerId: bigint }) {
   </section>;
 }
 
-// 卡片内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
+// 技能文件的内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
 export function ApiTokens() {
   const qc = useQueryClient();
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
