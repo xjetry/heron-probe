@@ -78,7 +78,7 @@ export function ApiTokens() {
             {gate.data.tokens.map((t) => (
               <tr key={String(t.id)}>
                 <td data-label="名称">{t.name}</td>
-                <td data-label="权限 / 范围">{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
+                <td data-label="权限 / 范围" className="wrap-text">{t.grant?.permissions.length ? t.grant.permissions.map((p) => permissionChoices.find(([v]) => v === p)?.[1] ?? "未知权限").join("、") : "只读"}<br />
                   {t.grant?.allNodes !== false ? "全站" : t.grant.nodeIds.length ? t.grant.nodeIds.map((id) => `#${id}`).join("、") : "无现有节点"}</td>
                 <td data-label="创建于" className="muted">{day(t.createdAt)}</td>
                 <td data-label="最后使用" className="muted">{t.lastUsedAt == null ? "从未使用" : dateTime(t.lastUsedAt)}</td>

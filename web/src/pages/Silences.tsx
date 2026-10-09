@@ -84,9 +84,9 @@ export function Silences() {
               if (!s) return null;
               const label = withId(s.name, s.id);
               return <tr key={String(s.id)}>
-                <td data-label="名称">{s.name}{s.reason && <p className="node-subtext node-note" title={s.reason}>{s.reason}</p>}</td>
+                <td data-label="名称">{s.name}{s.reason && <p className="node-subtext node-note clip-text" title={s.reason}>{s.reason}</p>}</td>
                 <td data-label="窗口">{windowText(s)}</td>
-                <td data-label="作用域">{s.allNodes ? "全部节点" : s.selectorTags.length ? `标签：${s.selectorTags.join(" ∩ ")}（当前 ${s.nodeIds.length}）` : s.nodeIds.length ? <span title={s.nodeIds.map(nodeName).join("、")}>{s.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
+                <td data-label="作用域" className="wrap-text">{s.allNodes ? "全部节点" : s.selectorTags.length ? `标签：${s.selectorTags.join(" ∩ ")}（当前 ${s.nodeIds.length}）` : s.nodeIds.length ? <span title={s.nodeIds.map(nodeName).join("、")}>{s.nodeIds.length} 个指定节点</span> : <span className="muted">无节点</span>}</td>
                 <td data-label="状态">{!s.enabled ? <span className="muted">已停用</span> : entry.active ? <span>生效中</span> : <span className="muted">窗口外</span>}</td>
                 <td data-column="actions"><RowMenu label={label} items={[
                   { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", silence: s, opener: trigger }); } },

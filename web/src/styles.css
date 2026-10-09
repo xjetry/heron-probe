@@ -109,6 +109,16 @@ form.row { flex-wrap: wrap; }
 .tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
 table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* 单元格一律不折行（上一条），长度不受用户约束的内容会把整张表撑到几千像素，后面的列与 ⋯ 要横向滚动才看得到。
+   这类内容必须二选一：
+   - .clip-text：单行截断加省略号，完整内容放进元素的 title。用于标识类的值（探测目标、渠道目标、备注、原因），
+     全文在悬停提示与编辑抽屉里。
+   - td.wrap-text：恢复折行，并允许在任意字符处断开。用于句子与拼起来的列表（告警条件、作用域、渠道名），
+     它们的关键信息可能在末尾，截断会截掉。必须是 anywhere 而不是 break-word：break-word 不改变单元格的最小内容
+     宽度，表格仍按整串排宽（Chromium、Firefox、WebKit 实测）。 */
+.clip-text { display: block; min-width: 0; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip-text.clip-wide { max-width: 48ch; }
+table.nodes td.wrap-text { white-space: normal; overflow-wrap: anywhere; }
 /* 实时读数表（components/ReadingsTable.tsx：管理端总览、公开页列表视图）。表格外框与表头由各自的样式表给出，这里只管
    列内排版与手机布局。 */
 .readings-table td { white-space: nowrap; }
