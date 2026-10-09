@@ -459,7 +459,9 @@ func TestServeRejectsUnknownTimezoneBeforeListening(t *testing.T) {
 	}
 }
 
-// 退出时流量必须先于关库落盘：最后一次上报之后立刻停机，重启后总量仍在。
+// 退出时流量与分钟桶都必须先于关库落盘：最后一次上报之后立刻停机，重启后总量与当前分钟的那一行仍在。
+// 两个刷出循环（traffic.Book.Run、ingest 的 RunFlusher）都在取消时把内存里的全部状态写出后才返回，
+// run 等它们返回才关库。
 func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "initial sufficiently long password"
@@ -508,6 +510,13 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	}
 	if r := recs[0]; r.NodeID != node.Msg.Node.Id || r.TotalRx != 200 || r.TotalTx != 1 || r.LastRx != 1200 || r.BootID != "3f2b8c1e-6a4d-4e9b-8c7f-1d2e3f4a5b6c" {
 		t.Fatalf("shutdown lost the traffic state: %+v", r)
+	}
+	// 假时钟没走：两次上报落在仍开着的那一分钟里，按周期刷出永远轮不到它，只有退出时的全量刷出会写它。
+	minute, _ := store.LevelByName("1m")
+	start := clk.Now().Unix()
+	rows, err := st.QueryMetrics(ctx, node.Msg.Node.Id, start, start+60, minute, 60)
+	if err != nil || len(rows) != 1 || rows[0].TS != start {
+		t.Fatalf("minute rows after shutdown: %+v %v; want the open minute at %d", rows, err, start)
 	}
 }
 

@@ -66,10 +66,8 @@ func relayHub(t *testing.T, official func(arch string) update.Artifacts, verify 
 	relay := updates.NewRelay(manager, func(_ context.Context, _ string, arch string) (update.Artifacts, error) {
 		return official(arch), nil
 	}, verify, clk)
-	svc, err := New(Config{TTL: 30 * time.Second, Updates: manager, Releases: relay}, l, st, a, book, reg, clk, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := New(Config{TTL: 30 * time.Second, Updates: manager, Releases: relay},
+		Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: slog.Default()})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), manager.Load(ctx)); err != nil {

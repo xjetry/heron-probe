@@ -1,0 +1,217 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/testwait"
+)
+
+// noServeEnv 是空环境：生命周期用例只看显式 flag，不受跑测试的 shell 里 HERON_* 的影响。
+func noServeEnv(string) (string, bool) { return "", false }
+
+func lifecycleOptions(t *testing.T, flags ...string) serveOptions {
+	t.Helper()
+	opts, err := parseServeOptions(append([]string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--timezone", "UTC"}, flags...), noServeEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return opts
+}
+
+func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// settledGoroutines 等协程数回到 baseline 以下。cmd/hub 的用例不并行，baseline 之后新起而未退出的协程只能来自被测的
+// hub：库的写协程与后台循环都在其中，漏关库或漏停循环都会让计数停在 baseline 之上。
+func settledGoroutines(t *testing.T, baseline int) {
+	t.Helper()
+	testwait.Until(t, 10*time.Millisecond, func() bool { return runtime.NumGoroutine() <= baseline },
+		"goroutines did not return to %d: %v", baseline, testwait.When(func() string { return strconv.Itoa(runtime.NumGoroutine()) }))
+}
+
+func requireStoreClosed(t *testing.T, h *hub) {
+	t.Helper()
+	if _, err := h.st.ListNodes(context.Background()); err == nil || !strings.Contains(err.Error(), "database is closed") {
+		t.Fatalf("store still open after run returned: %v", err)
+	}
+}
+
+// 装配在库打开之后失败（这里是 --admin-origin 不合法）时，newHub 自己关库：调用方拿不到 hub，也就没有别人能关它。
+func TestNewHubClosesTheStoreWhenAssemblyFails(t *testing.T) {
+	opts := lifecycleOptions(t, "--listen", "127.0.0.1:0", "--admin-origin", "http://example.com")
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(opts, clock.NewFake(time.Now()), discardLog())
+	if err == nil || h != nil || !strings.Contains(err.Error(), "--admin-origin") {
+		t.Fatalf("newHub = %v, %v; want an --admin-origin error", h, err)
+	}
+	if _, statErr := os.Stat(opts.db); statErr != nil {
+		t.Fatalf("the failure must come after the store opened, or this case proves nothing: %v", statErr)
+	}
+	settledGoroutines(t, baseline)
+}
+
+// 监听失败时 run 仍是库的唯一所有者：返回前关库，不过更新门，不起任何循环。
+func TestRunClosesTheStoreWhenListenFails(t *testing.T) {
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", blocker.Addr().String()), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated := false
+	h.gate = func(context.Context) error { gated = true; return nil }
+	if err := h.run(context.Background(), discardLog()); err == nil || !strings.Contains(err.Error(), "address already in use") {
+		t.Fatalf("run = %v, want a bind error", err)
+	}
+	if gated {
+		t.Fatal("update gate ran without a listener")
+	}
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}
+
+// 更新门拒绝时，已建立的监听要关掉、库要关掉：门报告就绪的前提是监听已绑上，门失败则不留下半启动的 hub。
+func TestRunClosesTheListenerAndStoreWhenTheGateFails(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := probe.Addr().String()
+	probe.Close()
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", addr), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundAtGate := false
+	h.gate = func(context.Context) error {
+		if l, err := net.Listen("tcp", addr); err == nil {
+			l.Close()
+		} else {
+			boundAtGate = true
+		}
+		return errors.New("refused for the test")
+	}
+	if err := h.run(context.Background(), discardLog()); err == nil || err.Error() != "update startup gate: refused for the test" {
+		t.Fatalf("run = %v, want the gate error", err)
+	}
+	if !boundAtGate {
+		t.Fatal("gate ran before the listener was bound")
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listener left open after the gate failed: %v", err)
+	}
+	l.Close()
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}
+
+// 取消后 run 先排空在途请求再关库：请求处理期间库必须仍可用，处理器写完的响应必须送达，run 随后才返回。
+func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+	h, err := newHub(lifecycleOptions(t, "--listen", "127.0.0.1:0"), clock.NewFake(time.Now()), discardLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	next := h.handler
+	h.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/slow" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		close(entered)
+		<-release
+		_, err := h.st.ListNodes(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		io.WriteString(w, "drained")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(serveEvents, 128)
+	done := make(chan error, 1)
+	go func() { done <- h.run(ctx, slog.New(slog.NewJSONHandler(events, nil))) }()
+	var addr string
+	for addr == "" {
+		select {
+		case e := <-events:
+			if string(e["msg"]) == `"hub listening"` {
+				if err := json.Unmarshal(e["listen"], &addr); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case err := <-done:
+			t.Fatalf("run returned before listening: %v", err)
+		case <-time.After(testwait.Bound):
+			t.Fatal("no startup line")
+		}
+	}
+	type response struct {
+		status int
+		body   string
+		err    error
+	}
+	responses := make(chan response, 1)
+	go func() {
+		resp, err := http.Get("http://" + addr + "/slow")
+		if err != nil {
+			responses <- response{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		responses <- response{status: resp.StatusCode, body: string(body), err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(testwait.Bound):
+		t.Fatal("request did not reach the handler")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("run returned with a request in flight: %v", err)
+	// 负向窗口：排空未完成时 run 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等待的 run 判失败。
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case r := <-responses:
+		if r.err != nil || r.status != http.StatusOK || r.body != "drained" {
+			t.Fatalf("in-flight request = %d %q %v, want 200 drained", r.status, r.body, r.err)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("in-flight request got no response")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(testwait.Bound):
+		t.Fatal("run did not return after the drain")
+	}
+	requireStoreClosed(t, h)
+	settledGoroutines(t, baseline)
+}

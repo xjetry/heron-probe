@@ -299,7 +299,7 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 	paths := make(chan string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { paths <- r.URL.Path; w.WriteHeader(200) }))
 	defer srv.Close()
-	h.svc.notifier = alert.NewQueue(h.store, h.alerts.Channels, outbound.NewClient(alert.NotifyTimeout), srv.URL, h.clk, nil, h.svc.log)
+	h.svc.notifier = alert.NewQueue(alert.QueueConfig{TelegramBase: srv.URL}, alert.QueueDeps{Store: h.store, Channels: h.alerts.Channels, Client: outbound.NewClient(alert.NotifyTimeout), Clock: h.clk, Log: h.svc.log})
 	c := saveChannel(t, h, &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "secret", ChatId: "chat"}})
 	want := &heronv1.NotifyChannel{Id: 1, Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{HasBotToken: true, ChatId: "chat"}, CreatedAt: h.clk.Now().Unix(), RatePerMinute: proto.Uint32(20)}
 	if !proto.Equal(c, want) {
@@ -507,7 +507,7 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 	for _, grace := range []uint32{29, 30, 0} {
 		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(grace)}))
 		if grace == 29 {
-			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 29" {
+			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (--offline-after, HERON_OFFLINE_AFTER); got 29" {
 				t.Fatalf("err=%v", err)
 			}
 			continue

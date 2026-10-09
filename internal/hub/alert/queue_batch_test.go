@@ -90,7 +90,7 @@ func offlineRuleTo(t *testing.T, f *fixture, name string, channels ...store.Noti
 func wire(t *testing.T, f *fixture, base string) (*Queue, *[]time.Duration, func()) {
 	t.Helper()
 	sleeps := new([]time.Duration)
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	f.e.SetSender(q)
 	return q, sleeps, startQueue(t, q)
 }
@@ -326,7 +326,7 @@ func TestRestartResendsPersistedBatchesWithoutRemerging(t *testing.T) {
 	f.restart(t)
 	base, tg := newTelegramServer(t, f, nil)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	must(t, q.Requeue(t.Context()))
 	stop := startQueue(t, q)
 	awaitSettled(t, f)
@@ -402,7 +402,7 @@ func TestChannelRateDefersExcessBatchesToNextMinute(t *testing.T) {
 	c := telegramChannel(t, f, 20)
 	events := recordBatches(t, f, c, 25)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	start := f.clk.Now()
 	for _, ev := range events {
 		q.Enqueue(ev)
@@ -459,7 +459,7 @@ func TestRetryAfterExtendsBackoff(t *testing.T) {
 				t.Fatalf("fixture starts at %v, the date case assumes %v", f.clk.Now(), start)
 			}
 			var sleeps []time.Duration
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+			q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			d := awaitDeliveries(t, f, ev.ID, allDone)[0]
@@ -505,7 +505,7 @@ func TestWaitingBatchesDoNotBlockOtherChannels(t *testing.T) {
 			tgEvents := recordBatches(t, f, c, 2)
 			hookEvent := recordBatches(t, f, queueChannel(t, f, srv.URL), 1)[0]
 			var sleeps []time.Duration
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+			q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			start := f.clk.Now()
 			q.Enqueue(tgEvents[0])
 			q.Enqueue(tgEvents[1])

@@ -49,7 +49,7 @@ func TestAttemptRecordsOnlyRowsItSent(t *testing.T) {
 	r := offlineRuleTo(t, f, "离线", c)
 	first := recordBatches(t, f, c, 1)[0]
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	joined := joinOnRead(t, f, q, r, c, ids[1:2])
 	q.Enqueue(first)
 	stop := startQueue(t, q)
@@ -88,7 +88,7 @@ func TestGrowingBatchYieldsWorkerAtReadBound(t *testing.T) {
 	hookEvent := recordBatches(t, f, queueChannel(t, f, srv.URL), 1)[0]
 	var logs bytes.Buffer
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), slog.New(slog.NewJSONHandler(&logs, nil)))
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: slog.New(slog.NewJSONHandler(&logs, nil))})
 	joinOnRead(t, f, q, r, c, ids[1:])
 	start := f.clk.Now()
 	q.Enqueue(first)
@@ -142,7 +142,7 @@ func TestRetryAfterSurvivesResultWriteFailure(t *testing.T) {
 	deliverySQL(t, db, "CREATE TRIGGER fail_429 BEFORE UPDATE ON alert_delivery WHEN NEW.failure = 'http_status' BEGIN SELECT RAISE(ABORT, 'result write blocked'); END")
 	var mu sync.Mutex
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, func(_ context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: func(_ context.Context, d time.Duration) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(sleeps) == 0 {
@@ -151,7 +151,7 @@ func TestRetryAfterSurvivesResultWriteFailure(t *testing.T) {
 		sleeps = append(sleeps, d)
 		f.clk.Advance(d)
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	start := f.clk.Now()
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
@@ -194,7 +194,7 @@ func TestUnrecordedRetryWaitIsNotEvicted(t *testing.T) {
 	var q *Queue
 	var mu sync.Mutex
 	var sleeps []time.Duration
-	q = NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, func(_ context.Context, d time.Duration) error {
+	q = NewQueue(QueueConfig{TelegramBase: base, Sleep: func(_ context.Context, d time.Duration) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(sleeps) == 0 {
@@ -205,7 +205,7 @@ func TestUnrecordedRetryWaitIsNotEvicted(t *testing.T) {
 		sleeps = append(sleeps, d)
 		f.clk.Advance(d)
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.limit = 1
 	start := f.clk.Now()
 	q.Enqueue(ev)
@@ -237,11 +237,11 @@ func TestRetryAfterSurvivesRestart(t *testing.T) {
 	start := f.clk.Now()
 	parked := make(chan struct{})
 	var once sync.Once
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: func(ctx context.Context, d time.Duration) error {
 		once.Do(func() { close(parked) })
 		<-ctx.Done()
 		return ctx.Err()
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	select {
@@ -258,7 +258,7 @@ func TestRetryAfterSurvivesRestart(t *testing.T) {
 	f.clk.Advance(20 * time.Second)
 	f.restart(t)
 	var sleeps []time.Duration
-	fresh := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	fresh := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	must(t, fresh.Requeue(t.Context()))
 	stop = startQueue(t, fresh)
 	d := awaitDeliveries(t, f, ev.ID, allDone)[0]
@@ -281,7 +281,7 @@ func TestRetryAfterIgnoredWithout429(t *testing.T) {
 	c := telegramChannel(t, f, 20)
 	ev := recordBatches(t, f, c, 1)[0]
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	start := f.clk.Now()
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
@@ -305,7 +305,7 @@ func TestRetryAfterDateIsCapped(t *testing.T) {
 	c := telegramChannel(t, f, 20)
 	ev := recordBatches(t, f, c, 1)[0]
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	awaitDeliveries(t, f, ev.ID, allDone)

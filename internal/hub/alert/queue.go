@@ -122,12 +122,47 @@ type Queue struct {
 
 var _ Sender = (*Queue)(nil)
 
-func NewQueue(st *store.Store, channels func() []store.NotifyChannel, client *http.Client, telegramBase string, clk clock.Clock, sleep func(context.Context, time.Duration) error, log *slog.Logger) *Queue {
+// QueueConfig 的两项都可省略，零值即生产行为。
+type QueueConfig struct {
+	// TelegramBase 是 Telegram Bot API 的根地址；空串取官方地址（NewTelegram），测试用它把请求发到本地接收器。
+	TelegramBase string
+	// Sleep 是 worker 等待重试间隔与渠道节奏空位的方式，ctx 取消时必须返回；nil 取真实的计时等待，测试用它推进假时钟。
+	Sleep func(context.Context, time.Duration) error
+}
+
+// QueueDeps 是 Queue 的协作者，全部必需：NewQueue 逐字段核对非 nil。
+type QueueDeps struct {
+	Store *store.Store
+	// Channels 返回当前的渠道快照（alert.Engine.Channels），每次尝试投递时现取。
+	Channels func() []store.NotifyChannel
+	Client   *http.Client
+	Clock    clock.Clock
+	Log      *slog.Logger
+}
+
+// NewQueue 对依赖缺失 panic，口径与理由见 api.New。
+func NewQueue(cfg QueueConfig, deps QueueDeps) *Queue {
+	if deps.Store == nil {
+		panic("alert.QueueDeps.Store must be set")
+	}
+	if deps.Channels == nil {
+		panic("alert.QueueDeps.Channels must be set")
+	}
+	if deps.Client == nil {
+		panic("alert.QueueDeps.Client must be set")
+	}
+	if deps.Clock == nil {
+		panic("alert.QueueDeps.Clock must be set")
+	}
+	if deps.Log == nil {
+		panic("alert.QueueDeps.Log must be set")
+	}
+	sleep := cfg.Sleep
 	if sleep == nil {
 		sleep = sleepContext
 	}
-	return &Queue{st: st, channels: channels, client: client, telegramBase: telegramBase, clk: clk, sleep: sleep, log: log,
-		readBatch: st.GetDeliveryBatch, limit: QueueCap, waiting: make(map[int64]waitEntry), active: make(map[int64]int64), sent: make(map[int64][]time.Duration)}
+	return &Queue{st: deps.Store, channels: deps.Channels, client: deps.Client, telegramBase: cfg.TelegramBase, clk: deps.Clock, sleep: sleep, log: deps.Log,
+		readBatch: deps.Store.GetDeliveryBatch, limit: QueueCap, waiting: make(map[int64]waitEntry), active: make(map[int64]int64), sent: make(map[int64][]time.Duration)}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

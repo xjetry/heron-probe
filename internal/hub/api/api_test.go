@@ -140,12 +140,10 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	alerts.SetTraffic(book)
 	// 通知与国家查询共用一个出站客户端，与 serve 的装配相同。
 	client := outbound.NewClient(alert.NotifyTimeout)
-	notifier := alert.NewQueue(st, alerts.Channels, client, deps.telegramBase, clk, nil, slog.Default())
+	notifier := alert.NewQueue(alert.QueueConfig{TelegramBase: deps.telegramBase}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: slog.Default()})
 	a := auth.New(st, reg, notifier, clk, loc, deps.authLog)
-	in, err := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes}, l, st, a, book, reg, clk, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
+	in := ingest.New(ingest.Config{TTL: 30 * time.Second, TrustedProxies: prefixes},
+		ingest.Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: slog.Default()})
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), in.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
@@ -156,8 +154,9 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	hb := &stubHeartbeat{}
 	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
-	svc := New(cfg, st, a, l, in, book, reg, alerts, notifier, clk, slog.Default())
-	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc}, st, l, book, reg, clk, slog.Default())
+	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: in, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
+	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc},
+		PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	mux := http.NewServeMux()
 	mux.Handle(in.Handler())
 	mux.Handle(svc.Handler())
@@ -168,6 +167,17 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	hc := &http.Client{Jar: jar}
 	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: heronv1connect.NewAdminServiceClient(hc, srv.URL),
 		agent: heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub, heartbeat: hb}
+}
+
+// deps 是夹具装配 Service 时用的那套协作者；用例改其中一项再交给 New，其余与夹具相同。
+func (h *harness) deps() Deps {
+	return Deps{Store: h.store, Auth: h.auth, Live: h.live, Nodes: h.ingest, Traffic: h.book, Probes: h.reg, Alerts: h.alerts,
+		Notifier: h.svc.notifier, Clock: h.clk, Log: slog.Default()}
+}
+
+// publicDeps 是夹具装配 Public 时用的那套协作者。
+func (h *harness) publicDeps() PublicDeps {
+	return PublicDeps{Store: h.store, Live: h.live, Traffic: h.book, Probes: h.reg, Clock: h.clk, Log: slog.Default()}
 }
 
 func (h *harness) login(t *testing.T) {

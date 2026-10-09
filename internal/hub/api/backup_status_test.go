@@ -13,12 +13,15 @@ import (
 
 func TestBackupRequiredAndStatusCode(t *testing.T) {
 	t.Run("required", func(t *testing.T) {
+		h := newHarness(t, "")
 		defer func() {
 			if got := recover(); got != "api.Config.Backups must be set" {
 				t.Errorf("missing backup manager panic=%v", got)
 			}
 		}()
-		New(Config{TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		cfg := h.svc.cfg
+		cfg.Backups = nil
+		New(cfg, h.deps())
 	})
 	t.Run("status", func(t *testing.T) {
 		got := backupLayerProto(backup.LayerStatus{Failure: "upload/http_status", Since: time.Unix(1, 0), StatusCode: 503})

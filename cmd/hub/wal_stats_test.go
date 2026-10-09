@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,10 +13,6 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/clock"
-	"github.com/xjetry/heron-probe/internal/hub/api"
-	"github.com/xjetry/heron-probe/internal/hub/backup"
-	"github.com/xjetry/heron-probe/internal/hub/geo"
-	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
@@ -65,10 +60,6 @@ func TestStatsWALUsesSingleObservation(t *testing.T) {
 	}
 }
 
-type statsHeartbeat struct{}
-
-func (statsHeartbeat) Status() heartbeat.Status { return heartbeat.Status{} }
-
 // 写入后不再修改库，让真实 CLI 与 API 可对照同一个固定 WAL 长度；观测墙钟仍各自取值。
 func TestStatsCLIAndAPIMatchFrozenWAL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stats.db")
@@ -82,10 +73,7 @@ func TestStatsCLIAndAPIMatchFrozenWAL(t *testing.T) {
 	if _, _, err := st.CreateNode(t.Context(), "wal", store.Billing{}, make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	svc := api.New(api.Config{
-		TTL: time.Minute, Location: time.UTC, Retention: store.DefaultRetention,
-		Backups: backup.New(st, nil, clk, log), Heartbeat: statsHeartbeat{}, Geo: geo.NewHTTP(http.DefaultClient),
-	}, st, nil, nil, nil, nil, nil, nil, nil, clk, log)
+	_, svc := newTestServicesOn(t, st, clk)
 	resp, err := svc.GetStorageStats(t.Context(), connect.NewRequest(&heronv1.GetStorageStatsRequest{}))
 	if err != nil {
 		t.Fatal(err)

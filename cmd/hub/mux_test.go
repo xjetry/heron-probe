@@ -55,19 +55,24 @@ func newTestMux(t *testing.T) http.Handler {
 // newTestMuxOn 按 serve 的单域装配把 RPC、面板与沙箱主题挂到给定的库上。
 func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) http.Handler {
 	t.Helper()
+	h, _ := newTestServicesOn(t, st, clk)
+	return h
+}
+
+// newTestServicesOn 是 newTestMuxOn 的装配，另交出 AdminService，供直接调用方法体的用例使用。
+func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Handler, *api.Service) {
+	t.Helper()
 	reg := probe.New(st, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
 	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
 	// 通知与国家查询的 HTTP 后端共用一个出站客户端，与 serve 的装配相同。
 	client := outbound.NewClient(alert.NotifyTimeout)
-	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, slog.Default())
+	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: slog.Default()})
 	alerts.SetSender(notifier)
 	a := auth.New(st, reg, notifier, clk, time.UTC, slog.Default())
-	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, reg, clk, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := ingest.New(ingest.Config{TTL: 30 * time.Second},
+		ingest.Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: slog.Default()})
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx), alerts.Load(ctx)); err != nil {
 		t.Fatal(err)
@@ -75,12 +80,14 @@ func newTestMuxOn(t *testing.T, st *store.Store, clk clock.Clock) http.Handler {
 	if err := notifier.Requeue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: heartbeat.New(heartbeatSource{st: st, live: l}, client, "test", clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)}, st, a, l, svc, book, reg, alerts, notifier, clk, slog.Default())
-	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC}, st, l, book, reg, clk, slog.Default())
+	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: heartbeat.New(heartbeatSource{st: st, live: l}, client, "test", clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)},
+		api.Deps{Store: st, Auth: a, Live: l, Nodes: svc, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
+	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC},
+		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	return newHandler(routes{
 		agent: mountOf(svc.Handler()), admin: mountOf(admin.Handler()), public: mountOf(pub.Handler()),
 		page: web.ThemeHandler(st, web.PublicHandler(), admin.ThemePreviewAccess, slog.Default()), publicEnabled: st.PublicEnabled,
-	})
+	}), admin
 }
 
 // RPC 路径与 /admin/ 的优先级高于根路径的公开页；ServeMux 按最长前缀匹配，三者同时挂载时，RPC 仍必须经过服务自身的鉴权。

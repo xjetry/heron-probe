@@ -3,12 +3,9 @@ package api
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
-	"github.com/xjetry/heron-probe/internal/hub/backup"
 	"github.com/xjetry/heron-probe/internal/hub/geo"
-	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
 // 回显的后端与路径取自装配给 api 的后端对象，UpdateSettings 对两项的缺席、给出、伪造与未知枚举一律忽略。
@@ -63,5 +60,8 @@ func TestNewRequiresTheGeoBackend(t *testing.T) {
 			t.Errorf("panic = %v, want api.Config.Geo must be set", r)
 		}
 	}()
-	New(Config{Backups: &backup.Manager{}, Heartbeat: &stubHeartbeat{}, TTL: time.Second, Location: time.UTC, Retention: store.DefaultRetention}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := newHarness(t, "")
+	cfg := h.svc.cfg
+	cfg.Geo = nil
+	New(cfg, h.deps())
 }

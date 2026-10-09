@@ -28,7 +28,9 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 	if err := e.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	svc := New(Config{Backups: h.svc.cfg.Backups, Heartbeat: h.svc.cfg.Heartbeat, TTL: 30 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: h.svc.cfg.Geo}, h.store, h.auth, h.live, h.ingest, h.book, h.reg, e, nil, h.clk, slog.Default())
+	deps := h.deps()
+	deps.Alerts = e
+	svc := New(Config{Backups: h.svc.cfg.Backups, Heartbeat: h.svc.cfg.Heartbeat, TTL: 30 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: h.svc.cfg.Geo}, deps)
 	mux := http.NewServeMux()
 	mux.Handle(svc.Handler())
 	srv := httptest.NewServer(mux)
