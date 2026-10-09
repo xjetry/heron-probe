@@ -209,15 +209,19 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 	if first.GetOnline() || first.LastSeenAt != nil || first.Facts != nil || first.Metrics != nil || first.Traffic == nil {
 		t.Fatalf("never-reported node = %v", first)
 	}
-	wantFacts := &heronv1.PublicFacts{Os: "Debian 12", Arch: "amd64", Virtualization: "kvm", CpuModel: "EPYC", CpuCores: 4}
+	wantFacts := &heronv1.PublicFacts{Os: "Debian 12", Arch: "amd64", Virtualization: "kvm", CpuModel: "EPYC", CpuCores: 4,
+		Network: &heronv1.PublicNetworkInfo{Ipv4: &heronv1.PublicAddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE}}}
 	wantMetrics := &heronv1.PublicMetrics{CpuPct: proto.Float64(12.5), MemUsed: proto.Uint64(0), MemTotal: proto.Uint64(1 << 30)}
 	if !second.GetOnline() || second.GetLastSeenAt() != h.clk.Now().Unix() || !proto.Equal(second.GetFacts(), wantFacts) ||
 		!proto.Equal(second.GetMetrics(), wantMetrics) || second.Traffic == nil {
 		t.Fatalf("reported node = %v", second)
 	}
-	// 正文层面再核一次：不公开的字段与私有节点的名字都不在 JSON 里。
+	// 正文层面再核一次：不公开的字段与私有节点的名字都不在 JSON 里；双栈出口只有状态，地址与探测时间不在。
 	raw := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
-	for _, leak := range []string{"secret", testBootID, "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`, "network", "8.8.4.4", "checkedAt"} {
+	if !bytes.Contains(raw.body, []byte(`"network":{"ipv4":{"state":"ADDRESS_DETECTION_STATE_AVAILABLE"}}`)) {
+		t.Errorf("snapshot JSON lacks the address family state: %s", raw.body)
+	}
+	for _, leak := range []string{"secret", testBootID, "hostname", "kernel", "agentVersion", "icmpAvailable", "bootId", `"b"`, "8.8.4.4", "checkedAt", "address"} {
 		if bytes.Contains(raw.body, []byte(leak)) {
 			t.Errorf("snapshot JSON contains %s: %s", leak, raw.body)
 		}
@@ -244,11 +248,13 @@ func TestPublicSiteServesSavedSettings(t *testing.T) {
 // 必须同时改这份清单——与 access_test 的 readMethods 同一口径。共用的 Traffic 与历史查询类型同样在列：
 // 给它们加字段也会出现在公开页。
 var publicFields = map[protoreflect.FullName][]protoreflect.Name{
-	"heron.v1.PublicSite":     {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
-	"heron.v1.PublicSnapshot": {"now", "report_interval_ms", "nodes", "tags"},
-	"heron.v1.PublicNode":     {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance", "public_remark"},
-	"heron.v1.PublicFacts":    {"os", "arch", "virtualization", "cpu_model", "cpu_cores"},
-	"heron.v1.PublicBilling":  {"price", "currency", "billing_cycle", "expires_on", "days_left"},
+	"heron.v1.PublicSite":             {"title", "theme", "accent_color", "logo", "custom_css", "admin_path"},
+	"heron.v1.PublicSnapshot":         {"now", "report_interval_ms", "nodes", "tags"},
+	"heron.v1.PublicNode":             {"id", "name", "online", "last_seen_at", "sort_order", "facts", "metrics", "traffic", "billing", "country", "tags", "maintenance", "public_remark"},
+	"heron.v1.PublicFacts":            {"os", "arch", "virtualization", "cpu_model", "cpu_cores", "network"},
+	"heron.v1.PublicNetworkInfo":      {"ipv4", "ipv6"},
+	"heron.v1.PublicAddressDetection": {"state"},
+	"heron.v1.PublicBilling":          {"price", "currency", "billing_cycle", "expires_on", "days_left"},
 	"heron.v1.PublicMetrics": {"cpu_pct", "cpu_steal_pct", "cpu_iowait_pct", "load1", "load5", "load15", "load1_per_core", "mem_total", "mem_used", "swap_total", "swap_used",
 		"disk_total", "disk_used", "net_rx_total", "net_tx_total", "net_rx_bps", "net_tx_bps", "disk_read_bps", "disk_write_bps", "tcp_conns", "udp_conns", "procs", "uptime_s"},
 	"heron.v1.Traffic":              {"total_rx", "total_tx", "period_rx", "period_tx", "period_start", "next_reset_at", "reset_day", "quota_bytes", "quota_mode", "quota_used_bytes", "quota_used_pct"},

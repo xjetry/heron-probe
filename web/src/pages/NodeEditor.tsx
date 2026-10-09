@@ -4,12 +4,22 @@ import { BillingCycle, TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { parseQuota, quotaInput, QUOTA_UNITS, type QuotaUnit } from "../lib/traffic";
 import { errorBanner } from "../api/queryGate";
 import { withId } from "../lib/ids";
-import { withTag, withoutTag } from "../lib/tags";
+import { literalPattern } from "../lib/fold";
+import { sameTag, withTag, withoutTag } from "../lib/tags";
 import { Drawer } from "../components/Modal";
+import { Select } from "../components/Select";
+import { SuggestInput } from "../components/SuggestInput";
 import { BillingEditor } from "../components/BillingEditor";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { lookupText, NodeCountry } from "../components/NodeCountry";
 import { day } from "../lib/format";
+
+const QUOTA_UNIT_OPTIONS = (Object.keys(QUOTA_UNITS) as QuotaUnit[]).map((unit) => ({ value: unit, label: unit }));
+// 流量口径是数值枚举，自绘下拉只认字符串值：选项值写成枚举值的十进制，取回时再转成数。
+const QUOTA_MODE_OPTIONS = [
+  { value: String(TrafficQuotaMode.SUM), label: "收+发" }, { value: String(TrafficQuotaMode.RX), label: "只收" },
+  { value: String(TrafficQuotaMode.TX), label: "只发" }, { value: String(TrafficQuotaMode.MAX), label: "收发取大者" },
+];
 
 // UpdateNode 整体替换全部可编辑字段；每次保存必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
@@ -68,8 +78,8 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
           <section className="form-section" aria-label="运行">
             <h3>运行</h3>
             <label>周期流量配额<input aria-label={`流量配额 ${label}`} inputMode="decimal" value={quota} onChange={(e) => { setQuota(e.target.value); setQuotaTouched(true); }} /><span className="muted">留空为未设配额；小数换算后四舍五入到整数字节，须在 1 至 2^62 字节（不含）之间。</span>{quotaBytes === null && <span role="alert">配额无效，换算后必须是有效的正整数字节数。</span>}</label>
-            <label>配额单位<select aria-label={`配额单位 ${label}`} value={unit} onChange={(e) => { setUnit(e.target.value as QuotaUnit); setQuotaTouched(true); }}>{Object.keys(QUOTA_UNITS).map((u) => <option key={u}>{u}</option>)}</select></label>
-            <label>流量口径<select aria-label={`流量口径 ${label}`} value={draft.trafficQuotaMode} onChange={(e) => setDraft({ ...draft, trafficQuotaMode: Number(e.target.value) })}><option value={TrafficQuotaMode.SUM}>收+发</option><option value={TrafficQuotaMode.RX}>只收</option><option value={TrafficQuotaMode.TX}>只发</option><option value={TrafficQuotaMode.MAX}>收发取大者</option></select></label>
+            <Select label={`配额单位 ${label}`} caption="配额单位" value={unit} options={QUOTA_UNIT_OPTIONS} onChange={(next) => { setUnit(next); setQuotaTouched(true); }} />
+            <Select label={`流量口径 ${label}`} caption="流量口径" value={String(draft.trafficQuotaMode)} options={QUOTA_MODE_OPTIONS} onChange={(next) => setDraft({ ...draft, trafficQuotaMode: Number(next) })} />
             <label>每月流量重置日<input type="number" min={1} max={28} aria-label={`重置日 ${label}`} value={draft.trafficResetDay} onChange={(e) => setDraft({ ...draft, trafficResetDay: Number(e.target.value) })} /><span className="muted">若从本周期起点算起新的重置日已经过去，本周期用量会立即清零。</span></label>
             <label>离线宽限期（秒）<input type="number" min={0} aria-label={`离线宽限期（秒） ${label}`} aria-describedby={`grace-hint-${node.id}`} value={draft.offlineGraceS} onChange={(e) => setDraft({ ...draft, offlineGraceS: e.target.value })} /><span className="muted" id={`grace-hint-${node.id}`}>0 表示取 hub 的 HERON_OFFLINE_AFTER；非 0 不能小于它。</span></label>
             <label className="switch-field"><span>维护中<small>告警事件照常记录但不投递，在线状态照实显示；到期的提醒不受影响</small></span><input type="checkbox" aria-label={`维护 ${label}`} checked={draft.maintenance} onChange={(e) => setDraft({ ...draft, maintenance: e.target.checked })} /></label>
@@ -85,11 +95,15 @@ function TagsEditor({ id, label, isPublic, tags, known, pending, onPending, onCh
   id: bigint; label: string; isPublic: boolean; tags: readonly string[]; known: readonly Tag[]; pending: string; onPending: (text: string) => void; onChange: (tags: string[]) => void;
 }) {
   const add = () => { onChange(withTag(tags, pending)); onPending(""); };
+  // 候选是已有标签里节点还没带的那些（按折叠比较），按输入的文字做折叠字面匹配；空输入时列出全部。
+  const query = pending.trim();
+  const pattern = query === "" ? null : literalPattern(query, false);
+  const suggestions = known.map((tag) => tag.name).filter((name) => !tags.some((t) => sameTag(t, name)) && (!pattern || pattern.test(name)));
   return <div className="tags-edit">
     <div>{tags.map((tag) => <span key={tag} className="tag">{tag}<button type="button" className="link" aria-label={`移除标签 ${tag} ${label}`} onClick={() => onChange(withoutTag(tags, tag))}>×</button></span>)}</div>
-    <div className="tags-input-row"><input id={`tag-input-${id}`} aria-label={`新标签 ${label}`} list={`known-tags-${id}`} placeholder="选择已有标签，或输入新标签" value={pending} onChange={(e) => onPending(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+    <div className="tags-input-row"><SuggestInput id={`tag-input-${id}`} label={`新标签 ${label}`} placeholder="选择已有标签，或输入新标签" value={pending} onChange={onPending}
+      suggestions={suggestions} onPick={(name) => { onChange(withTag(tags, name)); onPending(""); }} onEnter={add} />
     <button type="button" aria-label={`添加标签 ${label}`} onClick={add}>添加</button></div>
-    <datalist id={`known-tags-${id}`}>{known.map((tag) => <option key={tag.name} value={tag.name} />)}</datalist>
     <p className="muted">大小写不敏感，已有的标签沿用先建的写法；每个节点至多 16 个。</p>
     {isPublic && <p className="muted">公开节点的标签在公开页对访客可见。</p>}
   </div>;

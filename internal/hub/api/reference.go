@@ -10,7 +10,7 @@ import (
 	protosrc "github.com/xjetry/heron-probe/proto"
 )
 
-// GetApiReference 下发构建时嵌入的卡片与 proto 源文件。WalkDir 按字典序遍历，
+// GetApiReference 下发构建时嵌入的技能文件与 proto 源文件。WalkDir 按字典序遍历，
 // 响应顺序因而稳定；嵌入的文件系统只读且随二进制固定，读失败只可能是构建缺陷。
 func (s *Service) GetApiReference(ctx context.Context, _ *connect.Request[heronv1.GetApiReferenceRequest]) (*connect.Response[heronv1.GetApiReferenceResponse], error) {
 	out := &heronv1.GetApiReferenceResponse{Guide: protosrc.Guide}

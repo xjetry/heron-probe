@@ -189,7 +189,9 @@ export const CoverageSummarySchema: GenMessage<CoverageSummary> = /*@__PURE__*/
 export type MetricSeries = Message<"heron.v1.MetricSeries"> & {
   /**
    * cpu、mem_used、swap_used、disk_used、load1、tcp、udp、procs、rx_bytes、tx_bytes、
-   * memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps。
+   * memory_used_pct、disk_used_pct、net_rx_bps、net_tx_bps、disk_read_bps、disk_write_bps、
+   * cpu_steal_pct、cpu_iowait_pct、load1_per_core。顺序同 hub 的指标描述表（internal/hub/metric.Columns），
+   * 新指标只追加在末尾；客户端按 name 取。
    *
    * @generated from field: string name = 1;
    */
@@ -236,7 +238,8 @@ export type MetricSample = Message<"heron.v1.MetricSample"> & {
   mean?: number | undefined;
 
   /**
-   * 只有带最大值的指标（cpu、mem_used、net_rx_bps、net_tx_bps）才有。
+   * 只有带最大值的指标（cpu、mem_used、net_rx_bps、net_tx_bps、disk_read_bps、disk_write_bps、
+   * cpu_steal_pct、cpu_iowait_pct）才有。
    * 网络峰值为 agent 各采样间隔速率的最大值，不是未被采样捕获的瞬时最高值；旧历史缺失。
    *
    * @generated from field: optional double max = 3;

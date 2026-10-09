@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { AddressFamilies } from "../components/AddressFamilies";
 import { Bar, Missing, ratio } from "../components/Bar";
 import { CountryBadge } from "../components/CountryBadge";
 import { Expiry } from "../components/Expiry";
@@ -25,7 +26,8 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
         <StatusBadge status={status} />
       </header>
       {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
-      <p className="node-card-meta muted">{uptime ? `${system} · ${uptime}` : system}</p>
+      {/* 双栈标记放在系统信息行尾而不是标题行：卡片约 260px 宽，标题行再放两个标记会把短名称也截断。 */}
+      <p className="node-card-meta muted">{uptime ? `${system} · ${uptime}` : system}{" "}<AddressFamilies network={f?.network} /></p>
       <div className="node-meters">
         <Meter label="CPU" value={m?.cpuPct} text={m?.cpuPct !== undefined ? percent(m.cpuPct) : undefined} />
         <Meter label="内存" value={m?.memUsed !== undefined && m.memTotal ? ratio(m.memUsed, m.memTotal) : undefined} text={m?.memUsed !== undefined && m.memTotal ? `${bytes(m.memUsed)} / ${bytes(m.memTotal)}` : undefined} />

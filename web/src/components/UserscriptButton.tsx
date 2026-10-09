@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Modal } from "./Modal";
-// 脚本模板随面板打包进 hub 二进制，与 hub 同版本（同 SKILL.md 下发入口卡片的理由：面板不另存一份）。
+// 脚本模板随面板打包进 hub 二进制，与 hub 同版本（与 SKILL.md 随 hub 下发同一理由：面板不另存一份）。
 import template from "../assets/heron-quick-node.user.js?raw";
 
 // 复制时替换两个占位符：hub 地址取浏览器当前 origin（与注册窗口安装命令同一口径，agent 经另一地址访问

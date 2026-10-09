@@ -5,11 +5,15 @@ export type SelectOption<T extends string> = { value: T; label: string };
 
 // 自绘的单选下拉：触发按钮写「标签 当前值 ▾」，与筛选行上的地区 / 标签入口同一种外观；弹出的列表也自绘，不用原生
 // select 的系统菜单。value 必须是 options 之一，本组件不存选择，只存开合。
+// 给出 caption 时是表单字段：caption 作可见标题写在按钮上方，按钮只写当前值、撑满字段宽度，label 只作读屏名（与
+// DateInput 的 label / caption 同一分工：表格或抽屉里 label 带上对象名，caption 只写字段名）。
 // 焦点在列表里逐项移动（每个选项可聚焦）：打开时聚焦当前项，上下键 / Home / End 移动，Enter / 空格选中并收起，Esc 收起
 // 不改值；两者都把焦点还给触发按钮。Tab 同样收起并把焦点放回触发按钮，但不拦默认动作，于是浏览器从触发按钮出发移动焦点，
 // 落到下拉之后（Shift+Tab 时之前）的控件，与原生 select 一致。点外面只收起，不动焦点。
-export function Select<T extends string>({ label, value, options, onChange }: {
+// Esc 只收起这一层：阻止默认动作与冒泡，抽屉与弹窗（原生 dialog 的 Esc 关闭）不随之关闭。
+export function Select<T extends string>({ label, caption, value, options, onChange }: {
   label: string;
+  caption?: string;
   value: T;
   options: readonly SelectOption<T>[];
   onChange: (next: T) => void;
@@ -42,7 +46,7 @@ export function Select<T extends string>({ label, value, options, onChange }: {
       case "Home": items[0]?.focus(); break;
       case "End": items[items.length - 1]?.focus(); break;
       case "Enter": case " ": if (at >= 0) choose(options[at].value); break;
-      case "Escape": close(); break;
+      case "Escape": event.stopPropagation(); close(); break;
       case "Tab": close(); return;
       default: return;
     }
@@ -50,11 +54,12 @@ export function Select<T extends string>({ label, value, options, onChange }: {
   };
   const current = options.find((option) => option.value === value);
   return (
-    <div ref={root} className="select">
+    <div ref={root} className={caption === undefined ? "select" : "select select-field"}>
+      {caption !== undefined && <span className="field-caption" aria-hidden="true">{caption}</span>}
       <button ref={trigger} type="button" className="select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(event) => { if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setOpen(true); } }}>
-        <span className="select-label">{label}</span>{" "}<span className="select-value">{current?.label}</span>
+        <span className={caption === undefined ? "select-label" : "sr-only"}>{label}</span>{" "}<span className="select-value">{current?.label}</span>
         <Icon name="chevronDown" className="select-caret" width={14} height={14} />
       </button>
       {open && (

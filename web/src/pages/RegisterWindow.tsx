@@ -1,12 +1,14 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { Link } from "react-router";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
 import { InstallCommands } from "../components/InstallCommands";
 import { Drawer } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { Select } from "../components/Select";
 import { Secret } from "../components/Secret";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { dateTime } from "../lib/format";
@@ -50,21 +52,25 @@ export function RegisterWindow() {
   const snap = queryGate(snapshot);
   return (
     <section>
-      <PageHeader title="注册窗口" actions={<button type="button" className="primary-button" disabled={gate.data.open || open.isPending || close.isPending}
-        onClick={(e) => { open.reset(); setDrawerOpener(e.currentTarget); }}>开启新窗口</button>} />
+      <PageHeader title="批量添加节点" description="一次接入多台服务器，不用逐台在面板里建节点。" actions={<button type="button" className="primary-button" disabled={gate.data.open || open.isPending || close.isPending}
+        onClick={(e) => { open.reset(); setDrawerOpener(e.currentTarget); }}>开启接入窗口</button>} />
+      <section className="card register-guide" aria-label="使用说明">
+        <p>开启一个限时、限量的接入窗口后，页面给出一条安装命令。在每台要监控的服务器上以 root 执行一次，它就自动注册为一个新节点，名称默认取主机名（命令末尾加 <code>--name 名称</code> 可另行指定）。</p>
+        <p className="muted">窗口到期、名额用完或手动关闭后，这条命令不能再注册新节点；已经接入的节点不受影响。只加一台、或想先填好名称与费用再安装，到 <Link to="/nodes">节点</Link> 页点「添加节点」。</p>
+      </section>
       <section className="card" aria-label="窗口状态">
         {gate.data.open ? (
-          <p>窗口开启中：剩余 {gate.data.remaining} 个名额，截止 {dateTime(gate.data.expiresAt)}。{" "}
-            <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭窗口</button>
+          <p>接入窗口开启中：还能接入 {gate.data.remaining} 台，截止 {dateTime(gate.data.expiresAt)}。{" "}
+            <button type="button" className="danger" onClick={() => close.mutate({})} disabled={close.isPending}>关闭接入窗口</button>
           </p>
         ) : (
-          <p className="muted">当前没有开启的窗口。</p>
+          <p className="muted">当前没有开启的接入窗口。</p>
         )}
       </section>
       {key && (
         <>
           <Secret label="注册 key" value={key} />
-          <p>在被监控的机器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
+          <p>在每台要监控的服务器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
           {snap.ready ? (
             <InstallCommands hubVersion={snap.data.hubVersion} boundAgentVersion={snap.data.boundAgentVersion} origin={window.location.origin} registerKey={key} banner={snap.banner} />
           ) : (
@@ -91,15 +97,11 @@ function RegisterWindowDrawer({ opener, pending, error, onClose, onOpen }: {
     if (!e.currentTarget.checkValidity() || pending || !(maxNodes >= 1)) return;
     onOpen(ttl, maxNodes);
   };
-  return <Drawer title="开启新窗口" opener={opener} busy={pending} onClose={onClose}>
-    <form onSubmit={submit} aria-label="开启新窗口">
+  return <Drawer title="开启接入窗口" opener={opener} busy={pending} onClose={onClose}>
+    <form onSubmit={submit} aria-label="开启接入窗口">
       <div className="modal-body">
-        <label>有效期
-          <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))}>
-            {TTLS.map((t) => <option key={t.seconds} value={t.seconds}>{t.label}</option>)}
-          </select>
-        </label>
-        <label>可注册节点数<input type="number" min={1} max={1000} value={Number.isNaN(maxNodes) ? "" : maxNodes} onChange={(e) => setMaxNodes(e.target.valueAsNumber)} /></label>
+        <Select label="有效期" caption="有效期" value={String(ttl)} options={TTLS.map((t) => ({ value: String(t.seconds), label: t.label }))} onChange={(next) => setTtl(Number(next))} />
+        <label>最多接入台数<input type="number" min={1} max={1000} value={Number.isNaN(maxNodes) ? "" : maxNodes} onChange={(e) => setMaxNodes(e.target.valueAsNumber)} /></label>
         {error != null && <p role="alert" className="error">{errorText(error)}</p>}
       </div>
       <footer className="modal-footer">

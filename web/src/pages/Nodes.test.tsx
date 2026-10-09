@@ -12,6 +12,7 @@ import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 import { fillSegments, segmentsValue } from "../test/fields";
 import { expectEmptyState } from "../test/empty";
 import { objectContaining } from "../test/matchers";
+import { chooseOption } from "../test/select";
 
 // 行菜单入口携带 id，同名节点仍能定位到各自的操作。
 const rowAction = (label: string, action: string) => {
@@ -1367,7 +1368,7 @@ describe("筛选由 URL 持有", () => {
     await waitFor(() => expect(search(router).getAll("tag")).toEqual(["db"]));
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "a" } });
     await waitFor(() => expect(search(router).get("q")).toBe("a"));
-    fireEvent.change(screen.getByRole("combobox", { name: "状态" }), { target: { value: "offline" } });
+    chooseOption("状态", "离线");
     await waitFor(() => expect(search(router).get("status")).toBe("offline"));
     expect(search(router).get("q")).toBe("a");
     expect(search(router).getAll("tag")).toEqual(["db"]);

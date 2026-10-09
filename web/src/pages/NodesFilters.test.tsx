@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
+import { chooseOption, selectTrigger } from "../test/select";
 
 afterEach(() => vi.useRealTimers());
 
@@ -29,11 +30,11 @@ it("URL 里的筛选落到控件并过滤列表；非法值被忽略；控件改
   const { router } = render("/nodes?status=offline&expiring=yes");
   await screen.findByRole("row", { name: /off/ });
   expect(rowNames()).toEqual(["off"]);
-  expect(screen.getByRole("combobox", { name: "状态" })).toHaveValue("offline");
+  expect(selectTrigger("状态")).toHaveAccessibleName("状态 离线");
   expect(screen.getByRole("checkbox", { name: "只看 30 天内到期" })).not.toBeChecked();
   fireEvent.click(screen.getByRole("checkbox", { name: `选择 off（#2）` }));
   expect(screen.getByRole("toolbar", { name: "批量操作" })).toHaveTextContent("已选择 1 个节点");
-  fireEvent.change(screen.getByRole("combobox", { name: "状态" }), { target: { value: "" } });
+  chooseOption("状态", "全部");
   expect(screen.queryByRole("toolbar", { name: "批量操作" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: "只看 30 天内到期" }));
   expect(router.state.location.search).toBe("?expiring=1");

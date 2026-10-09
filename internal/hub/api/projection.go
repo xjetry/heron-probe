@@ -12,6 +12,7 @@ import (
 //
 // newProjection 是唯一把公开消息与源消息配对的地方，spec §10 对这对消息的约束都在这里核对，任一不符即 panic：
 //   - 每个公开字段在源里有同名字段，号、类型、基数与 presence 都相同，枚举字段两侧引用同一个枚举类型；
+//   - 消息字段两侧都是单值消息，公开侧的子消息本身也是源侧子消息的投影，按这几条递归核对；
 //   - 源里没公开的字段，号与名都在公开消息的 reserved 里；每个 reserved 的号与名都对应一个没公开的源字段。
 //
 // 后一条让"公开一个源字段"必须是显式动作（删掉 reserved 再声明），源消息新增字段时公开消息不跟着 reserve
@@ -19,7 +20,13 @@ import (
 // 才会不符，那时 hub 在构造 Public 时就起不来。
 type projection struct {
 	dst    protoreflect.MessageType
-	fields [][2]protoreflect.FieldDescriptor // {目标字段, 源字段}
+	fields []projectedField
+}
+
+type projectedField struct {
+	dst, src protoreflect.FieldDescriptor
+	// sub 只在消息字段上非空：子消息同样按字段名投影，源子消息里没公开的字段（如地址）不会被整条消息带出去。
+	sub *projection
 }
 
 func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescriptor) projection {
@@ -35,7 +42,7 @@ func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescrip
 		case d.Number() != s.Number():
 			panic(fmt.Sprintf("%s is field %d but %s is field %d; public fields keep the source numbers", d.FullName(), d.Number(), s.FullName(), s.Number()))
 		case !projectable(d) || !projectable(s):
-			panic(fmt.Sprintf("%s: only singular scalar fields can be projected", d.FullName()))
+			panic(fmt.Sprintf("%s: only singular fields can be projected", d.FullName()))
 		case d.Kind() != s.Kind() || d.HasPresence() != s.HasPresence():
 			panic(fmt.Sprintf("%s (%v, presence %v) does not match %s (%v, presence %v)",
 				d.FullName(), d.Kind(), d.HasPresence(), s.FullName(), s.Kind(), s.HasPresence()))
@@ -43,7 +50,12 @@ func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescrip
 			panic(fmt.Sprintf("%s uses enum %s but %s uses enum %s; enums are copied by number, so both sides must use the same enum",
 				d.FullName(), d.Enum().FullName(), s.FullName(), s.Enum().FullName()))
 		}
-		p.fields = append(p.fields, [2]protoreflect.FieldDescriptor{d, s})
+		f := projectedField{dst: d, src: s}
+		if d.Kind() == protoreflect.MessageKind {
+			sub := newProjection(dst.New().NewField(d).Message().Type(), s.Message())
+			f.sub = &sub
+		}
+		p.fields = append(p.fields, f)
 	}
 	hiddenNumbers := map[protoreflect.FieldNumber]bool{}
 	hiddenNames := map[protoreflect.Name]bool{}
@@ -77,27 +89,25 @@ func newProjection(dst protoreflect.MessageType, src protoreflect.MessageDescrip
 	return p
 }
 
-// projectable 限于单值标量与枚举：消息、列表与 map 的逐项语义各不相同，公开消息目前不需要。枚举按编号复制，编号的
-// 含义由枚举类型决定，所以 newProjection 另要求两侧引用同一个枚举类型。
+// projectable 限于单值字段：标量、枚举与消息。列表与 map 的逐项语义各不相同，公开消息目前不需要。枚举按编号复制，
+// 编号的含义由枚举类型决定，所以 newProjection 另要求两侧引用同一个枚举类型。消息不整条复制，而是递归投影。
 func projectable(f protoreflect.FieldDescriptor) bool {
-	if f.Cardinality() == protoreflect.Repeated {
-		return false
-	}
-	switch f.Kind() {
-	case protoreflect.MessageKind, protoreflect.GroupKind:
-		return false
-	}
-	return true
+	return f.Cardinality() != protoreflect.Repeated && f.Kind() != protoreflect.GroupKind
 }
 
-// apply 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0。
+// apply 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0，缺失的子消息仍缺失。
 func (p projection) apply(src proto.Message) proto.Message {
 	sm := src.ProtoReflect()
 	out := p.dst.New()
 	for _, f := range p.fields {
-		if sm.Has(f[1]) {
-			out.Set(f[0], sm.Get(f[1]))
+		if !sm.Has(f.src) {
+			continue
 		}
+		v := sm.Get(f.src)
+		if f.sub != nil {
+			v = protoreflect.ValueOfMessage(f.sub.apply(v.Message().Interface()).ProtoReflect())
+		}
+		out.Set(f.dst, v)
 	}
 	return out.Interface()
 }

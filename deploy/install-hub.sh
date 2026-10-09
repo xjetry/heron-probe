@@ -167,7 +167,7 @@ stop_service() {
   done
 }
 confirm_service_started() {
-  # 失败只 return 1，不 fail 退出：调用方要据此回滚旧二进制与旧库，exit 会跳过回滚。
+  # 失败只 return 1，不 fail 退出：rollback_hub 也调用它，在 EXIT trap 里 exit 会打断回滚余下的步骤。
   svc_uid=$(id -u "$SVC_USER") || { echo 'no service user heron-hub; see journalctl -u heron-hub' >&2; return 1; }
   polls=0; pid=""
   while :; do
@@ -183,25 +183,45 @@ confirm_service_started() {
   echo "heron-hub did not stay running (pid $pid); see journalctl -u heron-hub" >&2
   return 1
 }
-# 新 hub 起不来时把旧二进制与三个库文件换回来并按 systemd 重启旧版本。库文件必须一起回滚：候选 hub 在启动
-# 确认之前就会以 MigrateSchema 打开库（cmd/hub/serve.go 的 store.Open），§6.6 规定比二进制新的库拒绝被旧程序
-# 打开，只换二进制会把 hub 停在"旧程序打不开新库"。.bak 不存在表示这次是首次安装（没有旧二进制），保持
-# hub 已停、脚本非零退出的既有行为。回滚路径里读 stdin 的命令都显式 </dev/null：脚本经 curl | sh 从 stdin 来。
+# 停服务之后、启动确认成功之前的任何失败退出都由 on_exit 调到这里：换过二进制就把 .bak 换回来，库备份完整时把三个
+# 库文件也换回来，再按 systemd 重启旧版本。库文件必须一起回滚：候选 hub 在启动确认之前就会以 MigrateSchema 打开库
+# （cmd/hub/serve.go 的 store.Open），§6.6 规定比二进制新的库拒绝被旧程序打开，只换二进制会把 hub 停在"旧程序
+# 打不开新库"。库备份没做完（DB_BACKED_UP=0）时候选 hub 还没启动过，库原样未动；这时不能拿可能只复制了一半的
+# .bak 去覆盖它，也不能按"备份时不存在"删掉原库正在用的 -wal。停服务时没有旧二进制（首次安装）就没有可回滚的
+# 版本，保持 hub 已停、脚本非零退出。安全检查失败（RESTART_ON_ROLLBACK=0）只换回文件，不启动：那些失败要人看过
+# 再重跑。它在 EXIT trap 里执行，set -e 仍然生效：每一步都放在条件里，失败只报告；换不回去的 .bak 留给人手工恢复
+# （KEEP_BAK=1，on_exit 不删）。读 stdin 的命令都显式 </dev/null：脚本经 curl | sh 从 stdin 来。
 rollback_hub() {
-  [ -e "$BIN_BAK" ] || return 0
+  [ "$HAD_PREVIOUS" = 1 ] || return 0
+  echo "installation failed after heron-hub was stopped; rolling back to the previous version" >&2
   systemctl stop heron-hub </dev/null || true
-  mv -f "$BIN_BAK" "$BIN"
-  for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
-    if [ -e "$file.bak" ]; then
-      mv -f "$file.bak" "$file"
-      chown "$SVC_USER:$SVC_USER" "$file"
-      chmod 0600 "$file"
-    else
-      # 备份时不存在、新 hub 启动后新出现的 -wal/-shm 属于新版本，回滚时删掉，别让新 schema 的页留在旧库旁。
-      rm -f "$file"
+  if [ "$BACKED_UP" = 1 ]; then
+    if ! mv -f "$BIN_BAK" "$BIN"; then
+      KEEP_BAK=1
+      echo "failed to restore the previous binary; it is kept at $BIN_BAK" >&2
+      return 0
     fi
-  done
-  echo "the new heron-hub did not start; restored the previous binary and database" >&2
+    echo "restored the previous binary" >&2
+  fi
+  if [ "$DB_BACKED_UP" = 1 ]; then
+    for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
+      if [ -e "$file.bak" ]; then
+        if ! { mv -f "$file.bak" "$file" && chown "$SVC_USER:$SVC_USER" "$file" && chmod 0600 "$file"; }; then
+          KEEP_BAK=1
+          echo "failed to restore $file; the copy taken before the upgrade is kept at $file.bak" >&2
+          return 0
+        fi
+      else
+        # 备份时不存在、新 hub 启动后新出现的 -wal/-shm 属于新版本，回滚时删掉，别让新 schema 的页留在旧库旁。
+        rm -f "$file" || true
+      fi
+    done
+    echo "restored the previous database" >&2
+  fi
+  [ "$RESTART_ON_ROLLBACK" = 1 ] || return 0
+  # 停服务后收紧成 0750 的数据目录放回 0770，与正常路径收尾相同：0750 下旧 hub 建不了 WAL/SHM。走到这里说明
+  # 安全检查都已通过（没通过的走 fail_stopped，上一行已返回）。
+  if [ "$DATA_LOCKED" = 1 ] && ! chmod 0770 "$DATA"; then echo "failed to reopen $DATA to heron-hub" >&2; fi
   if systemctl start heron-hub </dev/null; then
     # start 返回 0 即已交给 systemd（Restart=always），与正常路径成功后的口径一致：不再补"hub 已停"。
     EXIT_HINT=""
@@ -335,18 +355,31 @@ work=$(mktemp -d)
 BIN_TMP=$BIN.tmp.$$
 BIN_BAK=$BIN.bak
 UPDATER_TMP=$UPDATER_BIN.tmp.$$
-# 停服务之后、启动确认之前或确认本身失败时，rollback_hub 会把旧二进制与旧库换回来；其余失败让 hub 停着，
-# 各步的报错只说自己的原因，失败退出时在报错之后补一句现状与该做什么，免得人以为旧服务还在跑。
-# EXIT_HINT 随步骤更新，空串表示不必补（启动确认成功后由 rollback 或正常路径清空）。
-# 二进制与库的 .bak 也在这里清：回滚用 mv 把它们换回去，正常路径在启动确认之后才删，trap 只兜中途失败。
+# 回滚状态（rollback_hub 的读者）：ROLLBACK 在停服务之后置 1、启动确认成功后清 0；HAD_PREVIOUS 记停服务时有没有旧
+# 二进制；BACKED_UP 记旧二进制是否已改名成 .bak；DB_BACKED_UP 记三个库文件是否都已完整复制；DATA_LOCKED 记数据目录
+# 是否正处于停服务后的 0750；RESTART_ON_ROLLBACK 在安全检查失败时清 0；KEEP_BAK 记回滚换不回去、要留给人手工恢复的 .bak。
+ROLLBACK=0
+HAD_PREVIOUS=0
+BACKED_UP=0
+DB_BACKED_UP=0
+DATA_LOCKED=0
+RESTART_ON_ROLLBACK=1
+KEEP_BAK=0
+# 停服务之后的失败退出先由 rollback_hub 回滚。各步的报错只说自己的原因，失败退出时在报错之后补一句现状与该做什么，
+# 免得人以为旧服务还在跑。EXIT_HINT 随步骤更新，空串表示不必补（旧版本重新交给 systemd 或正常路径成功后清空）。
+# 库的 .bak 在这里清：回滚用 mv 把它们换回去，正常路径在启动确认之后才删，没复制完的残片也在这里删。二进制的 .bak
+# 不在这里删：回滚换回、或成功后删；回滚换不回去时它是旧版本仅存的一份（KEEP_BAK 同时保住库的 .bak）。
 EXIT_HINT=""
 on_exit() {
   rc=$?
-  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP" "$BIN_BAK" \
-    "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
+  if [ "$rc" != 0 ] && [ "$ROLLBACK" = 1 ]; then rollback_hub; fi
+  rm -rf "$work"; rm -f "$BIN_TMP" "$UPDATER_TMP"
+  [ "$KEEP_BAK" = 1 ] || rm -f "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
   restore_updater
   if [ "$rc" != 0 ] && [ -n "$EXIT_HINT" ]; then echo "$EXIT_HINT" >&2; fi
 }
+# 安全检查在停服务之后失败：回滚只换回文件、不启动，留给人查看后重跑（RESTART_ON_ROLLBACK 见 rollback_hub）。
+fail_stopped() { RESTART_ON_ROLLBACK=0; fail "$@"; }
 trap on_exit EXIT
 trap 'exit 1' INT TERM HUP
 dl() {
@@ -574,9 +607,15 @@ if ! data_dir_ok || ! db_files_ok; then fail 'refusing to hand the database to h
 check_port
 prepare_updater
 stop_service
+# 从这里起旧服务已停：之后任何失败退出都由 on_exit 回滚（rollback_hub），直到启动确认成功。
+[ ! -e "$BIN" ] || HAD_PREVIOUS=1
+ROLLBACK=1
 EXIT_HINT='heron-hub is stopped; rerun the installer or start it manually'
-# 旧二进制先留成同目录 .bak，新二进制起不来时 rollback_hub 换回来（回滚要连带库，理由见该函数）。
-[ ! -e "$BIN" ] || mv -f "$BIN" "$BIN_BAK"
+# 旧二进制先留成同目录 .bak，回滚时换回来（回滚要连带库，理由见 rollback_hub）。
+if [ "$HAD_PREVIOUS" = 1 ]; then
+  mv -f "$BIN" "$BIN_BAK"
+  BACKED_UP=1
+fi
 mv -f "$BIN_TMP" "$BIN"
 
 # SQLite 要创建和删除 WAL/SHM，目录必须可写，不能照搬只读配置目录的 0750。
@@ -585,11 +624,12 @@ mv -f "$BIN_TMP" "$BIN"
 # 库文件复检失败时服务已停、目录留在 0750：服务用户建不了 WAL/SHM，没有现成 WAL/SHM 时 hub 被拉起也打不开库
 # （0750 下实测报 attempt to write a readonly database），直到有人查看后重跑。目录本身的复检排在收紧之前，
 # 它失败时目录没有被改动。不跟随链接、不递归 chown。
-data_dir_ok || fail "$DATA changed after the pre-stop check"
+data_dir_ok || fail_stopped "$DATA changed after the pre-stop check"
 mkdir -p "$DATA"
 chown root:"$SVC_USER" "$DATA"
 chmod 0750 "$DATA"
-db_files_ok || fail "database files changed after the pre-stop check; $DATA stays locked at 0750 until you inspect it and rerun the installer"
+DATA_LOCKED=1
+db_files_ok || fail_stopped "database files changed after the pre-stop check; $DATA stays locked at 0750 until you inspect it and rerun the installer"
 # 新建的空库与已有的库走同一个交还步骤；umask 077 让它在交还之前也只有 root 可读。
 [ -e "$DATA/heron.db" ] || (umask 077 && : > "$DATA/heron.db")
 for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
@@ -600,7 +640,9 @@ for file in "$DATA/heron.db" "$DATA/heron.db-wal" "$DATA/heron.db-shm"; do
   # MigrateSchema 迁移 schema，起不来或确认失败都要靠它把旧库换回来（.bak 与库文件同目录，换回来是同目录 rename）。
   cp "$file" "$file.bak"
 done
+DB_BACKED_UP=1
 chmod 0770 "$DATA"
+DATA_LOCKED=0
 install -m 0644 "$work/unit" "$UNIT"
 mv -f "$UPDATER_TMP" "$UPDATER_BIN"
 install -m 0644 "$work/updater/heron-updater-hub.service" "$UPDATER_UNIT"
@@ -616,21 +658,16 @@ unit_state() {
 }
 if ! list_dropins; then
   EXIT_HINT='fix the systemctl problem reported above, then rerun the installer'
-  fail "$(unit_state)"
+  fail_stopped "$(unit_state)"
 fi
 if ! dropins_ok; then
   EXIT_HINT='fix the drop-in problem reported above, then rerun the installer'
-  fail "$(unit_state)"
+  fail_stopped "$(unit_state)"
 fi
 systemctl enable heron-hub </dev/null
-if ! systemctl start heron-hub </dev/null; then
-  rollback_hub
-  exit 1
-fi
-if ! confirm_service_started; then
-  rollback_hub
-  exit 1
-fi
+systemctl start heron-hub </dev/null
+confirm_service_started
+ROLLBACK=0
 EXIT_HINT=""
 rm -f "$BIN_BAK" "$DATA/heron.db.bak" "$DATA/heron.db-wal.bak" "$DATA/heron.db-shm.bak"
 systemctl enable heron-updater-hub </dev/null

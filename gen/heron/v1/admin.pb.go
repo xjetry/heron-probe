@@ -9999,7 +9999,7 @@ func (*GetApiReferenceRequest) Descriptor() ([]byte, []int) {
 
 type GetApiReferenceResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 入口卡片（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
+	// 技能文件 SKILL.md（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
 	Guide string `protobuf:"bytes,1,opt,name=guide,proto3" json:"guide,omitempty"`
 	// 按路径升序。
 	Files         []*ProtoFile `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`

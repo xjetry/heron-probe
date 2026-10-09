@@ -4564,7 +4564,7 @@ export const GetApiReferenceRequestSchema: GenMessage<GetApiReferenceRequest> = 
  */
 export type GetApiReferenceResponse = Message<"heron.v1.GetApiReferenceResponse"> & {
   /**
-   * 入口卡片（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
+   * 技能文件 SKILL.md（markdown，Claude Code skill 格式）：进门方式、约定与可直接运行的例子。
    *
    * @generated from field: string guide = 1;
    */
@@ -6170,7 +6170,7 @@ export const AdminService: GenService<{
     output: typeof DeleteApiTokenResponseSchema;
   },
   /**
-   * 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+   * 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
    *
    * @generated from rpc heron.v1.AdminService.GetApiReference
    */

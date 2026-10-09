@@ -104,7 +104,7 @@ it("没有节点时四张卡都是 0 且可点，表格位置给出去处", asyn
   const cards = within(await screen.findByRole("list", { name: "需要处理" })).getAllByRole("link");
   expect(cards.map((a) => a.querySelector("strong")?.textContent)).toEqual(["0", "0", "0", "0"]);
   await expectEmptyState("还没有节点。", { region: "节点实时读数" });
-  expect(screen.getByRole("link", { name: "注册窗口" })).toHaveAttribute("href", "/register");
+  expect(screen.getByRole("link", { name: "批量添加节点" })).toHaveAttribute("href", "/register");
 });
 
 it("请求首次失败时显示 hub 的错误正文", async () => {
