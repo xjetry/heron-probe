@@ -11,11 +11,7 @@
 //   - Delete 提交之后才开始的 Update 在库层得到 ErrNotFound，不会调 SetResetDay，锁外的 Forget 不会被它重建；
 //   - Delete 提交之前已提交的 Update 在放锁前已改完内存，Forget 在 Delete 放锁之后才运行，排在它后面。
 //
-// 锁序：mu → alert.Engine.writeMu（UpdateScope）→ probe.Registry.writeMu（UpdateNode、BatchUpdateNodeTags）→ store；
-// mu → auth.Auth.mutMu（DeleteNode）→ store；mu → traffic.Book 的 mu 与 writeMu（SetResetDay、Commit）。持锁调用
-// 不会成环：alert、auth、probe、traffic 都不 import 本包，它们经构造或 setter 注入的实现（auth 的 NodeCreator 是
-// probe.Registry，告警引擎的 Sender 是 alert.Queue、流量源是 traffic.Book）也都不在本包，任何持这些锁的路径都取不到
-// mu。只看 import 方向不够：注入的实现若来自本包，也能在这些锁之下取到 mu。
+// mu 之下会去取的别包的锁与不成环的依据见 internal/hub 的包注释（doc.go）。
 //
 // Create 与 RotateToken 不取 mu：二者都不写流量账本，与 mu 守护的不变式无关；token 映射与库的一致由 auth.mutMu 保证。
 //
