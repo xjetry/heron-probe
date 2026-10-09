@@ -25,6 +25,7 @@ func envOf(vars map[string]string) func(string) (string, bool) {
 }
 
 func TestFlagEnvName(t *testing.T) {
+	t.Parallel()
 	for flagName, want := range map[string]string{
 		"db": "HERON_DB", "offline-after": "HERON_OFFLINE_AFTER", "retention-alert-events": "HERON_RETENTION_ALERT_EVENTS", "geo-mmdb": "HERON_GEO_MMDB",
 	} {
@@ -35,6 +36,7 @@ func TestFlagEnvName(t *testing.T) {
 }
 
 func TestApplyFlagEnv(t *testing.T) {
+	t.Parallel()
 	newSet := func() (*flag.FlagSet, *string, *string, *int) {
 		fs := flag.NewFlagSet("t", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -80,6 +82,7 @@ func TestApplyFlagEnv(t *testing.T) {
 }
 
 func TestParseServeOptionsTakesEveryFlagFromTheEnvironment(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	for _, tc := range []struct {
 		name  string
@@ -119,6 +122,7 @@ func TestParseServeOptionsTakesEveryFlagFromTheEnvironment(t *testing.T) {
 }
 
 func TestParseServeOptionsRejectsInvalidEnvironmentValues(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		env  map[string]string
 		want []string
@@ -140,6 +144,8 @@ func TestParseServeOptionsRejectsInvalidEnvironmentValues(t *testing.T) {
 
 // 经真实入口：HERON_* 给出的非法配置与显式 flag 一样在打开数据库之前拒绝，不建库、不监听；--geo-mmdb 由环境变量给成
 // 空串或坏路径时报错，不回退到出网的 HTTP 后端。
+//
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestServeRejectsInvalidEnvironmentBeforeOpeningTheDatabase(t *testing.T) {
 	for _, tc := range []struct {
 		name, key, value, want string
@@ -168,6 +174,8 @@ func TestServeRejectsInvalidEnvironmentBeforeOpeningTheDatabase(t *testing.T) {
 
 // 启动行的 ttl 经真实入口取自 --offline-after 与 HERON_OFFLINE_AFTER：环境变量单独给出时生效（scripts/e2e.sh 就这样
 // 设 12s），两者同时给出时显式 flag 优先。
+//
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestServeStartupLineTakesTheTTLFromFlagOrEnvironment(t *testing.T) {
 	t.Setenv("HERON_OFFLINE_AFTER", "12s")
 	for _, tc := range []struct {

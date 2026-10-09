@@ -32,6 +32,7 @@ func (f *statsFixture) StorageStats(context.Context) (store.StorageStats, error)
 }
 
 func TestStatsWALUsesSingleObservation(t *testing.T) {
+	t.Parallel()
 	zero, size := int64(0), int64(12345)
 	for _, tc := range []struct {
 		name string
@@ -62,6 +63,7 @@ func TestStatsWALUsesSingleObservation(t *testing.T) {
 
 // 写入后不再修改库，让真实 CLI 与 API 可对照同一个固定 WAL 长度；观测墙钟仍各自取值。
 func TestStatsCLIAndAPIMatchFrozenWAL(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "stats.db")
 	clk := clock.NewFake(time.Unix(1700000000, 0))
 	log := slog.Default()

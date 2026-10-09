@@ -27,6 +27,7 @@ import (
 )
 
 func TestServeRejectsBadMMDBBeforeOpeningDatabase(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"missing", "text", "empty"} {
 		t.Run(kind, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "country.mmdb")
@@ -56,6 +57,7 @@ func TestServeRejectsBadMMDBBeforeOpeningDatabase(t *testing.T) {
 // --geo-mmdb 指向没有写者的命名管道：serve 在打开数据库之前报错退出，不挂住。打开这样的管道会一直等写者，等不到
 // 返回就说明 serve 去打开了它。等待的上界只为阻塞时能以失败结束；超时后以写端打开一次，放走被阻塞的那次打开。
 func TestServeRejectsANamedPipeWithoutBlocking(t *testing.T) {
+	t.Parallel()
 	fifo := filepath.Join(t.TempDir(), "country.mmdb")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatal(err)
@@ -86,6 +88,7 @@ func TestServeRejectsANamedPipeWithoutBlocking(t *testing.T) {
 }
 
 func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
+	t.Parallel()
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -131,17 +134,15 @@ func TestServeMMDBTakesPriorityAndEchoesBackend(t *testing.T) {
 	}
 }
 
-// startupLine 按 serve 的装配启动一次，取到 "hub listening" 那条记录后停下。
+// startupLine 按 serve 的装配启动一次，取到 "hub listening" 那条记录后停下。serve 经 runInBackground 跑：
+// 用例从任何路径返回，t.TempDir 删库目录之前 serve 都已退出。
 func startupLine(t *testing.T, flags ...string) map[string]json.RawMessage {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	events := make(serveEvents, 128)
-	done := make(chan error, 1)
 	args := append([]string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"}, flags...)
-	go func() {
-		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.New(slog.NewJSONHandler(events, nil)))
-	}()
+	serve := runInBackground(t, func(ctx context.Context) error {
+		return runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), slog.New(slog.NewJSONHandler(events, nil)))
+	})
 	timer := time.NewTimer(testwait.Bound)
 	defer timer.Stop()
 	var line map[string]json.RawMessage
@@ -151,27 +152,20 @@ func startupLine(t *testing.T, flags ...string) map[string]json.RawMessage {
 			if string(e["msg"]) == `"hub listening"` {
 				line = e
 			}
-		case err := <-done:
-			t.Fatalf("serve stopped before listening: %v", err)
+		case <-serve.finished:
+			t.Fatalf("serve stopped before listening: %v", serve.result)
 		case <-timer.C:
 			t.Fatal("serve did not bind a listener")
 		}
 	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("serve exit: %v", err)
-		}
-	case <-timer.C:
-		t.Error("serve did not stop")
-	}
+	serve.stop(t)
 	return line
 }
 
 // 启动行写明选定的国家查询后端；本地库另写路径、数据库类型与构建时间（UTC 的 RFC 3339），运维据此确认不出网、加载的
 // 是哪一版库。夹具的类型是 Probe-Test-Country、构建时间是 Unix 秒 1。HTTP 后端不写本地库的三项。
 func TestServeStartupLineStatesTheGeoBackend(t *testing.T) {
+	t.Parallel()
 	path := "../../internal/hub/geo/testdata/country.mmdb"
 	for _, c := range []struct {
 		name  string

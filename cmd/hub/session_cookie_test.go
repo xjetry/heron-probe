@@ -24,6 +24,7 @@ import (
 // 探测用不复用连接的客户端：复用的连接上，设读取上限之前已进读缓冲区的字节数由那次读取实际拿到多少决定
 // （至多 4096），边界随之浮动，二分找到的长度换一条连接未必还读得进；新连接上没有这部分，边界是确定的。
 func TestServeSessionCookieFilledToHeaderLimit(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	const pw = "a sufficiently long password"
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, pw+"\n"), io.Discard); err != nil {

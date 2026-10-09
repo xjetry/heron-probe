@@ -20,6 +20,7 @@ import (
 )
 
 func TestServeBackupUploadsAndDeliversRecovery(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	fail := true
 	objects := map[string][]byte{}

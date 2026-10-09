@@ -94,6 +94,7 @@ func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Han
 
 // RPC 路径与 /admin/ 的优先级高于根路径的公开页；ServeMux 按最长前缀匹配，三者同时挂载时，RPC 仍必须经过服务自身的鉴权。
 func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -127,6 +128,7 @@ func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
 
 // 注册表提供方法全集，真实挂载点必须让所有未列入匿名清单的方法经过鉴权。
 func TestMuxRejectsAnonymousProcedures(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
 	seen := map[string]bool{}
@@ -186,6 +188,7 @@ func TestMuxRejectsAnonymousProcedures(t *testing.T) {
 // 无副作用标注决定一个过程是否接受 GET（§3.3），只有 PublicService 标了：GET 到其余过程一律 405，
 // 这是 §5.3 的 CSRF 事实之一；公开过程接受 GET，浏览器与中间缓存才能按 Cache-Control 复用响应。
 func TestMuxAcceptsGETOnlyOnPublicService(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
 	count := 0

@@ -21,6 +21,7 @@ import (
 )
 
 func TestServePublicSwitchBothSources(t *testing.T) {
+	t.Parallel()
 	for _, custom := range []bool{false, true} {
 		t.Run(map[bool]string{false: "embedded", true: "directory"}[custom], func(t *testing.T) {
 			db := filepath.Join(t.TempDir(), "hub.db")

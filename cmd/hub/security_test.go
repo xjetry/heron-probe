@@ -8,6 +8,7 @@ import (
 )
 
 func TestSecurityResetRequiresExistingDatabaseAndConfirmation(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "missing.db")
 	for _, args := range [][]string{{"--db", path}, {"--db", path, "--yes"}} {
 		if err := runSecurityReset(args); err == nil {
@@ -20,6 +21,7 @@ func TestSecurityResetRequiresExistingDatabaseAndConfirmation(t *testing.T) {
 }
 
 func TestSecurityResetClearsFactorsAndSessions(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "hub.db")
 	st, a, err := openOffline(path, true)
 	if err != nil {

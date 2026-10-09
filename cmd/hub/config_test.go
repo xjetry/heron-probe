@@ -12,6 +12,7 @@ import (
 )
 
 func TestParseTTL(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want time.Duration
@@ -34,6 +35,7 @@ func TestParseTTL(t *testing.T) {
 }
 
 func TestServeUsageShowsRetentionMinima(t *testing.T) {
+	t.Parallel()
 	output, _ := hubCommand(t, "serve", "--help").CombinedOutput()
 	for _, tc := range []struct {
 		flag    string
@@ -59,6 +61,7 @@ func TestServeUsageShowsRetentionMinima(t *testing.T) {
 }
 
 func TestIsLoopback(t *testing.T) {
+	t.Parallel()
 	if !isLoopback("127.0.0.1:8080") || !isLoopback("[::1]:8080") || !isLoopback("localhost:8080") {
 		t.Fatal("loopback addresses misclassified")
 	}
@@ -67,6 +70,7 @@ func TestIsLoopback(t *testing.T) {
 	}
 }
 
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestServeRejectsInvalidRetention(t *testing.T) {
 	t.Setenv("HERON_OFFLINE_AFTER", "30s")
 	for _, tc := range []struct{ flag, value, want string }{
@@ -90,6 +94,7 @@ func TestServeRejectsInvalidRetention(t *testing.T) {
 	}
 }
 
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestLoadZone(t *testing.T) {
 	t.Setenv("TZ", "Asia/Tokyo")
 	if loc, fallback, err := loadZone(""); err != nil || fallback || loc.String() != "Asia/Tokyo" {
@@ -103,6 +108,7 @@ func TestLoadZone(t *testing.T) {
 	}
 }
 
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestLoadZoneFallsBackPastInvalidTZ(t *testing.T) {
 	t.Setenv("TZ", "Mars/Olympus")
 	loc, _, err := loadZone("")
@@ -114,6 +120,7 @@ func TestLoadZoneFallsBackPastInvalidTZ(t *testing.T) {
 	}
 }
 
+// 不并行：用 t.Setenv 并改包级的 localtimePath，二者都是进程级状态，并行的进程内 hub 解析时区时会读到它们。
 func TestLoadZoneResolutionSources(t *testing.T) {
 	for _, tc := range []struct {
 		name, explicit, tz, target, want string
@@ -162,12 +169,15 @@ func TestLoadZoneResolutionSources(t *testing.T) {
 }
 
 func TestLoadZoneRejectsExplicitLocal(t *testing.T) {
+	t.Parallel()
 	if _, _, err := loadZone("Local"); err == nil || !strings.Contains(err.Error(), "--timezone") {
 		t.Fatalf("Local must be rejected with a flag error: %v", err)
 	}
 }
 
 // 已移除的配置在打开数据库之前拒绝，避免升级后静默改变托管语义。
+//
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestServeRejectsRemovedThemeOriginBeforeOpeningTheDatabase(t *testing.T) {
 	t.Setenv("HERON_OFFLINE_AFTER", "30s")
 	for _, origin := range []string{"https://status.example.com", "https://example.com/themes"} {

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,8 @@ func requireStoreClosed(t *testing.T, h *hub) {
 }
 
 // 装配在库打开之后失败（这里是 --admin-origin 不合法）时，newHub 自己关库：调用方拿不到 hub，也就没有别人能关它。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
 func TestNewHubClosesTheStoreWhenAssemblyFails(t *testing.T) {
 	opts := lifecycleOptions(t, "--listen", "127.0.0.1:0", "--admin-origin", "http://example.com")
 	baseline := runtime.NumGoroutine()
@@ -64,6 +67,8 @@ func TestNewHubClosesTheStoreWhenAssemblyFails(t *testing.T) {
 }
 
 // 监听失败时 run 仍是库的唯一所有者：返回前关库，不过更新门，不起任何循环。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
 func TestRunClosesTheStoreWhenListenFails(t *testing.T) {
 	blocker, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -88,6 +93,8 @@ func TestRunClosesTheStoreWhenListenFails(t *testing.T) {
 }
 
 // 更新门拒绝时，已建立的监听要关掉、库要关掉：门报告就绪的前提是监听已绑上，门失败则不留下半启动的 hub。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
 func TestRunClosesTheListenerAndStoreWhenTheGateFails(t *testing.T) {
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -125,6 +132,8 @@ func TestRunClosesTheListenerAndStoreWhenTheGateFails(t *testing.T) {
 }
 
 // 取消后 run 先排空在途请求再关库：请求处理期间库必须仍可用，处理器写完的响应必须送达，run 随后才返回。
+//
+// 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
 func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 	h, err := newHub(lifecycleOptions(t, "--listen", "127.0.0.1:0"), clock.NewFake(time.Now()), discardLog())
@@ -147,11 +156,12 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 		}
 		io.WriteString(w, "drained")
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	events := make(serveEvents, 128)
-	done := make(chan error, 1)
-	go func() { done <- h.run(ctx, slog.New(slog.NewJSONHandler(events, nil))) }()
+	run := runInBackground(t, func(ctx context.Context) error { return h.run(ctx, slog.New(slog.NewJSONHandler(events, nil))) })
+	// 晚于 runInBackground 注册、先于它运行：用例中途失败时先放走停在处理器里的请求，run 的排空才等得到它。
+	var released sync.Once
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
 	var addr string
 	for addr == "" {
 		select {
@@ -161,8 +171,8 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-		case err := <-done:
-			t.Fatalf("run returned before listening: %v", err)
+		case <-run.finished:
+			t.Fatalf("run returned before listening: %v", run.result)
 		case <-time.After(testwait.Bound):
 			t.Fatal("no startup line")
 		}
@@ -188,14 +198,14 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 	case <-time.After(testwait.Bound):
 		t.Fatal("request did not reach the handler")
 	}
-	cancel()
+	run.cancel()
 	select {
-	case err := <-done:
-		t.Fatalf("run returned with a request in flight: %v", err)
+	case <-run.finished:
+		t.Fatalf("run returned with a request in flight: %v", run.result)
 	// 负向窗口：排空未完成时 run 不应返回。窗口短只会漏掉稍晚才提前返回的缺陷，不会把仍在等待的 run 判失败。
 	case <-time.After(50 * time.Millisecond):
 	}
-	close(release)
+	unblock()
 	select {
 	case r := <-responses:
 		if r.err != nil || r.status != http.StatusOK || r.body != "drained" {
@@ -205,9 +215,9 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 		t.Fatal("in-flight request got no response")
 	}
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("run = %v", err)
+	case <-run.finished:
+		if run.result != nil {
+			t.Fatalf("run = %v", run.result)
 		}
 	case <-time.After(testwait.Bound):
 		t.Fatal("run did not return after the drain")

@@ -104,6 +104,7 @@ func awaitDelivered(t *testing.T, client heronv1connect.AdminServiceClient, bodi
 }
 
 func TestServeDeliversOfflineAlerts(t *testing.T) {
+	t.Parallel()
 	url, bodies := alertReceiver(t)
 	// 巡检 ticker 使用真实时间；真实 Mono 同步推进，才能从未上报走到 TTL。
 	client, _, _ := startAlertHub(t, clock.Real(), nil)
@@ -138,6 +139,7 @@ func seedAlertChannel(t *testing.T, st *store.Store, url string) (int64, int64) 
 }
 
 func TestServeRequeuesPendingNotifications(t *testing.T) {
+	t.Parallel()
 	url, bodies := alertReceiver(t)
 	client, _, _ := startAlertHub(t, clock.Real(), func(st *store.Store) {
 		id, channel := seedAlertChannel(t, st, url)
@@ -154,6 +156,7 @@ func TestServeRequeuesPendingNotifications(t *testing.T) {
 }
 
 func TestServeEvaluatesProbeAlerts(t *testing.T) {
+	t.Parallel()
 	url, bodies := alertReceiver(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 	client, _, _ := startAlertHub(t, clk, func(st *store.Store) {
@@ -177,6 +180,7 @@ func TestServeEvaluatesProbeAlerts(t *testing.T) {
 }
 
 func TestServePrunesAlertEvents(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		retention time.Duration
@@ -186,6 +190,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 		{"configured", 3 * 24 * time.Hour, []string{"--retention-alert-events", "72h"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 59, 999000000, time.UTC))
 			var nodeID, retainedID int64
 			client, events, _ := startAlertHub(t, clk, func(st *store.Store) {
@@ -233,6 +238,7 @@ func TestServePrunesAlertEvents(t *testing.T) {
 // hub 启动即做一次到期扫描，天界取 --timezone：UTC 16:30 在上海已是 9 月 25 日，9 月 24 日到期、开着按月自动续期的
 // 节点推后到 10 月 24 日；按 UTC 算今天仍是 9 月 24 日，不会推后。"node expiry renewed" 只在推后的日期落库之后记。
 func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
 	_, events, _ := startAlertHub(t, clk, func(st *store.Store) {
 		id, _, err := st.CreateNode(t.Context(), "renewing", store.Billing{}, make([]byte, 32))
@@ -264,6 +270,7 @@ func TestServeRenewsExpiryAtStartupInTheHubZone(t *testing.T) {
 
 // serve 把 --timezone 交给管理端与公开端：UTC 16:30 在上海已是 9 月 25 日，9 月 30 日到期还剩 5 天（按 UTC 是 6 天）。
 func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 9, 24, 16, 30, 0, 0, time.UTC))
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "days left sufficiently long password"

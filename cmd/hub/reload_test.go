@@ -132,20 +132,7 @@ func newReloadHub(t *testing.T, db string, clk clock.Clock, handler slog.Handler
 func runReloadHub(t *testing.T, h *hub, handler slog.Handler, logs *reloadLog) string {
 	t.Helper()
 	h.gate = func(context.Context) error { return nil }
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- h.run(ctx, slog.New(handler)) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("hub run: %v", err)
-			}
-		case <-time.After(testwait.Bound):
-			t.Error("hub did not stop")
-		}
-	})
+	runInBackground(t, func(ctx context.Context) error { return h.run(ctx, slog.New(handler)) })
 	logs.wait(t, "hub listening", nil)
 	listen, _ := logs.find("hub listening", nil)[0]["listen"].(string)
 	return "http://" + listen
@@ -220,6 +207,7 @@ func confirmedAttrs(t *testing.T, db string) map[string]any {
 // 被离线删除的节点生前有在线快照、待刷出的分钟桶、流量账本条目、更新状态、告警状态与规则作用域：重载之后逐一被清，
 // 它的运行 token 不再鉴权；留下的节点不受影响。
 func TestReloadClearsEveryCacheOfAnOfflineDeletedNode(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	h, url, logs := startReloadHub(t, f, clk, nil)
@@ -285,6 +273,7 @@ func TestReloadClearsEveryCacheOfAnOfflineDeletedNode(t *testing.T) {
 // 启动窗口：读起点代数之后、首次加载之前落下的库外提交必须被看到。屏障停在两步之间的日志上；若实现先加载后读
 // 代数，这次提交会被计入起点却不在缓存里，永远不被重载。
 func TestReloadSeesCommitBetweenStartupGenerationAndLoad(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	logs := &reloadLog{}
@@ -320,6 +309,7 @@ func TestReloadSeesCommitBetweenStartupGenerationAndLoad(t *testing.T) {
 // 重载期间的第二次提交：屏障停在各缓存加载完之后、复核代数之前，此时再提交一次。确认的必须是第二次提交的代数，
 // 日志里从不出现中间代的确认；第二次提交的节点最终被认得。
 func TestReloadConfirmsOnlyAfterCatchingUpWithACommitDuringReload(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	var entered <-chan struct{}
@@ -355,6 +345,7 @@ func TestReloadConfirmsOnlyAfterCatchingUpWithACommitDuringReload(t *testing.T) 
 // 部分加载失败：任务缓存加载失败的那一轮已经清掉了离线删除的节点（删除不会丢），confirmed 不动；修好之后下一轮
 // 整轮重来并确认。失败用库里缺失的 probe_meta 行制造（hub 与离线命令都不写它，只有加载读它）。
 func TestReloadRecoversAfterAFailedLoad(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	h, url, logs := startReloadHub(t, f, clk, nil)
@@ -394,6 +385,7 @@ func TestReloadRecoversAfterAFailedLoad(t *testing.T) {
 // 在线建删与任务修改和重载交错：重载停在发现变更之后、任何加载之前，此时在线建节点、删节点、建 all_nodes 任务；放行
 // 之后 token 映射、任务清单与删除清理都收敛到库的样子。
 func TestReloadInterleavedWithOnlineChangesConverges(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	var entered <-chan struct{}
@@ -461,6 +453,7 @@ func TestReloadInterleavedWithOnlineChangesConverges(t *testing.T) {
 // 安装凭据的跨进程竞争：hub 的映射里是安装凭据 A；离线 rotate-token 换发为 B 并推进代数。在 hub 重载之前（屏障停在
 // 发现变更、尚未重建映射处）拿 A 注册被拒，库里仍是 B；重载之后用 B 注册得到运行 token，用它上报成功。
 func TestStaleInstallCredentialCannotOverwriteOfflineRotation(t *testing.T) {
+	t.Parallel()
 	f := seedReload(t)
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC))
 	var entered <-chan struct{}

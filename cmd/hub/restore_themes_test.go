@@ -16,8 +16,10 @@ import (
 )
 
 func TestRestoreThemesSnapshotDigest(t *testing.T) {
+	t.Parallel()
 	for _, defect := range []string{"valid", "missing", "replacement", "wrong-filename", "future-format"} {
 		t.Run(defect, func(t *testing.T) {
+			t.Parallel()
 			config, path := themeRestoreFixture(t)
 			db := restoreDB(t, config)
 			raw := Minimal(t, "a")
@@ -126,6 +128,7 @@ func checkThemeRestoreSummary(t *testing.T, path string, output []byte, want the
 }
 
 func TestRestoreThemesOmittedClearsAndDisables(t *testing.T) {
+	t.Parallel()
 	config, path := themeRestoreFixture(t)
 	var out bytes.Buffer
 	restoreExec(t, restoreDB(t, config), "UPDATE theme SET preview='old.png'")
@@ -142,6 +145,7 @@ func TestRestoreThemesOmittedClearsAndDisables(t *testing.T) {
 }
 
 func TestRestoreThemesCommand(t *testing.T) {
+	t.Parallel()
 	config, path := themeRestoreFixture(t)
 	dir := t.TempDir()
 	pkg := Minimal(t, "a", File("assets/new.js", "new"))
@@ -182,9 +186,11 @@ func TestRestoreThemesCommand(t *testing.T) {
 }
 
 func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
+	t.Parallel()
 	for _, defect := range []string{"missing-directory", "bad-package", "bad-extra", "wrong-id", "oversized", "invalid-filename"} {
 		for _, existing := range []bool{false, true} {
 			t.Run(defect+map[bool]string{false: "/new", true: "/existing"}[existing], func(t *testing.T) {
+				t.Parallel()
 				config, path := themeRestoreFixture(t)
 				if !existing {
 					path = filepath.Join(t.TempDir(), "new.db")
@@ -240,6 +246,7 @@ func TestRestoreThemesInvalidLeavesTargetUntouched(t *testing.T) {
 }
 
 func TestRestoreThemesWriteFailureRollsBack(t *testing.T) {
+	t.Parallel()
 	config, path := themeRestoreFixture(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.zip"), Minimal(t, "a"), 0600); err != nil {
@@ -257,6 +264,7 @@ func TestRestoreThemesWriteFailureRollsBack(t *testing.T) {
 }
 
 func TestRestoreThemesPreflightPrecedesTargetOpen(t *testing.T) {
+	t.Parallel()
 	config, _ := themeRestoreFixture(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.zip"), []byte("bad zip"), 0600); err != nil {
@@ -270,6 +278,7 @@ func TestRestoreThemesPreflightPrecedesTargetOpen(t *testing.T) {
 }
 
 func TestRestoreThemesMissingEnabledWithDirectory(t *testing.T) {
+	t.Parallel()
 	config, path := themeRestoreFixture(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "b.zip"), Minimal(t, "b"), 0600); err != nil {
@@ -285,6 +294,7 @@ func TestRestoreThemesMissingEnabledWithDirectory(t *testing.T) {
 }
 
 func TestRestoreThemesManifestMetadata(t *testing.T) {
+	t.Parallel()
 	config, path := themeRestoreFixture(t)
 	restoreExec(t, restoreDB(t, config), "UPDATE theme SET name='old',version='old',preview='old.png' WHERE id='a'")
 	dir := t.TempDir()
@@ -304,6 +314,7 @@ func TestRestoreThemesManifestMetadata(t *testing.T) {
 }
 
 func TestRestoreThemesSourceAdmissionFirst(t *testing.T) {
+	t.Parallel()
 	_, metrics := restoreSnapshots(t)
 	err := runRestoreWith([]string{"--db", filepath.Join(t.TempDir(), "target.db"), "--config", metrics, "--themes", t.TempDir(), "--yes"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "config snapshot missing table") {

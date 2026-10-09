@@ -25,6 +25,7 @@ func pipeWith(t *testing.T, content string) *os.File {
 }
 
 func TestPasswdReadsOneLineFromNonTerminalStdin(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "t.db")
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, "a sufficiently long password\n"), io.Discard); err != nil {
 		t.Fatal(err)
@@ -44,6 +45,7 @@ func TestPasswdReadsOneLineFromNonTerminalStdin(t *testing.T) {
 }
 
 func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "t.db")
 	st, a, err := openOffline(db, true)
 	if err != nil {
@@ -72,6 +74,7 @@ func TestPasswdListsTokensWithoutPromptingOnAPipe(t *testing.T) {
 }
 
 func TestPasswdRejectsShortPassword(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "t.db")
 	err := runPasswdWith([]string{"--db", db}, pipeWith(t, "short\n"), io.Discard)
 	if !errors.Is(err, auth.ErrWeakPassword) {
@@ -80,6 +83,7 @@ func TestPasswdRejectsShortPassword(t *testing.T) {
 }
 
 func TestReadPasswordLineBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, input, want string }{
 		{"one-line", "first line\nignored line\n", "first line"},
 		{"CRLF-and-spaces", "  前后保留空白的密码  \r\n", "  前后保留空白的密码  "},
@@ -96,6 +100,7 @@ func TestReadPasswordLineBoundaries(t *testing.T) {
 
 // docker exec 不带 -i 时容器里的 stdin 就是 /dev/null：读到立即 EOF，这不是"密码太短"。
 func TestReadPasswordFromDevNullIsMissingInput(t *testing.T) {
+	t.Parallel()
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +113,7 @@ func TestReadPasswordFromDevNullIsMissingInput(t *testing.T) {
 
 // 空行是输入了一个空密码，由 SetPassword 按长度拒绝，不归入"没有输入"。
 func TestReadPasswordEmptyLineIsAnEmptyPassword(t *testing.T) {
+	t.Parallel()
 	got, err := readPassword(pipeWith(t, "\n"), io.Discard)
 	if err != nil || got != "" {
 		t.Fatalf("empty line: password=%q err=%v, want an empty password and no error", got, err)
@@ -115,6 +121,7 @@ func TestReadPasswordEmptyLineIsAnEmptyPassword(t *testing.T) {
 }
 
 func TestPasswdWithoutInputLeavesNoDatabase(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "t.db")
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {

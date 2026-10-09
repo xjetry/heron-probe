@@ -113,6 +113,7 @@ func assertThemeShell(t *testing.T, got hostResponse, installed store.Theme) {
 
 // 任意 Host 的同一根入口都显示所选主题；管理页面与 RPC 保持明确挂载，不由包内路径覆盖。
 func TestSameDomainThemeKeepsPanelAndRPCMounts(t *testing.T) {
+	t.Parallel()
 	srv, st := newThemeTestServer(t)
 	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "admin/index.html": "shadow panel", "heron.v1.PublicService/GetSite": "shadow rpc"})
 	for _, host := range []string{"panel.test", "status.test:8443", strings.TrimPrefix(srv.URL, "http://")} {
@@ -143,6 +144,7 @@ func TestSameDomainThemeKeepsPanelAndRPCMounts(t *testing.T) {
 
 // 主题资源即使直接导航也带 CSP sandbox；只有不可变公开资源开放匿名 CORS。
 func TestSameDomainThemeFilesRemainSandboxed(t *testing.T) {
+	t.Parallel()
 	srv, st := newThemeTestServer(t)
 	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "preview.svg": "<svg/>"})
 	for rel, body := range map[string]string{"index.html": "theme index", "assets/app.js": "theme script", "preview.svg": "<svg/>"} {
@@ -171,6 +173,7 @@ func TestSameDomainThemeFilesRemainSandboxed(t *testing.T) {
 
 // 注册表枚举全部管理过程；Origin:null 和跨域来源都在请求体与身份处理前拒绝，不靠浏览器读响应失败兜底。
 func TestSandboxOriginCannotReachAnyAdminProcedure(t *testing.T) {
+	t.Parallel()
 	srv, st := newThemeTestServer(t)
 	installTheme(t, st, "t", map[string]string{"index.html": "theme index"})
 	count, public := 0, 0
@@ -212,6 +215,7 @@ func TestSandboxOriginCannotReachAnyAdminProcedure(t *testing.T) {
 }
 
 func TestThemeSelectionFallbackAndImmutableVersions(t *testing.T) {
+	t.Parallel()
 	srv, st := newThemeTestServer(t)
 	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, "panel.test", path, "", nil) }
 	assertBuiltin := func() {
@@ -266,6 +270,7 @@ func TestThemeSelectionFallbackAndImmutableVersions(t *testing.T) {
 }
 
 func TestSameDomainThemeObeysPublicSwitch(t *testing.T) {
+	t.Parallel()
 	srv, st := newThemeTestServer(t)
 	installed := installTheme(t, st, "t", map[string]string{"index.html": "theme index", "app.js": "theme script"})
 	get := func(path string) hostResponse { return hostDo(t, srv, http.MethodGet, "panel.test", path, "", nil) }
@@ -306,6 +311,7 @@ func TestSameDomainThemeObeysPublicSwitch(t *testing.T) {
 }
 
 func TestNewHandlerKeepsStaticSurfaceBehindPublicSwitch(t *testing.T) {
+	t.Parallel()
 	var open atomic.Bool
 	var calls atomic.Int64
 	r := routes{

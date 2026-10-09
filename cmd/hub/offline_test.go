@@ -24,6 +24,7 @@ func assertNotCreated(t *testing.T, db string, err error) {
 }
 
 func TestOfflineCommandsDoNotCreateAMissingDatabase(t *testing.T) {
+	t.Parallel()
 	var out, errOut strings.Builder
 	cases := []struct {
 		name string
@@ -51,6 +52,7 @@ func TestOfflineCommandsDoNotCreateAMissingDatabase(t *testing.T) {
 }
 
 func TestStateEstablishingCommandsCreateAMissingDatabase(t *testing.T) {
+	t.Parallel()
 	t.Run("passwd", func(t *testing.T) {
 		db := missingDB(t)
 		err := runPasswdWith([]string{"--db", db}, pipeWith(t, "a sufficiently long password\n"), io.Discard)

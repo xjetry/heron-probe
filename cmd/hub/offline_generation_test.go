@@ -28,6 +28,7 @@ func offlineGeneration(t *testing.T, db string) uint64 {
 // 每个写库的离线子命令都推进离线变更代数（运行中的 hub 据此重载），只读的不推进（不给 hub 制造无谓的重载）。
 // 判定是"库外写者"这一角色，不逐命令挑选：清单以 main 的子命令表为准，restore 要求 hub 已停止、另有用例。
 func TestOfflineCommandsAdvanceGenerationOnlyWhenTheyWrite(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name   string
 		writes bool

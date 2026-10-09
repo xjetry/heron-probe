@@ -19,15 +19,123 @@ import (
 	"github.com/xjetry/heron-probe/internal/sqlitetest"
 )
 
+// v8Fixture 在 dir 里建一个可实际迁移的 v8 库并返回路径：经 openOffline 建到当前版本，再逐项撤回之后各版的结构。
+// 撤回要逐条改表（同机 -race、负载约 30 时建一个约 5.6 秒），TestOfflineCommandsRejectV8 的各子用例共用一次建成的库、各自复制。
+func v8Fixture(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "v8.db")
+	st, _, err := openOffline(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var freshVersion int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
+		t.Fatal(err)
+	}
+	if freshVersion != 37 {
+		t.Fatalf("fixture user_version = %d, want 37; rebuild the v8 fixture for the new version", freshVersion)
+	}
+	removeV37Coordination(t, raw)
+	removeV36Config(t, raw)
+	removeV35Config(t, raw)
+	removeV34Config(t, raw)
+	removeV34Metrics(t, raw)
+	removeV33Metrics(t, raw)
+	removeV32Config(t, raw)
+	removeV31Metrics(t, raw)
+	removeV30Config(t, raw)
+	removeV29Config(t, raw)
+	removeV26Config(t, raw)
+	removeV27Config(t, raw)
+	removeV25Config(t, raw)
+	restoreExec(t, raw, `DROP TABLE register_window;
+			CREATE TABLE register_window (id INTEGER PRIMARY KEY CHECK(id=1),key_hash BLOB NOT NULL,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`)
+	removeV21Columns(t, raw, raw)
+	removeV28Metrics(t, raw)
+	// 后续 schema 增加列、索引及维护状态、标签、主题、恢复记录、认证配置与选择器关联表，并重建 alert_delivery：多出
+	// batch_id 与 not_before 两列，alert_delivery_pending 从 (done, id) 改成 (done, batch_id, channel_id)，其余列的
+	// 名称、类型、默认值与先后不变。逐项撤回得到可实际迁移的 v8 库，避免仅伪造版本号。
+	// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
+	// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
+	// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
+	for _, stmt := range []string{
+		"DROP TABLE node_update",
+		"ALTER TABLE node_facts DROP COLUMN network",
+		"DROP TABLE theme_selection",
+		"DROP TABLE theme_version",
+		"DROP TABLE admin_security",
+		"DROP TABLE probe_task_tag",
+		"DROP TABLE alert_rule_tag",
+		"ALTER TABLE alert_rule DROP COLUMN resource_metric",
+		"ALTER TABLE alert_rule DROP COLUMN recovery_threshold",
+		"ALTER TABLE metric_1m DROP COLUMN memory_used_pct_sum",
+		"ALTER TABLE metric_1m DROP COLUMN memory_used_pct_n",
+		"ALTER TABLE metric_1m DROP COLUMN disk_used_pct_sum",
+		"ALTER TABLE metric_1m DROP COLUMN disk_used_pct_n",
+		"ALTER TABLE metric_5m DROP COLUMN memory_used_pct_sum",
+		"ALTER TABLE metric_5m DROP COLUMN memory_used_pct_n",
+		"ALTER TABLE metric_5m DROP COLUMN disk_used_pct_sum",
+		"ALTER TABLE metric_5m DROP COLUMN disk_used_pct_n",
+		"ALTER TABLE metric_1h DROP COLUMN memory_used_pct_sum",
+		"ALTER TABLE metric_1h DROP COLUMN memory_used_pct_n",
+		"ALTER TABLE metric_1h DROP COLUMN disk_used_pct_sum",
+		"ALTER TABLE metric_1h DROP COLUMN disk_used_pct_n",
+		"ALTER TABLE node DROP COLUMN price",
+		"ALTER TABLE node DROP COLUMN currency",
+		"ALTER TABLE node DROP COLUMN billing_cycle",
+		"ALTER TABLE node DROP COLUMN expires_on",
+		"ALTER TABLE node DROP COLUMN auto_renew",
+		"ALTER TABLE alert_rule DROP COLUMN days_before",
+		"ALTER TABLE alert_state DROP COLUMN fired_expires_on",
+		"ALTER TABLE probe_task DROP COLUMN all_nodes",
+		"DROP TABLE maintenance_state",
+		"ALTER TABLE alert_state DROP COLUMN recovered_at",
+		"ALTER TABLE node DROP COLUMN last_source",
+		"ALTER TABLE node DROP COLUMN country",
+		"ALTER TABLE node DROP COLUMN country_ip",
+		"ALTER TABLE node DROP COLUMN country_pin",
+		"DROP TABLE node_tag",
+		"DROP TABLE tag",
+		"DROP TABLE theme_file",
+		"DROP TABLE theme_package",
+		"DROP TABLE theme",
+		"DROP TABLE restore_record",
+		"DROP INDEX alert_delivery_by_batch",
+		"DROP INDEX alert_delivery_pending",
+		"ALTER TABLE alert_delivery DROP COLUMN batch_id",
+		"ALTER TABLE alert_delivery DROP COLUMN not_before",
+		"CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)",
+		"ALTER TABLE notify_channel DROP COLUMN rate_per_minute",
+		"PRAGMA user_version = 8",
+		"PRAGMA journal_mode=DELETE",
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
 func TestOfflineCommandsRejectV8(t *testing.T) {
+	t.Parallel()
+	fixture := v8Fixture(t, t.TempDir())
 	for _, args := range [][]string{{"stats"}, {"passwd"}, {"token", "list"}, {"node", "list"}, {"window", "show"}} {
 		t.Run(args[0], func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(t.TempDir(), "v8.db")
-			st, _, err := openOffline(path, true)
+			fixtureBytes, err := os.ReadFile(fixture)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := st.Close(); err != nil {
+			if err := os.WriteFile(path, fixtureBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			raw, err := sql.Open("sqlite", path)
@@ -35,91 +143,6 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer raw.Close()
-			var freshVersion int
-			if err := raw.QueryRow("PRAGMA user_version").Scan(&freshVersion); err != nil {
-				t.Fatal(err)
-			}
-			if freshVersion != 37 {
-				t.Fatalf("fixture user_version = %d, want 37; rebuild the v8 fixture for the new version", freshVersion)
-			}
-			removeV37Coordination(t, raw)
-			removeV36Config(t, raw)
-			removeV35Config(t, raw)
-			removeV34Config(t, raw)
-			removeV34Metrics(t, raw)
-			removeV33Metrics(t, raw)
-			removeV32Config(t, raw)
-			removeV31Metrics(t, raw)
-			removeV30Config(t, raw)
-			removeV29Config(t, raw)
-			removeV26Config(t, raw)
-			removeV27Config(t, raw)
-			removeV25Config(t, raw)
-			restoreExec(t, raw, `DROP TABLE register_window;
-				CREATE TABLE register_window (id INTEGER PRIMARY KEY CHECK(id=1),key_hash BLOB NOT NULL,expires_at INTEGER NOT NULL,remaining INTEGER NOT NULL)`)
-			removeV21Columns(t, raw, raw)
-			removeV28Metrics(t, raw)
-			// 后续 schema 增加列、索引及维护状态、标签、主题、恢复记录、认证配置与选择器关联表，并重建 alert_delivery：多出
-			// batch_id 与 not_before 两列，alert_delivery_pending 从 (done, id) 改成 (done, batch_id, channel_id)，其余列的
-			// 名称、类型、默认值与先后不变。逐项撤回得到可实际迁移的 v8 库，避免仅伪造版本号。
-			// 这个夹具经 openOffline 建成，openStore 判定通过后已经把它切成 WAL；切回
-			// DELETE 是因为提前生效的 journal_mode(WAL) 只在非 WAL 的库上改写文件头：本项目
-			// 自己产出的 v8 库本就是 WAL，在它上面这个缺陷不显形，逐字节比较测不出。
-			for _, stmt := range []string{
-				"DROP TABLE node_update",
-				"ALTER TABLE node_facts DROP COLUMN network",
-				"DROP TABLE theme_selection",
-				"DROP TABLE theme_version",
-				"DROP TABLE admin_security",
-				"DROP TABLE probe_task_tag",
-				"DROP TABLE alert_rule_tag",
-				"ALTER TABLE alert_rule DROP COLUMN resource_metric",
-				"ALTER TABLE alert_rule DROP COLUMN recovery_threshold",
-				"ALTER TABLE metric_1m DROP COLUMN memory_used_pct_sum",
-				"ALTER TABLE metric_1m DROP COLUMN memory_used_pct_n",
-				"ALTER TABLE metric_1m DROP COLUMN disk_used_pct_sum",
-				"ALTER TABLE metric_1m DROP COLUMN disk_used_pct_n",
-				"ALTER TABLE metric_5m DROP COLUMN memory_used_pct_sum",
-				"ALTER TABLE metric_5m DROP COLUMN memory_used_pct_n",
-				"ALTER TABLE metric_5m DROP COLUMN disk_used_pct_sum",
-				"ALTER TABLE metric_5m DROP COLUMN disk_used_pct_n",
-				"ALTER TABLE metric_1h DROP COLUMN memory_used_pct_sum",
-				"ALTER TABLE metric_1h DROP COLUMN memory_used_pct_n",
-				"ALTER TABLE metric_1h DROP COLUMN disk_used_pct_sum",
-				"ALTER TABLE metric_1h DROP COLUMN disk_used_pct_n",
-				"ALTER TABLE node DROP COLUMN price",
-				"ALTER TABLE node DROP COLUMN currency",
-				"ALTER TABLE node DROP COLUMN billing_cycle",
-				"ALTER TABLE node DROP COLUMN expires_on",
-				"ALTER TABLE node DROP COLUMN auto_renew",
-				"ALTER TABLE alert_rule DROP COLUMN days_before",
-				"ALTER TABLE alert_state DROP COLUMN fired_expires_on",
-				"ALTER TABLE probe_task DROP COLUMN all_nodes",
-				"DROP TABLE maintenance_state",
-				"ALTER TABLE alert_state DROP COLUMN recovered_at",
-				"ALTER TABLE node DROP COLUMN last_source",
-				"ALTER TABLE node DROP COLUMN country",
-				"ALTER TABLE node DROP COLUMN country_ip",
-				"ALTER TABLE node DROP COLUMN country_pin",
-				"DROP TABLE node_tag",
-				"DROP TABLE tag",
-				"DROP TABLE theme_file",
-				"DROP TABLE theme_package",
-				"DROP TABLE theme",
-				"DROP TABLE restore_record",
-				"DROP INDEX alert_delivery_by_batch",
-				"DROP INDEX alert_delivery_pending",
-				"ALTER TABLE alert_delivery DROP COLUMN batch_id",
-				"ALTER TABLE alert_delivery DROP COLUMN not_before",
-				"CREATE INDEX alert_delivery_pending ON alert_delivery(done, id)",
-				"ALTER TABLE notify_channel DROP COLUMN rate_per_minute",
-				"PRAGMA user_version = 8",
-				"PRAGMA journal_mode=DELETE",
-			} {
-				if _, err := raw.Exec(stmt); err != nil {
-					t.Fatal(err)
-				}
-			}
 			before, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -167,6 +190,7 @@ func TestOfflineCommandsRejectV8(t *testing.T) {
 // openOffline 的注释声称建立状态的子命令必须放出 store 的 Info 级 schema 事件；
 // created 是这类命令新建了文件的唯一信号，钉住这一行不被日志级别过滤掉。
 func TestPasswdLogsSchemaCreationOnStderr(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "new.db")
 	cmd := hubCommand(t, "passwd", "--db", path)
 	cmd.Stdin = strings.NewReader("long enough test password\n")
@@ -193,6 +217,7 @@ func TestPasswdLogsSchemaCreationOnStderr(t *testing.T) {
 // 统计的表清单来自库本身：原先手写清单漏掉的 api_token、probe_meta、setting 都在；
 // 关库后主文件已检查点，db_bytes 等于它的大小。
 func TestStatsPrintsSizeAndEveryTable(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	st, _, err := openOffline(db, true)
 	if err != nil {

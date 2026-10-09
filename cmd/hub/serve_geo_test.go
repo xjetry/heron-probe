@@ -24,6 +24,7 @@ import (
 // 节点经可信代理以公网地址上报之后，查询到达假服务，跳转目标从未被请求。查询器不启动时请求不会到达；给的是跟随
 // 重定向的客户端时 /moved 会出现在请求里。
 func TestServeRunsCountryLookupWithTheNoRedirectClient(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var paths []string
 	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

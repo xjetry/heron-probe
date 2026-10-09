@@ -37,6 +37,7 @@ func restoreDB(t *testing.T, path string) *sql.DB {
 }
 
 func TestRestoreStartsHubWithRecoveredConfig(t *testing.T) {
+	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	restoreExec(t, restoreDB(t, config), "INSERT INTO setting VALUES ('site.public_enabled','1')")
 	path := filepath.Join(t.TempDir(), "restored.db")
@@ -194,6 +195,7 @@ func restoreTarget(t *testing.T) string {
 }
 
 func TestRestoreCommandTimeline(t *testing.T) {
+	t.Parallel()
 	for _, configAt := range []int64{1000, 3000} {
 		t.Run(fmt.Sprint(configAt), func(t *testing.T) { testRestoreTimeline(t, configAt) })
 	}
@@ -277,8 +279,10 @@ func testRestoreTimeline(t *testing.T, configAt int64) {
 }
 
 func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
+	t.Parallel()
 	for _, version := range []int{17, 18, 19} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			t.Parallel()
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
@@ -401,6 +405,7 @@ func removeV29Config(t *testing.T, config *sql.DB) {
 // 与"非 DNS 任务不携带解析器"的既有值一致。快照表由 CREATE TABLE AS 生成、不带约束与默认值，
 // 夹具的行要显式写全各列，不能靠列默认值补齐。
 func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
+	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
@@ -472,6 +477,7 @@ func removeV21Columns(t *testing.T, config, metrics *sql.DB) {
 }
 
 func TestRestoreExistingHighWaterAndOptionalMetrics(t *testing.T) {
+	t.Parallel()
 	for _, withMetrics := range []bool{true, false} {
 		t.Run(fmt.Sprint(withMetrics), func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
@@ -503,6 +509,7 @@ func TestRestoreExistingHighWaterAndOptionalMetrics(t *testing.T) {
 }
 
 func TestRestoreTargetSchemaPolicy(t *testing.T) {
+	t.Parallel()
 	var currentVersion int
 	if err := restoreDB(t, restoreTarget(t)).QueryRow("PRAGMA user_version").Scan(&currentVersion); err != nil {
 		t.Fatal(err)
@@ -531,9 +538,11 @@ func TestRestoreTargetSchemaPolicy(t *testing.T) {
 }
 
 func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
+	t.Parallel()
 	for _, layer := range []string{"config", "metrics"} {
 		for _, defect := range []string{"schema", "future schema", "page", "table", "layer", "metadata", "empty metadata"} {
 			t.Run(layer+"/"+defect, func(t *testing.T) {
+				t.Parallel()
 				config, metrics := restoreSnapshots(t)
 				path := restoreTarget(t)
 				source := config
@@ -583,6 +592,7 @@ func TestRestoreRejectsSnapshotsWithoutChangingTarget(t *testing.T) {
 }
 
 func TestRestorePageSizeAgainstExistingTarget(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                                string
 		targetSize, configSize, metricsSize int
@@ -628,6 +638,7 @@ func TestRestorePageSizeAgainstExistingTarget(t *testing.T) {
 }
 
 func TestRestoreFailureRollsBackAllTables(t *testing.T) {
+	t.Parallel()
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("existing_empty_target=%t", existing), func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
@@ -677,6 +688,7 @@ func TestRestoreFailureRollsBackAllTables(t *testing.T) {
 }
 
 func TestRestoreValidatesSourcesBeforeCreatingTarget(t *testing.T) {
+	t.Parallel()
 	for _, defect := range []string{"missing config", "missing metrics", "invalid config", "invalid metrics", "page config"} {
 		t.Run(defect, func(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
@@ -712,6 +724,7 @@ func TestRestoreValidatesSourcesBeforeCreatingTarget(t *testing.T) {
 }
 
 func TestRestoreCopiesColumnsByName(t *testing.T) {
+	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	restoreExec(t, restoreDB(t, config), `ALTER TABLE setting RENAME TO old_setting;
 		CREATE TABLE setting AS SELECT value,key FROM old_setting; DROP TABLE old_setting`)
@@ -723,6 +736,7 @@ func TestRestoreCopiesColumnsByName(t *testing.T) {
 }
 
 func TestRestoreRequiresExplicitConfirmation(t *testing.T) {
+	t.Parallel()
 	config, metrics := restoreSnapshots(t)
 	path := restoreTarget(t)
 	before := restoreDump(t, path)

@@ -23,6 +23,8 @@ import (
 )
 
 // 子进程执行真实 main，使 os.Exit 与信号处理不会终止测试宿主。
+//
+// 不并行：子进程里它改进程级的 os.Args 再调用 main。
 func TestHubCommandChild(t *testing.T) {
 	if os.Getenv("HERON_HUB_COMMAND_CHILD") != "1" {
 		return
@@ -61,7 +63,7 @@ func (b *commandOutput) Write(p []byte) (int, error) {
 func (b *commandOutput) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }
 
 func TestMainPasswdServeAndSignal(t *testing.T) {
-	t.Setenv("HERON_OFFLINE_AFTER", "45s")
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "command password with enough characters"
 	set := hubCommand(t, "passwd", "--db", db)
@@ -69,7 +71,7 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 	if out, err := set.CombinedOutput(); err != nil {
 		t.Fatalf("passwd command: %v %s", err, out)
 	}
-	cmd := hubCommand(t, "serve", "--db", db, "--listen", "127.0.0.1:0")
+	cmd := hubCommand(t, "serve", "--db", db, "--listen", "127.0.0.1:0", "--offline-after", "45s")
 	output := &commandOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {
@@ -117,6 +119,7 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 }
 
 func TestUsageListsPasswd(t *testing.T) {
+	t.Parallel()
 	output, err := hubCommand(t).CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "passwd") {
 		t.Fatalf("usage omitted passwd: err=%v output=%s", err, output)
@@ -127,17 +130,18 @@ func TestUsageListsPasswd(t *testing.T) {
 }
 
 func TestSecondInterruptTerminatesWhileDraining(t *testing.T) {
+	t.Parallel()
 	checkRepeatedSignalDuringDrain(t, syscall.SIGINT)
 }
 
 func TestRepeatedTerminationCompletesDrain(t *testing.T) {
+	t.Parallel()
 	checkRepeatedSignalDuringDrain(t, syscall.SIGTERM)
 }
 
 func checkRepeatedSignalDuringDrain(t *testing.T, sig syscall.Signal) {
 	t.Helper()
-	t.Setenv("HERON_OFFLINE_AFTER", "30s")
-	cmd := hubCommand(t, "serve", "--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0")
+	cmd := hubCommand(t, "serve", "--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0", "--offline-after", "30s")
 	output := &commandOutput{}
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {

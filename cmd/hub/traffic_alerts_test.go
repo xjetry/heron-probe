@@ -14,6 +14,7 @@ import (
 )
 
 func TestTrafficStartupLoadsBeforeEvaluating(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC))
 	s, err := store.Open(filepath.Join(t.TempDir(), "hub.db"), clk, slog.Default(), store.MigrateSchema)
 	if err != nil {

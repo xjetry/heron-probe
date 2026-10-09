@@ -48,36 +48,81 @@ func (events serveEvents) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// 本包的用例默认并行（t.Parallel）。一个用例能并行的前提，缺一条就不加并写明原因：
+//   - 不与别的用例共享 hub、Store 或假时钟：进程内的 hub 经 startTestHub 起在自己的 t.TempDir 里，子进程经 hubCommand；
+//   - 不用 t.Setenv：serve 的每个 flag 都读 HERON_<FLAG>，环境变量是进程级的，所以夹具一律用 flag 传配置；
+//   - 不改包级可变状态（localtimePath、os.Args），断言不以进程级计数（runtime.NumGoroutine）为基线；
+//   - 断言里的耗时阈值（上界或比值）远大于负载能造成的停顿：负载下一次调度停顿可达几十毫秒，阈值在这个量级的
+//     不并行；阈值在百毫秒以上且比被量操作的正常耗时大两个数量级的，或只用来区分"等满了某个超时"与"没等"的
+//     （如 drainTimeout，缺陷路径至少要等满它），可以并行。
+//
+// 不并行的用例在 go test 里先于全部并行用例串行跑完，两类不会重叠。
 func startTestHub(t *testing.T, db string, clk clock.Clock, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
 	return startTestHubWithTTL(t, db, clk, "45s", flags...)
 }
 
+// backgroundRun 是在协程里跑、直到被取消才返回的 serve（runServeWith 或 hub.run）。
+type backgroundRun struct {
+	cancel   context.CancelFunc
+	finished chan struct{} // run 返回时关闭
+	result   error         // finished 关闭之后才可读
+	once     sync.Once
+}
+
+// runInBackground 在协程里跑 run，并把 stop 注册成 t.Cleanup。serve 的库文件写在调用方给的目录里（通常是 t.TempDir），
+// TempDir 的清理删整个目录；serve 还在跑时，删除与它新建的文件（-wal、-shm）交错，清理以 "directory not empty" 失败。
+// t.Cleanup 后注册先运行，调用方在此之前建好的 TempDir 一定晚于这里的 stop 删除：用例不论从哪条路径返回（启动超时、
+// Fatal），都先停 serve、等它退出，再删目录。
+func runInBackground(t *testing.T, run func(context.Context) error) *backgroundRun {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	b := &backgroundRun{cancel: cancel, finished: make(chan struct{})}
+	go func() { b.result = run(ctx); close(b.finished) }()
+	t.Cleanup(func() { b.stop(t) })
+	return b
+}
+
+// stop 取消 run 并等它返回，幂等；返回 run 是否已返回。等待有自己的上界，不与调用方等启动的时间共用：启动慢不会
+// 挤掉等退出的时间。
+func (b *backgroundRun) stop(t *testing.T) bool {
+	b.once.Do(func() {
+		b.cancel()
+		select {
+		case <-b.finished:
+			if b.result != nil {
+				t.Errorf("serve exit: %v", b.result)
+			}
+		case <-time.After(testwait.Bound):
+			t.Error("serve did not join background loops")
+		}
+	})
+	select {
+	case <-b.finished:
+		return true
+	default:
+		return false
+	}
+}
+
+// TTL 经 --offline-after 给出而不经 HERON_OFFLINE_AFTER：t.Setenv 的用例不能并行，而 flag 与环境变量走同一条
+// applyFlagEnv 规则，hub 看到的 TTL 相同；环境变量这条来源由 serve_env_test.go 的用例单独核对。
 func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
-	t.Setenv("HERON_OFFLINE_AFTER", ttl)
-	ctx, cancel := context.WithCancel(context.Background())
 	events := make(serveEvents, 128)
-	done := make(chan struct{})
-	var result error
-	args := append([]string{"--db", db, "--listen", "127.0.0.1:0"}, flags...)
-	go func() { result = runServeWith(ctx, args, clk, slog.New(slog.NewJSONHandler(events, nil))); close(done) }()
+	args := append([]string{"--db", db, "--listen", "127.0.0.1:0", "--offline-after", ttl}, flags...)
+	serve := runInBackground(t, func(ctx context.Context) error {
+		return runServeWith(ctx, args, clk, slog.New(slog.NewJSONHandler(events, nil)))
+	})
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
 			// 从 cancel 起算。空闲关停若总是等满排空超时，会在 drainTimeout 时返回且 result 仍可能为 nil。
 			canceled := time.Now()
-			cancel()
-			select {
-			case <-done:
-				if result != nil {
-					t.Errorf("serve exit: %v", result)
-				}
+			if serve.stop(t) {
 				if elapsed := time.Since(canceled); elapsed >= drainTimeout {
 					t.Errorf("idle shutdown took %v since cancel, want < %v", elapsed, drainTimeout)
 				}
-			case <-time.After(testwait.Bound):
-				t.Error("serve did not join background loops")
 			}
 		})
 	}
@@ -94,8 +139,8 @@ func startTestHubWithTTL(t *testing.T, db string, clk clock.Clock, ttl string, f
 				}
 				return "http://" + addr, events, stop
 			}
-		case <-done:
-			t.Fatalf("serve stopped before listening: %v", result)
+		case <-serve.finished:
+			t.Fatalf("serve stopped before listening: %v", serve.result)
 		case <-timer.C:
 			t.Fatal("serve did not bind a listener")
 		}
@@ -122,16 +167,15 @@ func (b *lockedBuffer) String() string {
 // scripts/e2e.sh 从启动行按整秒读出 ttl、offline_sweep 与 delivery_retry_wait 推出告警等待上限。这里用
 // runServe 同一个 newServeLogger 装配日志，按脚本同形的 testlog.WholeSeconds 取值再与常量比较：字段缺失、
 // 改名、不再是整秒写法或不跟常量走时 make ci 先红，而不是等到 e2e 才停下。
+//
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
 func TestServeStartupLineStatesAlertTiming(t *testing.T) {
 	t.Setenv("HERON_OFFLINE_AFTER", "12s")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	out := &lockedBuffer{}
-	done := make(chan error, 1)
 	args := []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0"}
-	go func() {
-		done <- runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), newServeLogger(out))
-	}()
+	serve := runInBackground(t, func(ctx context.Context) error {
+		return runServeWith(ctx, args, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), newServeLogger(out))
+	})
 	testwait.Until(t, 10*time.Millisecond, func() bool { return strings.Contains(out.String(), `msg="hub listening"`) }, "no startup line in %v", testwait.When(out.String))
 	for _, f := range []struct {
 		key  string
@@ -146,18 +190,11 @@ func TestServeStartupLineStatesAlertTiming(t *testing.T) {
 			t.Errorf("startup line: %s read as %v (ok=%v), want whole seconds equal to %v; log:\n%s", f.key, got, ok, f.want, out.String())
 		}
 	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve exit: %v", err)
-		}
-	case <-time.After(testwait.Bound):
-		t.Fatal("serve did not stop")
-	}
+	serve.stop(t)
 }
 
 func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	old, newPassword := "initial sufficiently long password", "replacement sufficiently long password"
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, old+"\n"), io.Discard); err != nil {
@@ -240,6 +277,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 
 // 主题管理无需额外域名参数；public-dir 只限制启用，不使已安装主题失去管理入口。
 func TestServeThemesAreAvailableWithoutOriginConfiguration(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("site"), 0o644); err != nil {
 		t.Fatal(err)
@@ -287,6 +325,7 @@ func TestServeThemesAreAvailableWithoutOriginConfiguration(t *testing.T) {
 }
 
 func TestServeRunsMaintenanceWithConfiguredRetention(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "storage health retention check password"
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
@@ -392,6 +431,7 @@ pruned:
 }
 
 func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
+	t.Parallel()
 	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
@@ -452,6 +492,7 @@ func TestShutdownHTTPWaitsForHandlersAfterClosingConnections(t *testing.T) {
 }
 
 func TestServeRejectsUnknownTimezoneBeforeListening(t *testing.T) {
+	t.Parallel()
 	err := runServeWith(context.Background(), []string{"--db", filepath.Join(t.TempDir(), "hub.db"), "--listen", "127.0.0.1:0", "--timezone", "Mars/Olympus"},
 		clock.NewFake(time.Now()), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err == nil || !strings.Contains(err.Error(), "--timezone") {
@@ -463,6 +504,7 @@ func TestServeRejectsUnknownTimezoneBeforeListening(t *testing.T) {
 // 两个刷出循环（traffic.Book.Run、ingest 的 RunFlusher）都在取消时把内存里的全部状态写出后才返回，
 // run 等它们返回才关库。
 func TestServeFlushesTrafficOnShutdown(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	password := "initial sufficiently long password"
 	if err := runPasswdWith([]string{"--db", db}, pipeWith(t, password+"\n"), io.Discard); err != nil {
@@ -520,6 +562,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	}
 }
 
+// 不并行：用 t.Setenv 并改包级的 localtimePath，二者都是进程级状态，并行的进程内 hub 解析时区时会读到它们。
 func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
 	t.Setenv("TZ", "")
 	old := localtimePath
@@ -542,6 +585,7 @@ func TestServeWarnsWhenLocalTimezoneCannotBeResolved(t *testing.T) {
 // max-age 只有 Public.Handler 的挂载点中间件会写，而它与限流同在一条链上（链内顺序由 api 包的测试钉住）；
 // Public 实现了生成的 handler 接口，挂成裸 connect 处理器也能编译，拿到这个头才证明 serve 挂的是 Handler()。
 func TestServeMountsPublicService(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 	resp, err := http.Get(url + "/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
@@ -564,6 +608,7 @@ func TestServeMountsPublicService(t *testing.T) {
 // web.PublicHandler 逐字节相同。面板与公开页的应答总是不同（构建过是各自的 index.html，没构建是各自的说明页），
 // 所以无论是否构建过，把 / 挂成面板或别的处理器都会在这里现形。
 func TestServeMountsBuiltinPublicPageAtRoot(t *testing.T) {
+	t.Parallel()
 	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
 	resp, err := http.Get(url + "/nodes/3")
 	if err != nil {
@@ -583,6 +628,7 @@ func TestServeMountsBuiltinPublicPageAtRoot(t *testing.T) {
 
 // 替换目录在打开数据库之前核对：配置有误时 hub 不留下任何副作用。
 func TestServeRejectsPublicDirWithoutIndexBeforeOpeningTheDatabase(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	dir := t.TempDir()
 	err := runServeWith(context.Background(), []string{"--db", db, "--listen", "127.0.0.1:0", "--public-dir", dir},
@@ -597,6 +643,7 @@ func TestServeRejectsPublicDirWithoutIndexBeforeOpeningTheDatabase(t *testing.T)
 
 // 替换目录只接管 /：面板与 RPC 路径的路由优先级更高，目录里同名的文件遮蔽不了它们。
 func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for name, content := range map[string]string{
 		"index.html":                     "custom site",
@@ -638,6 +685,7 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 
 // public-dir 是显式选择的受信页面；即使数据库保留已启用主题，也不能绕过该选择暴露第三方主题文件。
 func TestServePublicDirOverridesStoredTheme(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("custom site"), 0o644); err != nil {
 		t.Fatal(err)

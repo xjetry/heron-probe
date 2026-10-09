@@ -25,6 +25,7 @@ import (
 // CLI 的 SQL 健康行与 GetStorageStats 的响应出自同一份 store.StorageStats：同一个库上，行数与顺序和响应一一对应、
 // 数值相等。响应经 API token 取得，也钉住只读口径可以调用它。
 func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	st, err := store.Open(db, clk, slog.Default(), store.MigrateSchema)

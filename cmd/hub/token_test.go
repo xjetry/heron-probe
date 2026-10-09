@@ -30,6 +30,7 @@ func seedTokens(t *testing.T, db string, names ...string) []store.APIToken {
 }
 
 func TestTokenListAndRevoke(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	toks := seedTokens(t, db, "ci", "laptop")
 	var out, errOut bytes.Buffer
@@ -59,6 +60,7 @@ func TestTokenListAndRevoke(t *testing.T) {
 }
 
 func TestReviewAPITokensAfterPasswordChange(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	seedTokens(t, db, "ci")
 	st, _, err := openOffline(db, false)
@@ -96,6 +98,7 @@ func TestReviewAPITokensAfterPasswordChange(t *testing.T) {
 }
 
 func TestReviewAPITokensQuotesDBPathForShell(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	seedTokens(t, db, "ci")
 	st, _, err := openOffline(db, false)
