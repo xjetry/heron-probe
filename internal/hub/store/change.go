@@ -26,10 +26,162 @@ type Operation struct {
 	CommittedAt                    int64
 }
 
+// ChangeKind 是变更目标的资源种类。同种资源共用快照列白名单、凭据摘要与 ResourceID 的分配来源（changeKinds）；
+// String 的取值进入版本摘要与快照的主行键，改名会让进行中的预览全部失配、审计里的 JSON 键漂移。
+type ChangeKind uint8
+
+const (
+	ChangeNode ChangeKind = iota + 1
+	ChangeProbe
+	ChangeAlert
+	ChangeWindow
+	ChangeUpdate
+	ChangeTag
+)
+
+func (k ChangeKind) String() string {
+	switch k {
+	case ChangeNode:
+		return "node"
+	case ChangeProbe:
+		return "probe"
+	case ChangeAlert:
+		return "alert"
+	case ChangeWindow:
+		return "window"
+	case ChangeUpdate:
+		return "update"
+	case ChangeTag:
+		return "tag"
+	}
+	return fmt.Sprintf("ChangeKind(%d)", uint8(k))
+}
+
+// ChangeAction 是一次类型化变更的操作，与 ExecuteChangeRequest.change 的 oneof 分支一一对应。零值非法：
+// 未登记的操作在 WithChange 处 panic、在 ChangeVersion 处报错，不会落到某个默认分支被当作合法操作执行。
+type ChangeAction uint8
+
+const (
+	ActionCreateNode ChangeAction = iota + 1
+	ActionUpdateNode
+	ActionDeleteNode
+	ActionRotateNodeToken
+	ActionOpenRegisterWindow
+	ActionCloseRegisterWindow
+	ActionSaveProbeTask
+	ActionDeleteProbeTask
+	ActionSaveAlertRule
+	ActionDeleteAlertRule
+	ActionStartUpdate
+	ActionCancelUpdate
+	ActionDeleteTag
+)
+
+// String 是 operation.action 列与回执里的动作名：已持久化的回执按它展示，改名会让新旧回执的同一操作名字不同。
+func (a ChangeAction) String() string {
+	if spec, ok := changeActions[a]; ok {
+		return spec.name
+	}
+	return fmt.Sprintf("ChangeAction(%d)", uint8(a))
+}
+
+// Kind 与 Permission 都由登记表推出，Change 不另存一份，二者无法与操作失配。未登记的操作返回零值。
+func (a ChangeAction) Kind() ChangeKind { return changeActions[a].kind }
+
+func (a ChangeAction) Permission() Permission { return changeActions[a].permission }
+
+type changeActionSpec struct {
+	name       string
+	kind       ChangeKind
+	permission Permission
+	// creates 的操作在写之前没有资源身份：ResourceID 必须为 0，写后由种类的 sequence 填入。
+	creates bool
+	// authorizeAfterWrite 的操作在写后、ResourceID 已知时再做一次资源授权：保存可能新建资源或改变它的作用域，
+	// 写前只能裁决旧状态与请求里的选择器。
+	authorizeAfterWrite bool
+}
+
+// changeActions 是类型化变更的唯一登记表：changeWrite、snapshot、ChangeVersion 与 api 的 prepareChange 都只从这里取
+// 操作的种类、权限与写后授权，新增 oneof 分支必须在这里登记，否则 WithChange 拒绝它。
+var changeActions = map[ChangeAction]changeActionSpec{
+	ActionCreateNode:          {name: "create_node", kind: ChangeNode, permission: PermissionCreate, creates: true},
+	ActionUpdateNode:          {name: "update_node", kind: ChangeNode, permission: PermissionConfigure},
+	ActionDeleteNode:          {name: "delete_node", kind: ChangeNode, permission: PermissionDelete},
+	ActionRotateNodeToken:     {name: "rotate_node_token", kind: ChangeNode, permission: PermissionRotate},
+	ActionOpenRegisterWindow:  {name: "open_register_window", kind: ChangeWindow, permission: PermissionRegister},
+	ActionCloseRegisterWindow: {name: "close_register_window", kind: ChangeWindow, permission: PermissionRegister},
+	ActionSaveProbeTask:       {name: "save_probe_task", kind: ChangeProbe, permission: PermissionConfigure, authorizeAfterWrite: true},
+	ActionDeleteProbeTask:     {name: "delete_probe_task", kind: ChangeProbe, permission: PermissionConfigure, authorizeAfterWrite: true},
+	ActionSaveAlertRule:       {name: "save_alert_rule", kind: ChangeAlert, permission: PermissionConfigure, authorizeAfterWrite: true},
+	ActionDeleteAlertRule:     {name: "delete_alert_rule", kind: ChangeAlert, permission: PermissionConfigure, authorizeAfterWrite: true},
+	ActionStartUpdate:         {name: "start_update", kind: ChangeUpdate, permission: PermissionUpdate},
+	ActionCancelUpdate:        {name: "cancel_update", kind: ChangeUpdate, permission: PermissionUpdate},
+	ActionDeleteTag:           {name: "delete_tag", kind: ChangeTag, permission: PermissionConfigure},
+}
+
+type snapshotQuery struct{ name, sql string }
+
+type changeKindSpec struct {
+	// row 读资源主行，快照里以种类名为键；relations 读从属关系，各以自己的名字为键。
+	row       string
+	relations []snapshotQuery
+	// secret 读凭据哈希，只进入版本摘要、不进快照：换发凭据必须改变版本，审计与预览不能带出哈希。
+	secret string
+	// sequence 读 AUTOINCREMENT 刚分配的身份；为空的种类没有由写分配的资源身份。
+	sequence string
+}
+
+// 白名单列同时决定预览和审计，不从原始请求或响应复制内容；凭据哈希只进入版本摘要。
+var changeKinds = map[ChangeKind]changeKindSpec{
+	ChangeNode: {
+		row:       `SELECT id,name,public,note,traffic_reset_day,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark,traffic_quota_bytes,traffic_quota_mode FROM node WHERE id=?`,
+		relations: []snapshotQuery{{"tags", `SELECT t.name FROM node_tag n JOIN tag t ON t.id=n.tag_id WHERE n.node_id=? ORDER BY t.name_fold`}},
+		secret:    "SELECT hex(token_hash) FROM node WHERE id=?",
+		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='node'",
+	},
+	ChangeProbe: {
+		row:       "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id FROM probe_task WHERE id=?",
+		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}},
+		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='probe_task'",
+	},
+	ChangeAlert: {
+		row:       "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold FROM alert_rule WHERE id=?",
+		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM alert_rule_node WHERE rule_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM alert_rule_tag WHERE rule_id=? ORDER BY tag_id"}, {"channels", "SELECT channel_id FROM alert_rule_channel WHERE rule_id=? ORDER BY channel_id"}},
+		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='alert_rule'",
+	},
+	ChangeWindow: {
+		row:    "SELECT owner_id,expires_at,remaining FROM register_window WHERE owner_id=?",
+		secret: "SELECT hex(key_hash) FROM register_window WHERE owner_id=?",
+	},
+	ChangeUpdate: {
+		row: "SELECT node_id,data FROM node_update WHERE node_id=?",
+	},
+	ChangeTag: {
+		row:       "SELECT id,name FROM tag WHERE id=?",
+		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM node_tag WHERE tag_id=? ORDER BY node_id"}},
+	},
+}
+
+var errUnregisteredAction = errors.New("change action is not registered")
+
+// spec 取操作与它所属种类的登记；两张表任一缺项都是装配错误。
+func (c *Change) spec() (changeActionSpec, changeKindSpec, error) {
+	action, ok := changeActions[c.Action]
+	if !ok {
+		return changeActionSpec{}, changeKindSpec{}, fmt.Errorf("%w: %s", errUnregisteredAction, c.Action)
+	}
+	kind, ok := changeKinds[action.kind]
+	if !ok {
+		return changeActionSpec{}, changeKindSpec{}, fmt.Errorf("%w: %s has no kind %s", errUnregisteredAction, c.Action, action.kind)
+	}
+	return action, kind, nil
+}
+
+// Change 携带一次类型化变更穿过 handler 到达 store 的写边界。Action 是操作身份；内嵌的 Operation.Action 是
+// 回执里持久化的动作名，由写边界按 Action.String() 填写，调用方不设置它。
 type Change struct {
 	Operation
-	Kind            string
-	Permission      Permission
+	Action          ChangeAction
 	Preview         bool
 	ExpectedVersion string
 	Version         string
@@ -41,7 +193,11 @@ type Change struct {
 
 type changeKey struct{}
 
+// WithChange 把 c 装进 ctx；未登记的操作是装配错误，在这里 panic 而不是等到写边界才发现。
 func WithChange(ctx context.Context, c *Change) context.Context {
+	if _, _, err := c.spec(); err != nil {
+		panic("store.WithChange: " + err.Error())
+	}
 	return context.WithValue(ctx, changeKey{}, c)
 }
 
@@ -49,6 +205,10 @@ func WithChange(ctx context.Context, c *Change) context.Context {
 // write 的契约表示本次事务没有应用，auth、探测和告警缓存因此不会发布回滚后的状态。
 func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) error) func(*sql.Tx) error {
 	return func(tx *sql.Tx) error {
+		action, kind, err := c.spec()
+		if err != nil {
+			return err
+		}
 		token, err := c.authorizePrincipal(ctx, tx)
 		if err != nil {
 			c.Err = err
@@ -73,6 +233,7 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 			c.Err = err
 			return err
 		}
+		c.Operation.Action = c.Action.String()
 		before, version, err := c.snapshot(tx)
 		if err != nil {
 			return err
@@ -86,13 +247,13 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		if err := fn(tx); err != nil {
 			return err
 		}
-		if c.ResourceID == 0 && (c.Kind == "node" || c.Kind == "probe" || c.Kind == "alert") {
-			table := map[string]string{"node": "node", "probe": "probe_task", "alert": "alert_rule"}[c.Kind]
-			if err := tx.QueryRow("SELECT seq FROM sqlite_sequence WHERE name = ?", table).Scan(&c.ResourceID); err != nil {
+		// ResourceID 为 0 的成功写只能是建资源（建节点，或不带 id 的保存探测任务、告警规则）：身份在写里才分配。
+		if c.ResourceID == 0 && kind.sequence != "" {
+			if err := tx.QueryRow(kind.sequence).Scan(&c.ResourceID); err != nil {
 				return err
 			}
 		}
-		if c.Kind == "probe" || c.Kind == "alert" {
+		if action.authorizeAfterWrite {
 			if err := c.authorize(ctx, tx); err != nil {
 				c.Err = err
 				return err
@@ -112,7 +273,7 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		if _, err := tx.Exec("UPDATE operation SET before_json='',after_json='' WHERE committed_at < ? AND (before_json!='' OR after_json!='')", c.CommittedAt-90*24*60*60); err != nil {
 			return err
 		}
-		_, err = tx.Exec(`INSERT INTO operation (owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at) VALUES (?,?,?,?,?,?,?,?,?)`, operationOwner(ctx), c.OwnerID, c.RequestID, c.RequestHash, c.Action, c.ResourceID, c.BeforeJSON, c.AfterJSON, c.CommittedAt)
+		_, err = tx.Exec(`INSERT INTO operation (owner_key,owner_id,request_id,request_hash,action,resource_id,before_json,after_json,committed_at) VALUES (?,?,?,?,?,?,?,?,?)`, operationOwner(ctx), c.OwnerID, c.RequestID, c.RequestHash, c.Operation.Action, c.ResourceID, c.BeforeJSON, c.AfterJSON, c.CommittedAt)
 		return err
 	}
 }
@@ -137,7 +298,7 @@ func (c *Change) authorizePrincipal(ctx context.Context, tx *sql.Tx) (*APIToken,
 	if err != nil {
 		return nil, err
 	}
-	if t.Identity != p.Identity || !t.Allows(c.Permission) {
+	if t.Identity != p.Identity || !t.Allows(c.Action.Permission()) {
 		return nil, ErrPermission
 	}
 	return &t, nil
@@ -151,47 +312,47 @@ func (c *Change) authorizeScope(tx *sql.Tx, t *APIToken) error {
 		return ErrPermission
 	}
 	if c.ReferenceTask != 0 {
-		if err := authorizeRule(tx, t.TokenGrant, "probe", c.ReferenceTask); err != nil {
+		if err := authorizeRule(tx, t.TokenGrant, ChangeProbe, c.ReferenceTask); err != nil {
 			return err
 		}
 	}
-	switch c.Kind {
-	case "node":
-		if c.Permission == PermissionCreate {
+	switch kind := c.Action.Kind(); kind {
+	case ChangeNode:
+		if c.Action.Permission() == PermissionCreate {
 			return nil
 		}
 		if !t.AllowsNode(c.ResourceID) {
 			return ErrPermission
 		}
-	case "update":
+	case ChangeUpdate:
 		if !t.AllowsNode(c.ResourceID) {
 			return ErrPermission
 		}
-	case "window":
+	case ChangeWindow:
 		if c.ResourceID != t.ID {
 			return ErrPermission
 		}
-	case "tag":
+	case ChangeTag:
 		if !t.AllNodes {
 			return ErrPermission
 		}
-	case "probe", "alert":
+	case ChangeProbe, ChangeAlert:
 		if c.ResourceID == 0 {
 			return nil
 		}
-		return authorizeRule(tx, t.TokenGrant, c.Kind, c.ResourceID)
+		return authorizeRule(tx, t.TokenGrant, kind, c.ResourceID)
 	default:
 		return ErrPermission
 	}
 	return nil
 }
 
-func authorizeRule(tx *sql.Tx, g TokenGrant, kind string, id int64) error {
+func authorizeRule(tx *sql.Tx, g TokenGrant, kind ChangeKind, id int64) error {
 	if g.AllNodes {
 		return nil
 	}
 	table, key := "probe_task", "task_id"
-	if kind == "alert" {
+	if kind == ChangeAlert {
 		table, key = "alert_rule", "rule_id"
 	}
 	var all bool
@@ -214,43 +375,24 @@ func authorizeRule(tx *sql.Tx, g TokenGrant, kind string, id int64) error {
 	if all || tags != 0 || !g.AllowsSelector(false, nil, ids) {
 		return ErrPermission
 	}
-	if kind == "alert" {
+	if kind == ChangeAlert {
 		var task sql.NullInt64
 		if err := tx.QueryRow("SELECT task_id FROM alert_rule WHERE id = ?", id).Scan(&task); err != nil {
 			return err
 		}
 		if task.Valid && task.Int64 != 0 {
-			return authorizeRule(tx, g, "probe", task.Int64)
+			return authorizeRule(tx, g, ChangeProbe, task.Int64)
 		}
 	}
 	return nil
 }
 
-type snapshotQuery struct{ name, sql string }
-
-// 白名单列同时决定预览和审计，不从原始请求或响应复制内容；凭据哈希只进入版本摘要。
 func (c *Change) snapshot(tx *sql.Tx) (string, string, error) {
-	var queries []snapshotQuery
-	var secretQuery string
-	switch c.Kind {
-	case "node":
-		queries = []snapshotQuery{{"node", `SELECT id,name,public,note,traffic_reset_day,offline_grace_s,price,currency,billing_cycle,expires_on,auto_renew,country_pin,maintenance,public_remark,traffic_quota_bytes,traffic_quota_mode FROM node WHERE id=?`},
-			{"tags", `SELECT t.name FROM node_tag n JOIN tag t ON t.id=n.tag_id WHERE n.node_id=? ORDER BY t.name_fold`}}
-		secretQuery = "SELECT hex(token_hash) FROM node WHERE id=?"
-	case "probe":
-		queries = []snapshotQuery{{"probe", "SELECT id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,dns_server,cert_spki_sha256,config_id FROM probe_task WHERE id=?"}, {"nodes", "SELECT node_id FROM probe_task_node WHERE task_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM probe_task_tag WHERE task_id=? ORDER BY tag_id"}}
-	case "alert":
-		queries = []snapshotQuery{{"alert", "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold FROM alert_rule WHERE id=?"}, {"nodes", "SELECT node_id FROM alert_rule_node WHERE rule_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM alert_rule_tag WHERE rule_id=? ORDER BY tag_id"}, {"channels", "SELECT channel_id FROM alert_rule_channel WHERE rule_id=? ORDER BY channel_id"}}
-	case "window":
-		queries = []snapshotQuery{{"window", "SELECT owner_id,expires_at,remaining FROM register_window WHERE owner_id=?"}}
-		secretQuery = "SELECT hex(key_hash) FROM register_window WHERE owner_id=?"
-	case "update":
-		queries = []snapshotQuery{{"update", "SELECT node_id,data FROM node_update WHERE node_id=?"}}
-	case "tag":
-		queries = []snapshotQuery{{"tag", "SELECT id,name FROM tag WHERE id=?"}, {"nodes", "SELECT node_id FROM node_tag WHERE tag_id=? ORDER BY node_id"}}
-	default:
-		return "", "", ErrPermission
+	action, spec, err := c.spec()
+	if err != nil {
+		return "", "", err
 	}
+	queries := append([]snapshotQuery{{action.kind.String(), spec.row}}, spec.relations...)
 	data := map[string]any{}
 	for _, q := range queries {
 		rows, err := tx.Query(q.sql, c.ResourceID)
@@ -288,16 +430,19 @@ func (c *Change) snapshot(tx *sql.Tx) (string, string, error) {
 		return "", "", err
 	}
 	var secret string
-	if secretQuery != "" {
-		if err := tx.QueryRow(secretQuery, c.ResourceID).Scan(&secret); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if spec.secret != "" {
+		if err := tx.QueryRow(spec.secret, c.ResourceID).Scan(&secret); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", "", err
 		}
 	}
-	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s:%s", c.Kind, c.ResourceID, b, secret)))
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s:%s", action.kind, c.ResourceID, b, secret)))
 	return string(b), hex.EncodeToString(h[:]), nil
 }
 
 func (s *Store) ChangeVersion(ctx context.Context, c *Change) (string, error) {
+	if _, _, err := c.spec(); err != nil {
+		return "", err
+	}
 	tx, err := s.r.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err

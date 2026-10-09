@@ -255,7 +255,7 @@ func (s *Store) listAlertRules(ctx context.Context, visibleOnly bool) ([]AlertRu
 	if p, ok := Principal(ctx); ok && visibleOnly {
 		visible := out[:0]
 		for _, r := range out {
-			if err := authorizeRule(tx, p.TokenGrant, "alert", r.ID); errors.Is(err, ErrPermission) {
+			if err := authorizeRule(tx, p.TokenGrant, ChangeAlert, r.ID); errors.Is(err, ErrPermission) {
 				continue
 			} else if err != nil {
 				return nil, err
@@ -642,7 +642,7 @@ func checkAlertReferences(ctx context.Context, tx *sql.Tx, query string, kind Ob
 			return err
 		}
 		if bearer {
-			if err := authorizeRule(tx, p.TokenGrant, "alert", ref.ID); errors.Is(err, ErrPermission) {
+			if err := authorizeRule(tx, p.TokenGrant, ChangeAlert, ref.ID); errors.Is(err, ErrPermission) {
 				used.HiddenRules = true
 				continue
 			} else if err != nil {

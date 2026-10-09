@@ -84,7 +84,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 	}
 	newChange := func() *Change {
 		t.Helper()
-		c := &Change{Operation: Operation{RequestID: "commit-retry", RequestHash: "same", Action: "create_node"}, Kind: "node", Permission: PermissionCreate}
+		c := &Change{Operation: Operation{RequestID: "commit-retry", RequestHash: "same"}, Action: ActionCreateNode}
 		var err error
 		c.ExpectedVersion, err = s.ChangeVersion(t.Context(), c)
 		if err != nil {
@@ -129,7 +129,7 @@ func TestChangeRechecksRevocationInsideTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithPrincipal(t.Context(), p)
-	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", Action: "rotate_node_token", ResourceID: node}, Kind: "node", Permission: PermissionRotate}
+	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "rotate", RequestHash: "x", ResourceID: node}, Action: ActionRotateNodeToken}
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].ID != node {
 		t.Fatalf("registration did not grant node: %+v %v", rows, err)
 	}
-	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "update", RequestHash: "x", Action: "start_update", ResourceID: node}, Kind: "update", Permission: PermissionUpdate}
+	c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "update", RequestHash: "x", ResourceID: node}, Action: ActionStartUpdate}
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	ctx := t.Context()
 	create := func(id string, b byte) *Change {
 		t.Helper()
-		c := &Change{Operation: Operation{RequestID: id, RequestHash: id, Action: "create_node"}, Kind: "node", Permission: PermissionCreate}
+		c := &Change{Operation: Operation{RequestID: id, RequestHash: id}, Action: ActionCreateNode}
 		var err error
 		c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 		if err != nil {
@@ -234,7 +234,7 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	if err != nil || old.BeforeJSON != "" || old.AfterJSON != "" {
 		t.Fatalf("restore resurrected expired audit details: %+v %v", old, err)
 	}
-	retry := &Change{Operation: Operation{RequestID: "first", RequestHash: "first", Action: "create_node"}, Kind: "node", Permission: PermissionCreate, ExpectedVersion: first.ExpectedVersion}
+	retry := &Change{Operation: Operation{RequestID: "first", RequestHash: "first"}, Action: ActionCreateNode, ExpectedVersion: first.ExpectedVersion}
 	if _, _, err := reopened.CreateNode(WithChange(ctx, retry), "duplicate", Billing{}, hash(3)); !errors.Is(err, ErrReplay) {
 		t.Fatalf("durable retry was executed: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAgenticReplayAfterScopeRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := WithPrincipal(t.Context(), p)
-	c := Change{Operation: Operation{OwnerID: p.ID, RequestID: "delete", RequestHash: "delete", Action: "delete_node", ResourceID: node}, Kind: "node", Permission: PermissionDelete}
+	c := Change{Operation: Operation{OwnerID: p.ID, RequestID: "delete", RequestHash: "delete", ResourceID: node}, Action: ActionDeleteNode}
 	c.ExpectedVersion, err = s.ChangeVersion(ctx, &c)
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +282,7 @@ func TestAgenticRestoreSeparatesReusedTokenIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 		ctx := WithPrincipal(t.Context(), p)
-		c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "same-key", RequestHash: name, Action: "create_node"}, Kind: "node", Permission: PermissionCreate}
+		c := &Change{Operation: Operation{OwnerID: p.ID, RequestID: "same-key", RequestHash: name}, Action: ActionCreateNode}
 		c.ExpectedVersion, err = s.ChangeVersion(ctx, c)
 		if err != nil {
 			t.Fatal(err)

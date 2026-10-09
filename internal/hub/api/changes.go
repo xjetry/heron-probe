@@ -64,7 +64,7 @@ func (s *Service) ExecuteChange(ctx context.Context, req *connect.Request[heronv
 		return nil, err
 	}
 	c.OwnerID, c.RequestID, c.Preview = store.OwnerID(ctx), m.RequestId, m.Preview
-	if p, ok := store.Principal(ctx); ok && !p.Allows(c.Permission) {
+	if p, ok := store.Principal(ctx); ok && !p.Allows(c.Action.Permission()) {
 		return nil, changeError(store.ErrPermission)
 	}
 	// 幂等比较的是原始类型化意图，而非读取当前值补全后的替换请求。
@@ -152,10 +152,10 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 	var patch func() error
 	switch q := m.Change.(type) {
 	case *heronv1.ExecuteChangeRequest_CreateNode:
-		c.Action, c.Kind, c.Permission = "create_node", "node", store.PermissionCreate
+		c.Action = store.ActionCreateNode
 		call = invokeChange(s.CreateNode, q.CreateNode)
 	case *heronv1.ExecuteChangeRequest_UpdateNode:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "update_node", "node", store.PermissionConfigure, q.UpdateNode.GetId()
+		c.Action, c.ResourceID = store.ActionUpdateNode, q.UpdateNode.GetId()
 		call = invokeChange(s.UpdateNode, q.UpdateNode)
 		patch = func() error {
 			n, err := s.store.GetNode(ctx, c.ResourceID)
@@ -167,19 +167,19 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			return mergeChange(q.UpdateNode, base, m.GetUpdateMask().GetPaths(), "id", "billing.days_left")
 		}
 	case *heronv1.ExecuteChangeRequest_DeleteNode:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "delete_node", "node", store.PermissionDelete, q.DeleteNode.GetId()
+		c.Action, c.ResourceID = store.ActionDeleteNode, q.DeleteNode.GetId()
 		call = invokeChange(s.DeleteNode, q.DeleteNode)
 	case *heronv1.ExecuteChangeRequest_RotateNodeToken:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "rotate_node_token", "node", store.PermissionRotate, q.RotateNodeToken.GetId()
+		c.Action, c.ResourceID = store.ActionRotateNodeToken, q.RotateNodeToken.GetId()
 		call = invokeChange(s.RotateNodeToken, q.RotateNodeToken)
 	case *heronv1.ExecuteChangeRequest_OpenRegisterWindow:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "open_register_window", "window", store.PermissionRegister, store.OwnerID(ctx)
+		c.Action, c.ResourceID = store.ActionOpenRegisterWindow, store.OwnerID(ctx)
 		call = invokeChange(s.OpenRegisterWindow, q.OpenRegisterWindow)
 	case *heronv1.ExecuteChangeRequest_CloseRegisterWindow:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "close_register_window", "window", store.PermissionRegister, store.OwnerID(ctx)
+		c.Action, c.ResourceID = store.ActionCloseRegisterWindow, store.OwnerID(ctx)
 		call = invokeChange(s.CloseRegisterWindow, q.CloseRegisterWindow)
 	case *heronv1.ExecuteChangeRequest_SaveProbeTask:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "save_probe_task", "probe", store.PermissionConfigure, int64(q.SaveProbeTask.GetTask().GetId())
+		c.Action, c.ResourceID = store.ActionSaveProbeTask, int64(q.SaveProbeTask.GetTask().GetId())
 		call = invokeChange(s.SaveProbeTask, q.SaveProbeTask)
 		if c.ResourceID != 0 {
 			patch = func() error {
@@ -216,10 +216,10 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			}
 		}
 	case *heronv1.ExecuteChangeRequest_DeleteProbeTask:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "delete_probe_task", "probe", store.PermissionConfigure, int64(q.DeleteProbeTask.GetId())
+		c.Action, c.ResourceID = store.ActionDeleteProbeTask, int64(q.DeleteProbeTask.GetId())
 		call = invokeChange(s.DeleteProbeTask, q.DeleteProbeTask)
 	case *heronv1.ExecuteChangeRequest_SaveAlertRule:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "save_alert_rule", "alert", store.PermissionConfigure, q.SaveAlertRule.GetRule().GetId()
+		c.Action, c.ResourceID = store.ActionSaveAlertRule, q.SaveAlertRule.GetRule().GetId()
 		call = invokeChange(s.SaveAlertRule, q.SaveAlertRule)
 		if c.ResourceID != 0 {
 			patch = func() error {
@@ -239,22 +239,22 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			}
 		}
 	case *heronv1.ExecuteChangeRequest_DeleteAlertRule:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "delete_alert_rule", "alert", store.PermissionConfigure, q.DeleteAlertRule.GetId()
+		c.Action, c.ResourceID = store.ActionDeleteAlertRule, q.DeleteAlertRule.GetId()
 		call = invokeChange(s.DeleteAlertRule, q.DeleteAlertRule)
 	case *heronv1.ExecuteChangeRequest_StartUpdate:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "start_update", "update", store.PermissionUpdate, q.StartUpdate.GetNodeId()
+		c.Action, c.ResourceID = store.ActionStartUpdate, q.StartUpdate.GetNodeId()
 		if c.ResourceID <= 0 {
 			return nil, nil, nil, permissionDenied("ExecuteChange cannot update the hub")
 		}
 		call = invokeChange(s.StartUpdate, q.StartUpdate)
 	case *heronv1.ExecuteChangeRequest_CancelUpdate:
-		c.Action, c.Kind, c.Permission, c.ResourceID = "cancel_update", "update", store.PermissionUpdate, q.CancelUpdate.GetNodeId()
+		c.Action, c.ResourceID = store.ActionCancelUpdate, q.CancelUpdate.GetNodeId()
 		if c.ResourceID <= 0 {
 			return nil, nil, nil, permissionDenied("ExecuteChange cannot update the hub")
 		}
 		call = invokeChange(s.CancelUpdate, q.CancelUpdate)
 	case *heronv1.ExecuteChangeRequest_DeleteTag:
-		c.Action, c.Kind, c.Permission = "delete_tag", "tag", store.PermissionConfigure
+		c.Action = store.ActionDeleteTag
 		name, err := cleanTag("name", q.DeleteTag.GetName())
 		if err != nil {
 			return nil, nil, nil, err

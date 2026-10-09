@@ -924,7 +924,7 @@ func TestAgenticReceiptFailureRollsBackBeforePublication(t *testing.T) {
 }
 
 // 节点可编辑字段在 ExecuteChange 里有两张手写登记表：合并基底（prepareChange 从库里的节点构造的 UpdateNodeRequest）
-// 与变更快照的列白名单（store.Change.snapshot）。漏登一个字段有两种后果：只改别的字段时它被整体替换成零值；
+// 与变更快照的列白名单（store 的 changeKinds）。漏登一个字段有两种后果：只改别的字段时它被整体替换成零值；
 // 只改它自己时预期版本不变、审计前后相同。本用例按 UpdateNodeRequest 的描述符枚举每个字段，新增字段没有在这里
 // 给出取值就直接失败，迫使两张登记表与这里一起更新。
 func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
@@ -961,7 +961,7 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 			continue
 		}
 		if _, ok := values[name]; !ok {
-			t.Fatalf("UpdateNodeRequest.%s has no values here: register it in prepareChange's merge base, store.Change.snapshot and this test", name)
+			t.Fatalf("UpdateNodeRequest.%s has no values here: register it in prepareChange's merge base, the store changeKinds snapshot columns and this test", name)
 		}
 		names = append(names, name)
 	}
