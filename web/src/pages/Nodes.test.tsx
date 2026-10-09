@@ -11,6 +11,7 @@ import { withId as withIdLabel } from "../lib/ids";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 import { fillSegments, segmentsValue } from "../test/fields";
 import { expectEmptyState } from "../test/empty";
+import { objectContaining } from "../test/matchers";
 
 // 行菜单入口携带 id，同名节点仍能定位到各自的操作。
 const rowAction = (label: string, action: string) => {
@@ -101,7 +102,7 @@ describe("Nodes", () => {
     fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("radio", { name: "USD" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a", public: false, note: "保留", countryPin: "JP", tags: ["prod"], offlineGraceS: 90, trafficResetDay: 1, billing: expect.objectContaining({ price: "5", currency: "USD" }) }), expect.anything()));
+    await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 1n, name: "a", public: false, note: "保留", countryPin: "JP", tags: ["prod"], offlineGraceS: 90, trafficResetDay: 1, billing: objectContaining({ price: "5", currency: "USD" }) }), expect.anything()));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
@@ -474,9 +475,9 @@ describe("Nodes", () => {
     await screen.findByRole("link", { name: "current（#1）" });
     openRowAction("current（#1）", "编辑");
     expect({
-      name: (screen.getByLabelText("名称 current（#1）") as HTMLInputElement).value,
-      public: (screen.getByLabelText("公开 current（#1）") as HTMLInputElement).checked,
-      note: (screen.getByLabelText("备注 current（#1）") as HTMLInputElement).value,
+      name: screen.getByLabelText<HTMLInputElement>("名称 current（#1）").value,
+      public: screen.getByLabelText<HTMLInputElement>("公开 current（#1）").checked,
+      note: screen.getByLabelText<HTMLInputElement>("备注 current（#1）").value,
     }).toEqual({ name: "current", public: true, note: "current note" });
   });
 
@@ -571,12 +572,12 @@ describe("Nodes", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     await waitFor(() => expect(createNode).toHaveBeenCalledWith(expect.objectContaining({
       name: "c",
-      billing: expect.objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-01-31", autoRenew: false }),
+      billing: objectContaining({ price: "12.50", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-01-31", autoRenew: false }),
     }), expect.anything()));
     await screen.findByLabelText("节点 c（#3） 的 token");
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "完成" }));
     fireEvent.click(screen.getByRole("button", { name: "添加节点" }));
-    expect((screen.getByLabelText("价格 新节点") as HTMLInputElement).value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("价格 新节点").value).toBe("");
     expect(screen.getByRole("radio", { name: "未设置" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "无周期" })).toBeChecked();
     fireEvent.change(screen.getByLabelText("新节点名称"), { target: { value: "d" } });
@@ -706,7 +707,7 @@ describe("Nodes", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
       id: 1n, name: "a2", public: true, note: "changed note", publicRemark: "移动 CMI", trafficResetDay: 15,
-      billing: expect.objectContaining({ price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", autoRenew: true }),
+      billing: objectContaining({ price: "9", currency: "EUR", billingCycle: BillingCycle.QUARTERLY, expiresOn: "2026-12-01", autoRenew: true }),
     }), expect.anything()));
   });
 
@@ -805,7 +806,7 @@ describe("Nodes", () => {
       expect(within(currencies).getByRole("radio", { name: currency })).toBeChecked();
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
-        id: 1n, name: "a", billing: expect.objectContaining({ price: "12.50", currency, billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
+        id: 1n, name: "a", billing: objectContaining({ price: "12.50", currency, billingCycle: BillingCycle.YEARLY, expiresOn: "2027-01-31", autoRenew: true }),
       }), expect.anything()));
     });
 
@@ -819,13 +820,13 @@ describe("Nodes", () => {
       expect(current).toBeDisabled();
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "10" } });
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
-      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ billing: expect.objectContaining({ price: "10", currency: "TWD" }) }), expect.anything()));
+      await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ billing: objectContaining({ price: "10", currency: "TWD" }) }), expect.anything()));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       openRowAction("a（#1）", "编辑");
       fireEvent.click(screen.getByRole("radio", { name: "CNY" }));
       expect(screen.queryByRole("radio", { name: "TWD（当前值）" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
-      await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ billing: expect.objectContaining({ currency: "CNY" }) }), expect.anything()));
+      await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ billing: objectContaining({ currency: "CNY" }) }), expect.anything()));
     });
 
     it("编辑从节点当前的计费开始，清空之后提交的是空值", async () => {
@@ -835,11 +836,11 @@ describe("Nodes", () => {
       await screen.findByRole("link", { name: "a（#1）" });
       openRowAction("a（#1）", "编辑");
       expect({
-        price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
-        currency: (screen.getByRole("radio", { name: "EUR" }) as HTMLInputElement).checked,
-        cycle: (screen.getByRole("radio", { name: "每季" }) as HTMLInputElement).checked,
+        price: screen.getByLabelText<HTMLInputElement>("价格 a（#1）").value,
+        currency: screen.getByRole<HTMLInputElement>("radio", { name: "EUR" }).checked,
+        cycle: screen.getByRole<HTMLInputElement>("radio", { name: "每季" }).checked,
         expiresOn: segmentsValue("到期日 a（#1）"),
-        autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
+        autoRenew: screen.getByLabelText<HTMLInputElement>("自动续期 a（#1）").checked,
       }).toEqual({ price: "9", currency: true, cycle: true, expiresOn: "2026-12-01", autoRenew: true });
       fireEvent.change(screen.getByLabelText("价格 a（#1）"), { target: { value: "" } });
       fireEvent.click(screen.getByRole("radio", { name: "未设置" }));
@@ -848,7 +849,7 @@ describe("Nodes", () => {
       fireEvent.click(screen.getByLabelText("自动续期 a（#1）"));
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({
-        id: 1n, billing: expect.objectContaining({ price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "", autoRenew: false }),
+        id: 1n, billing: objectContaining({ price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "", autoRenew: false }),
       }), expect.anything()));
     });
 
@@ -867,11 +868,11 @@ describe("Nodes", () => {
       expect(await screen.findByRole("alert")).toHaveTextContent(message);
       expect(updateNode).toHaveBeenCalledTimes(1);
       expect({
-        price: (screen.getByLabelText("价格 a（#1）") as HTMLInputElement).value,
-        currency: (screen.getByRole("radio", { name: "USD" }) as HTMLInputElement).checked,
-        cycle: (screen.getByRole("radio", { name: "每月" }) as HTMLInputElement).checked,
+        price: screen.getByLabelText<HTMLInputElement>("价格 a（#1）").value,
+        currency: screen.getByRole<HTMLInputElement>("radio", { name: "USD" }).checked,
+        cycle: screen.getByRole<HTMLInputElement>("radio", { name: "每月" }).checked,
         expiresOn: segmentsValue("到期日 a（#1）"),
-        autoRenew: (screen.getByLabelText("自动续期 a（#1）") as HTMLInputElement).checked,
+        autoRenew: screen.getByLabelText<HTMLInputElement>("自动续期 a（#1）").checked,
       }).toEqual({ price: "abc", currency: true, cycle: true, expiresOn: "2030-07-01", autoRenew: true });
     });
   });
@@ -1310,7 +1311,7 @@ it("编辑公开节点时提示标签对访客可见，取消公开即不再提�
   renderNodes({ listNodes: async () => ({ nodes: two }) });
   await screen.findByRole("link", { name: "a（#1）" });
   openRowAction("a（#1）", "编辑");
-  const box = screen.getByLabelText("公开 a（#1）") as HTMLInputElement;
+  const box = screen.getByLabelText<HTMLInputElement>("公开 a（#1）");
   const hint = "公开节点的标签在公开页对访客可见。";
   expect(box.checked).toBe(false);
   expect(screen.queryByText(hint)).toBeNull();
@@ -1328,7 +1329,7 @@ it("维护中的节点在状态列标注，编辑里的维护开关随整体替�
   expect(screen.getByRole("link", { name: "a（#1）" })).not.toHaveTextContent("维护中");
   expect(screen.getByRole("link", { name: "b（#2）" }).closest("tr")).not.toHaveTextContent("维护中");
   openRowAction("b（#2）", "编辑");
-  const box = screen.getByLabelText("维护 b（#2）") as HTMLInputElement;
+  const box = screen.getByLabelText<HTMLInputElement>("维护 b（#2）");
   expect(box.checked).toBe(false);
   fireEvent.click(box);
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -1432,7 +1433,7 @@ describe("移动到指定位置", () => {
     // 完整列表 {tags: []} 一直读不到自己的数据：先选 db 看到 a、c，取消后沿用旧结果，
     // 行还是 a、c，序号必须是全序名次 1、3 而不是下标 1、2。
     const listNodes = vi.fn((req: ListNodesRequest) => {
-      if (req.tags.length === 0) return new Promise<{}>(() => {});
+      if (req.tags.length === 0) return new Promise<never>(() => {});
       return Promise.resolve({ nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) });
     });
     renderNodes({ listNodes, listTags: tagList });
@@ -1447,7 +1448,7 @@ describe("移动到指定位置", () => {
   });
 
   it("未过滤且拖动保存未确认时，序号是期望排列的位次而不是服务端名次", async () => {
-    const reorderNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
+    const reorderNodes = vi.fn((): Promise<never> => new Promise(() => {}));
     renderNodes({ listNodes: listHub, listTags: tagList, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
     openRowAction("a（#1）", "下移一位");
@@ -1458,7 +1459,7 @@ describe("移动到指定位置", () => {
   });
 
   it("MoveNodes 在途时拖动与菜单上下移都关闭", async () => {
-    const moveNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
+    const moveNodes = vi.fn((): Promise<never> => new Promise(() => {}));
     const reorderNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
@@ -1485,7 +1486,7 @@ describe("移动到指定位置", () => {
   });
 
   it("多选两个节点经弹窗提交 ids 与 position，成功后清空选择并刷新列表", async () => {
-    const listNodes = vi.fn(listHub.getMockImplementation()!);
+    const listNodes = vi.fn(listHub.getMockImplementation());
     const moveNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "d（#4）" });
@@ -1559,7 +1560,7 @@ describe("移动到指定位置", () => {
   it("拖动排序保存未确认时「移动到…」入口禁用", async () => {
     const moveNodes = vi.fn(async () => ({}));
     // 保存不结束：排序会话停在未确认（order.pending）。
-    const reorderNodes = vi.fn((): Promise<{}> => new Promise(() => {}));
+    const reorderNodes = vi.fn((): Promise<never> => new Promise(() => {}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes, reorderNodes });
     await screen.findByRole("link", { name: "d（#4）" });
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));

@@ -37,7 +37,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e bound-agent-e2e fixtures web-install web-test web-e2e web release-full release-hub-only release-kind agent-version script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e bound-agent-e2e fixtures web-install web-lint web-test web-e2e web release-full release-hub-only release-kind agent-version script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -82,6 +82,12 @@ script-test:
 	scripts/docker-readback-test.sh
 	scripts/compat-download-test.sh
 
+# 类型检查覆盖全部 tsconfig（面板与公开页、vite 配置、e2e、测试），lint 按各文件所属的 tsconfig 取类型信息。
+# react-hooks 的推荐集把几条规则定为 warn，eslint 遇 warn 仍退出 0；--max-warnings 0 让门禁不带 warning 通过。
+web-lint: web-install
+	pnpm --dir web exec tsc -b
+	pnpm --dir web exec eslint . --max-warnings 0
+
 web-test: web-install
 	pnpm --dir web exec vitest run
 
@@ -119,7 +125,7 @@ binaries: hub-binary
 	GOOS=linux GOARCH=arm64 go build -o bin/heron-agent-linux-arm64 ./cmd/agent
 	go run ./scripts/checkstatic bin/heron-agent-linux-amd64 bin/heron-agent-linux-arm64
 
-ci: gen lint test script-test web-test web build
+ci: gen lint test script-test web-lint web-test web build
 	status="$$(git status --porcelain -- gen web/src/gen)" || exit $$?; \
 	if [ -n "$$status" ]; then printf '%s\n' "$$status"; exit 1; fi
 

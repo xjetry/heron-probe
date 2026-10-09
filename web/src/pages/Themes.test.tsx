@@ -163,7 +163,7 @@ it("旧 SDK 原包按摘要下载为 ZIP，并释放 Blob URL", async () => {
   fireEvent.click(within(row).getByRole("button", { name: /^下载原包 / }));
   await waitFor(() => expect(archive).toHaveBeenCalledWith(expect.objectContaining({ id: "legacy", digest: legacy }), expect.anything()));
   await waitFor(() => expect(clicked).toEqual([{ href: "blob:theme-package", download: `legacy-${legacy}.zip` }]));
-  const blob = createObjectURL.mock.calls[0][0] as Blob;
+  const blob = createObjectURL.mock.calls[0][0];
   expect(blob.type).toBe("application/zip");
   expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual([80, 75, 3, 4]);
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:theme-package");

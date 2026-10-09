@@ -152,7 +152,7 @@ it("登录通知保存中禁用选择，失败显示错误并保留草稿", asyn
   await waitFor(() => expect(f.getByLabelText("tg（#1）")).toBeDisabled());
   await act(async () => { reject(new ConnectError("channel 1 does not exist", Code.InvalidArgument)); });
   await f.findByRole("alert");
-  expect({ error: f.getByRole("alert").textContent, checked: (f.getByLabelText("tg（#1）") as HTMLInputElement).checked }).toEqual({ error: "channel 1 does not exist", checked: true });
+  expect({ error: f.getByRole("alert").textContent, checked: f.getByLabelText<HTMLInputElement>("tg（#1）").checked }).toEqual({ error: "channel 1 does not exist", checked: true });
 });
 
 it("渠道刷新失败保留同一编辑表单与草稿", async () => {
@@ -555,7 +555,7 @@ it("列表移除正在编辑的渠道后保留草稿，保存失败原文留在�
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   const dialog = screen.getByRole("dialog");
   const error = await within(dialog).findByRole("alert");
-  expect({ form: within(dialog).getByRole("form"), name: (within(form).getByLabelText("名称") as HTMLInputElement).value, error: error.textContent }).toEqual({ form, name: "未保存的渠道", error: "channel 1 not found" });
+  expect({ form: within(dialog).getByRole("form"), name: within(form).getByLabelText<HTMLInputElement>("名称").value, error: error.textContent }).toEqual({ form, name: "未保存的渠道", error: "channel 1 not found" });
 });
 
 it("同名渠道经第二条菜单打开后只保存第二条 id", async () => {

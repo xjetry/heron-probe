@@ -8,7 +8,7 @@ import { NodeEditor } from "./NodeEditor";
 afterEach(cleanup);
 
 function editor(bytes = 1073741825n) {
-  const onSave = vi.fn();
+  const onSave = vi.fn<Parameters<typeof NodeEditor>[0]["onSave"]>();
   const node = create(NodeSchema, { id: 1n, name: "quota", trafficResetDay: 1, trafficQuotaBytes: bytes, trafficQuotaMode: TrafficQuotaMode.TX });
   render(<NodeEditor node={node} knownTags={[]} saving={false} error={null} listError={null} onClose={() => {}} onSave={onSave} opener={document.createElement("button")} />);
   return onSave;
@@ -34,7 +34,7 @@ it("blocks tiny positive values and out-of-range quotas", () => {
   const save = editor();
   for (const value of ["0.00000000001", "4294967296"]) {
     fireEvent.change(screen.getByLabelText(/流量配额 quota/), { target: { value } });
-    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "保存" }).disabled).toBe(true);
     expect(screen.getByRole("alert").textContent).toContain("配额无效");
   }
   expect(save).not.toHaveBeenCalled();

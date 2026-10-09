@@ -11,7 +11,7 @@ it("null 是合法的就绪数据，类型与运行时都不排除", () => {
 });
 
 it("元组位置与输入查询一一对应", () => {
-  const gate = queryGateAll({ data: "s" as string | undefined, error: null }, { data: 1 as number | undefined, error: null });
+  const gate = queryGateAll({ data: "s", error: null }, { data: 1, error: null });
   if (!gate.ready) throw new Error("not ready");
   const text: string = gate.data[0];
   const count: number = gate.data[1];
@@ -20,9 +20,9 @@ it("元组位置与输入查询一一对应", () => {
 
 it("同文错误去重为一条，异文全部保留", () => {
   const gate = queryGateAll(
-    { data: 1 as number | undefined, error: new Error("same") },
-    { data: 2 as number | undefined, error: new Error("same") },
-    { data: 3 as number | undefined, error: new Error("other") },
+    { data: 1, error: new Error("same") },
+    { data: 2, error: new Error("same") },
+    { data: 3, error: new Error("other") },
   );
   if (!gate.ready) throw new Error("not ready");
   const { queryAllByRole } = render(<>{gate.banner}</>);
@@ -32,7 +32,7 @@ it("同文错误去重为一条，异文全部保留", () => {
 it("未就绪时全部已失败查询的错误都给出，有失败时没有加载占位", () => {
   const gate = queryGateAll(
     { data: undefined, error: new Error("first failed") },
-    { data: 1 as number | undefined, error: new Error("second failed") },
+    { data: 1, error: new Error("second failed") },
     { data: undefined, error: null },
   );
   if (gate.ready) throw new Error("ready");
@@ -41,7 +41,7 @@ it("未就绪时全部已失败查询的错误都给出，有失败时没有加�
 });
 
 it("只有加载中时给出加载占位", () => {
-  const gate = queryGateAll({ data: undefined, error: null }, { data: 1 as number | undefined, error: null });
+  const gate = queryGateAll({ data: undefined, error: null }, { data: 1, error: null });
   if (gate.ready) throw new Error("ready");
   expect(gate.errors).toEqual([]);
   const { getByText } = render(<>{gate.loading}</>);

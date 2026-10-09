@@ -77,8 +77,10 @@ export function Appearance() {
     const reader = new FileReader();
     reader.onload = () => {
       setReading(false);
+      // readAsDataURL 的结果是 data URL 字符串；不是字符串就没有可用的 logo，按读取失败报。
+      if (typeof reader.result !== "string") { setFileError(`读取 ${file.name} 失败：结果不是 data URL`); return; }
       setFileError(null);
-      edit({ logo: String(reader.result) });
+      edit({ logo: reader.result });
     };
     reader.onerror = () => { setReading(false); setFileError(`读取 ${file.name} 失败：${String(reader.error)}`); };
     setReading(true);

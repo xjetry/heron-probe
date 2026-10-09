@@ -52,7 +52,7 @@ export function NodeDetail() {
   const update = useMutation(AdminService.method.updateNode, {
     onSuccess: async () => {
       try { await qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) }, { throwOnError: true }); }
-      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`); }
+      catch (error) { throw new Error(`已保存，但回读失败：${errorText(error)}`, { cause: error }); }
     },
   });
   if (!validId) return <p role="alert" className="error">节点 {id} 不存在。<Link to="/">返回总览</Link></p>;
@@ -65,7 +65,7 @@ export function NodeDetail() {
   const live = snap.data?.nodes.find((n) => n.id === nodeId);
   const bound = snap.data?.boundAgentVersion;
   const status = node ? liveStatus(node, live) : undefined;
-  const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); setParams(p, { state: typeof location.state === "object" ? location.state : null }); };
+  const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); const state: unknown = location.state; setParams(p, { state: typeof state === "object" ? state : null }); };
   const panel = (
     <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
       {tab === "overview" && (time.ready ? <>

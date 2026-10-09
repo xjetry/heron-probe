@@ -7,6 +7,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Silences } from "./Silences";
 import { fillSegments, segmentsValue } from "../test/fields";
 import { expectEmptyState } from "../test/empty";
+import { stringContaining } from "../test/matchers";
 
 const nodes = create(ListNodesResponseSchema, { nodes: [{ id: 1n, name: "东京" }, { id: 2n, name: "法兰克福" }] });
 const silences = create(ListSilencesResponseSchema, { silences: [
@@ -128,7 +129,7 @@ it("页头、五列表格与作用域单选使用统一契约", async () => {
   }).toEqual({
     headers: ["名称", "窗口", "作用域", "状态", "操作"],
     modes: ["全部节点", "动态标签选择器", "指定节点"],
-    scope: expect.stringContaining("只保存本次选中的节点，之后标签变化不会改变分配"),
+    scope: stringContaining("只保存本次选中的节点，之后标签变化不会改变分配"),
   });
 });
 
@@ -146,7 +147,7 @@ it("列表移除正在编辑的静默后保留草稿，保存失败原文留在�
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   const dialog = screen.getByRole("dialog");
   const error = await within(dialog).findByRole("alert");
-  expect({ form: within(dialog).getByRole("form"), name: (within(form).getByLabelText("名称") as HTMLInputElement).value, error: error.textContent }).toEqual({ form, name: "未保存的窗口", error: "silence 8 not found" });
+  expect({ form: within(dialog).getByRole("form"), name: within(form).getByLabelText<HTMLInputElement>("名称").value, error: error.textContent }).toEqual({ form, name: "未保存的窗口", error: "silence 8 not found" });
 });
 
 it("动态标签为空不发请求，选择标签后仍可保存", async () => {

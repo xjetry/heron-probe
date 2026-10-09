@@ -1,42 +1,30 @@
-import { type Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
-
-async function rpc(page: Page, service: string, method: string, body: unknown, token = "") {
-  return page.evaluate(async ({ service, method, body, token }) => {
-    const response = await fetch(`/heron.v1.${service}/${method}`, {
-      method: "POST", credentials: token ? "omit" : "same-origin",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(body),
-    });
-    return { status: response.status, body: await response.json() };
-  }, { service, method, body, token });
-}
+import { toJsonString } from "@bufbuild/protobuf";
+import { AdminService } from "../src/gen/heron/v1/admin_pb";
+import { AgentService } from "../src/gen/heron/v1/agent_pb";
+import { PublicService, PublicSnapshotSchema } from "../src/gen/heron/v1/public_pb";
+import { CollectionComponent } from "../src/gen/heron/v1/types_pb";
+import { expect, login, must, rpc, test } from "./fixtures";
 
 test("采集诊断从真实上报进入管理详情且不进入公开页", async ({ page, browserName, hub }, testInfo) => {
   await page.goto("/admin/login");
-  expect((await rpc(page, "AdminService", "Login", { password: "local-browser-test-password" })).status).toBe(200);
-  const created = await rpc(page, "AdminService", "CreateNode", { name: `agent-health-${browserName}` });
-  expect(created.status).toBe(200);
-  const { node } = created.body;
+  await login(page);
+  const created = must(await rpc(page, AdminService.method.createNode, { name: `agent-health-${browserName}` }));
+  const node = created.node!;
   hub.deleteNodeAtEnd(node.id);
-  const registered = await rpc(page, "AgentService", "Register", { key: created.body.token });
-  expect(registered.status).toBe(200);
-  const { token } = registered.body;
-  const updated = await rpc(page, "AdminService", "UpdateNode", { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 });
-  expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+  const { token } = must(await rpc(page, AgentService.method.register, { key: created.token }));
+  must(await rpc(page, AdminService.method.updateNode, { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 }));
   await page.goto(`/admin/nodes/${node.id}`);
   await page.getByRole("tab", { name: "Agent 诊断", exact: true }).click();
   const card = page.getByRole("region", { name: "Agent 运行诊断" });
   await expect(card.getByText("Agent 未提供诊断信息，请更新 Agent 后等待上报。")).toBeVisible();
   const diagnostics = {
     netInclude: ["private-uplink-*"], netInterfaces: ["private-uplink-0"], netInterfacesTotal: 1,
-    failedCollectors: ["COLLECTION_COMPONENT_DISK"], reportIntervalMs: 10000,
+    failedCollectors: [CollectionComponent.DISK], reportIntervalMs: 10000,
   };
-  const report = await rpc(page, "AgentService", "Report", {
-    metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64), netRxTotal: "100", netTxTotal: "200" },
-    factsHash: "101", facts: { agentVersion: "browser-diagnostic-version", diagnostics },
-  }, token);
-  expect(report.status).toBe(200);
+  must(await rpc(page, AgentService.method.report, {
+    metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64), netRxTotal: 100n, netTxTotal: 200n },
+    factsHash: 101n, facts: { agentVersion: "browser-diagnostic-version", diagnostics },
+  }, token));
   await expect(card.getByText("private-uplink-0", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(card.getByText("磁盘", { exact: true })).toBeVisible();
   await expect(card.getByText("10000 ms", { exact: false })).toBeVisible();
@@ -45,16 +33,16 @@ test("采集诊断从真实上报进入管理详情且不进入公开页", async
   await page.setViewportSize({ width: 375, height: 812 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await page.screenshot({ path: testInfo.outputPath("diagnostics-mobile.png"), fullPage: true });
-  expect((await rpc(page, "AgentService", "Report", {
+  must(await rpc(page, AgentService.method.report, {
     metrics: { bootId: "0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f", netCounterEpoch: "a".repeat(64) },
-    factsHash: "102", facts: { diagnostics: { ...diagnostics, failedCollectors: [] } },
-  }, token)).status).toBe(200);
+    factsHash: 102n, facts: { diagnostics: { ...diagnostics, failedCollectors: [] } },
+  }, token));
   await expect(card.getByText("最近采集未报告失败", { exact: true })).toBeVisible({ timeout: 15000 });
   await page.goto(`/admin/nodes/${node.id}?tab=diagnostics`);
   await expect(card).toBeVisible();
-  const snapshot = await rpc(page, "PublicService", "GetSnapshot", {});
-  expect(snapshot.status).toBe(200);
-  expect(snapshot.body.nodes.some((entry: { id: string }) => entry.id === node.id)).toBe(true);
-  const json = JSON.stringify(snapshot.body);
+  // 解码不放过未知字段，诊断若以新字段漏进公开快照会在这里失败；已知字段的取值再按序列化后的全文核对。
+  const snapshot = must(await rpc(page, PublicService.method.getSnapshot, {}));
+  expect(snapshot.nodes.some((entry) => entry.id === node.id)).toBe(true);
+  const json = toJsonString(PublicSnapshotSchema, snapshot);
   for (const value of ["private-uplink", "diagnostics", "netCounterEpoch", token]) expect(json).not.toContain(value);
 });

@@ -1,5 +1,9 @@
 import { type Page, type Route } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import type { MessageInitShape } from "@bufbuild/protobuf";
+import { AdminService } from "../src/gen/heron/v1/admin_pb";
+import { PublicService, type PublicNodeSchema } from "../src/gen/heron/v1/public_pb";
+import { BillingCycle } from "../src/gen/heron/v1/types_pb";
+import { expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
 
 // 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。
 const FORBIDDEN = ["可用率", "在线率", "SLA", "宕机", "不可达", "主机名", "内核", "agent 版本", "IPv4", "IPv6", "事件", "告警", "刷新"];
@@ -7,33 +11,27 @@ const FORBIDDEN = ["可用率", "在线率", "SLA", "宕机", "不可达", "主�
 // e2e 的 hub 是每次新建的库，公开页总闸默认关闭（关闸时连 SPA 的静态资源都是 404），先登录打开；RPC 再由 route 拦截。
 async function setPublicEnabled(page: Page, enabled: boolean) {
   await page.goto("/admin/login");
-  await page.evaluate(async (enabled) => {
-    const call = async (method: string, body: unknown) => {
-      const response = await fetch("/heron.v1.AdminService/" + method, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!response.ok) throw new Error(method + ": " + await response.text());
-    };
-    await call("Login", { password: "local-browser-test-password" });
-    await call("UpdateSettings", { settings: { publicEnabled: enabled } });
-  }, enabled);
+  await login(page);
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: enabled } }));
 }
 
 test("公开总览：状态墙、详情、卡片、列表视图、手机布局与数据边界", async ({ page }, testInfo) => {
   await setPublicEnabled(page, true);
   const now = Math.floor(Date.now() / 1000);
   const minute = now - now % 60;
-  const nodes = [
-    { id: "1", name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: String(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4 }, metrics: { cpuPct: 72, memUsed: String(3 * 1024 ** 3), memTotal: String(4 * 1024 ** 3), diskUsed: String(8 * 1024 ** 3), diskTotal: String(32 * 1024 ** 3), uptimeS: "720000", load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: String(128 * 1024), netTxBps: String(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { periodRx: String(12 * 1024 ** 3), periodTx: String(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: "BILLING_CYCLE_MONTHLY", expiresOn: "2027-10-01", daysLeft: 25 } },
-    { id: "2", name: "tokyo-home", country: "JP", online: false, tags: ["家宽"], lastSeenAt: String(now - 7200), metrics: { cpuPct: 5 } },
-    { id: "3", name: "hk-edge", country: "HK", online: true, tags: ["机房"], lastSeenAt: String(now - 1), maintenance: true, metrics: { cpuPct: 10, memUsed: String(1024 ** 3), memTotal: String(4 * 1024 ** 3) } },
-    { id: "4", name: "香港家宽-超长节点名称用于验证窄屏布局与完整可访问名称", country: "HK", online: true, tags: ["家宽"], lastSeenAt: String(now - 1), metrics: { cpuPct: 95, memUsed: String(Math.floor(3.9 * 1024 ** 3)), memTotal: String(4 * 1024 ** 3) } },
-    { id: "5", name: "等待首次接入", country: "", online: false, tags: [] },
+  const nodes: MessageInitShape<typeof PublicNodeSchema>[] = [
+    { id: 1n, name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4 }, metrics: { cpuPct: 72, memUsed: BigInt(3 * 1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), diskUsed: BigInt(8 * 1024 ** 3), diskTotal: BigInt(32 * 1024 ** 3), uptimeS: 720000n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: BigInt(128 * 1024), netTxBps: BigInt(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { periodRx: BigInt(12 * 1024 ** 3), periodTx: BigInt(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-10-01", daysLeft: 25 } },
+    { id: 2n, name: "tokyo-home", country: "JP", online: false, tags: ["家宽"], lastSeenAt: BigInt(now - 7200), metrics: { cpuPct: 5 } },
+    { id: 3n, name: "hk-edge", country: "HK", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 1), maintenance: true, metrics: { cpuPct: 10, memUsed: BigInt(1024 ** 3), memTotal: BigInt(4 * 1024 ** 3) } },
+    { id: 4n, name: "香港家宽-超长节点名称用于验证窄屏布局与完整可访问名称", country: "HK", online: true, tags: ["家宽"], lastSeenAt: BigInt(now - 1), metrics: { cpuPct: 95, memUsed: BigInt(Math.floor(3.9 * 1024 ** 3)), memTotal: BigInt(4 * 1024 ** 3) } },
+    { id: 5n, name: "等待首次接入", country: "", online: false, tags: [] },
   ];
-  await page.route("**/heron.v1.PublicService/GetSite**", (route) => route.fulfill({ json: { title: "Heron · 基础设施", theme: "dark", adminPath: "/admin/" } }));
-  await page.route("**/heron.v1.PublicService/GetSnapshot**", (route) => route.fulfill({ json: { now: String(now), nodes, tags: ["家宽", "机房"] } }));
-  await page.route("**/heron.v1.PublicService/QueryMetrics**", (route) => {
-    const request = JSON.parse(new URL(route.request().url()).searchParams.get("message") ?? "{}");
-    return route.fulfill({ json: { level: "1m", stepS: 60, ts: [String(minute - 120), String(minute - 60)], series: request.nodeId === "1" ? [{ name: "rx_bytes", unit: "bytes", samples: [{ n: 1, sum: "6000" }, { n: 1, sum: "3000" }] }, { name: "tx_bytes", unit: "bytes", samples: [{ n: 1, sum: "600" }, { n: 1, sum: "300" }] }] : [] } });
-  });
+  await page.route(rpcRoute(PublicService.method.getSite), (route) => fulfillRpc(route, PublicService.method.getSite, () => ({ title: "Heron · 基础设施", theme: "dark", adminPath: "/admin/" })));
+  await page.route(rpcRoute(PublicService.method.getSnapshot), (route) => fulfillRpc(route, PublicService.method.getSnapshot, () => ({ now: BigInt(now), nodes, tags: ["家宽", "机房"] })));
+  await page.route(rpcRoute(PublicService.method.queryMetrics), (route) => fulfillRpc(route, PublicService.method.queryMetrics, (request) => ({
+    level: "1m", stepS: 60, ts: [BigInt(minute - 120), BigInt(minute - 60)],
+    series: request.nodeId === 1n ? [{ name: "rx_bytes", unit: "bytes", samples: [{ n: 1, sum: 6000 }, { n: 1, sum: 3000 }] }, { name: "tx_bytes", unit: "bytes", samples: [{ n: 1, sum: 600 }, { n: 1, sum: 300 }] }] : [],
+  })));
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/");
@@ -159,11 +157,11 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await folded.locator("summary").click();
   await expect(folded).not.toHaveAttribute("open");
   expect(await chevron()).not.toBe(expanded);
-  const withExtra = (route: Route) => route.fulfill({ json: { now: String(now), nodes: [...nodes, { id: "6", name: "新离线节点", country: "", online: false, tags: [], lastSeenAt: String(now - 600) }], tags: ["家宽", "机房"] } });
-  await page.route("**/heron.v1.PublicService/GetSnapshot**", withExtra);
+  const withExtra = (route: Route) => fulfillRpc(route, PublicService.method.getSnapshot, () => ({ now: BigInt(now), nodes: [...nodes, { id: 6n, name: "新离线节点", country: "", online: false, tags: [], lastSeenAt: BigInt(now - 600) }], tags: ["家宽", "机房"] }));
+  await page.route(rpcRoute(PublicService.method.getSnapshot), withExtra);
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 3");
   await expect(folded).not.toHaveAttribute("open");
-  await page.unroute("**/heron.v1.PublicService/GetSnapshot**", withExtra);
+  await page.unroute(rpcRoute(PublicService.method.getSnapshot), withExtra);
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
   await folded.locator("summary").click();
   await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
@@ -221,7 +219,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
 
 test("公开页关闭时分享链接得到说明页而不是 404", async ({ page, hub }) => {
   // 总闸是整个 hub 共用的设置，后续 spec 共用同一个 hub：关闸只在本用例内有效，收尾时恢复（fixtures.ts）。
-  hub.atEnd("恢复公开页总闸", () => hub.rpc("UpdateSettings", { settings: { publicEnabled: true } }));
+  hub.atEnd("恢复公开页总闸", async () => must(await hub.rpc(AdminService.method.updateSettings, { settings: { publicEnabled: true } })));
   await setPublicEnabled(page, false);
   const response = await page.goto("/nodes/7");
   expect(response?.status()).toBe(200);

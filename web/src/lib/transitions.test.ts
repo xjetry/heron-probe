@@ -1,4 +1,3 @@
-// @ts-nocheck -- 这个测试读仓库文件，app tsconfig 只带 vite/client，没有 node 类型。
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

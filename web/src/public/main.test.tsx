@@ -24,7 +24,7 @@ function json(body: unknown) {
 
 beforeAll(async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     fetches.push({ url, init });
     if (url.includes("/heron.v1.PublicService/GetSite")) return json({ title: "机房状态", theme: "dark", accentColor: "#123abc" });
     return json({ now: "1000", nodes: [{ id: "3", name: "web-1", online: true }] });
@@ -38,7 +38,8 @@ beforeAll(async () => {
   await act(async () => {
     await import("./main.tsx");
   });
-  reactRoot = createRoot.mock.results[0]?.value;
+  const created = createRoot.mock.results[0];
+  reactRoot = created?.type === "return" ? created.value : undefined;
   queryClient = mount.mock.instances[0] as QueryClient | undefined;
   mount.mockRestore();
 });

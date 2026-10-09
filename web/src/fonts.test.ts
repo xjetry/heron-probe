@@ -1,5 +1,4 @@
 // @vitest-environment node
-// @ts-nocheck 读文件需要 node 类型，tsconfig.app 只给了 vite/client（与 styles.test.ts 同一原因）。
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { expect, it } from "vitest";
@@ -10,8 +9,10 @@ const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const imported = [...entry.matchAll(/^import "([^"]+\.css)";$/gm)].map((m) => m[1]);
 const faces = imported.flatMap((spec) => [...readFileSync(require.resolve(spec), "utf8").matchAll(/@font-face\s*\{([^}]*)\}/g)].map((m) => m[1]));
 const viteConfig = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
-const licensed = JSON.parse(/const FONT_PACKAGES = (\[[^\]]*\]);/.exec(viteConfig)?.[1] ?? "null");
-const leading = (name) => new RegExp(`${name}:\\s*"([^"]+)"`).exec(styles)?.[1];
+const licensedJson: unknown = JSON.parse(/const FONT_PACKAGES = (\[[^\]]*\]);/.exec(viteConfig)?.[1] ?? "null");
+// 读不出或不是字符串数组时当作空表，下面与内嵌字体包的比对随之变红。
+const licensed = Array.isArray(licensedJson) && licensedJson.every((p): p is string => typeof p === "string") ? licensedJson : [];
+const leading = (name: string): string | undefined => new RegExp(`${name}:\\s*"([^"]+)"`).exec(styles)?.[1];
 
 it("内嵌字体的每个字面都从包内相对路径加载 woff2，不指向远程地址", () => {
   expect(imported).toHaveLength(2);

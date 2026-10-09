@@ -1,29 +1,21 @@
-import { type Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
-
-async function rpc(page: Page, method: string, body: unknown = {}) {
-  return page.evaluate(async ({ method, body }) => {
-    const response = await fetch('/heron.v1.AdminService/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!response.ok) throw new Error(method + ': ' + await response.text());
-    return response.json();
-  }, { method, body });
-}
+import { AdminService } from "../src/gen/heron/v1/admin_pb";
+import { expect, login, must, rpc, test } from "./fixtures";
 
 test('公开页地区多选与家宽标签交集，标签匹配方式，未知和手机布局', async ({ page, browserName, hub }, testInfo) => {
-  const ids: string[] = [];
+  const ids: bigint[] = [];
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
-  await rpc(page, 'UpdateSettings', { settings: { publicEnabled: true } });
+  await login(page);
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: true } }));
   const fixtures = [
     ['香港家宽', 'HK', '家宽'], ['日本家宽', 'JP', '家宽'], ['美国家宽', 'US', '家宽'],
     ['香港机房', 'HK', '机房'], ['日本机房', 'JP', '机房'], ['待探测', '', '家宽'],
   ];
   for (const [label, countryPin, tag] of fixtures) {
     const name = `${label}-${browserName}`;
-    const id = (await rpc(page, 'CreateNode', { name })).node.id;
+    const id = must(await rpc(page, AdminService.method.createNode, { name })).node!.id;
     ids.push(id);
     hub.deleteNodeAtEnd(id);
-    await rpc(page, 'UpdateNode', { id, name, public: true, countryPin, tags: [tag], trafficResetDay: 1, offlineGraceS: 0 });
+    must(await rpc(page, AdminService.method.updateNode, { id, name, public: true, countryPin, tags: [tag], trafficResetDay: 1, offlineGraceS: 0 }));
   }
   await page.goto('/');
   // 方块只在状态墙上：墙画出全部节点，含离线与从未上报。

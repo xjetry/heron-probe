@@ -73,6 +73,12 @@ it("数据原地更新；系统或 data-theme 改变明暗时，用最新数据�
   }
 });
 
+// 本组件只给序列写颜色字符串；读回时先确认它确实是字符串，再拼成填充色。
+function strokeOf(series: uPlot.Series | undefined): string {
+  if (typeof series?.stroke !== "string") throw new Error(`series stroke is not a color string: ${typeof series?.stroke}`);
+  return series.stroke;
+}
+
 function mountChart(props: Parameters<typeof Chart>[0]) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -206,7 +212,57 @@ it("填充带按 labels 下标换算成 uPlot 序列下标，取上界序列的�
   const { unmount } = mountChart({ data: [[0], [1], [0], [2]], labels: ["均值", "最小", "最大"], unit: "ms", soft: [false, true, true], bands: [{ lower: 1, upper: 2 }] });
   try {
     const opts = plots.at(-1)!.options;
-    expect(opts.bands).toEqual([{ series: [3, 2], fill: `${opts.series![3].stroke}33` }]);
+    expect(opts.bands).toEqual([{ series: [3, 2], fill: `${strokeOf(opts.series[3])}33` }]);
+  } finally {
+    unmount();
+  }
+});
+
+// 何时重建只由标签、单位、尺寸、明暗、浅线与填充带决定；数组每次渲染都是新对象，同值的新数组不算变化。
+// 建图读的是最近一次提交的输入：重建时用最新的数据、隐藏集合与悬停回调。
+it("标签变化时用最新输入重建；隐藏集合、数据与同值的新数组只原地更新，不重建", () => {
+  const first = vi.fn<(index: number | null) => void>();
+  const latest = vi.fn<(index: number | null) => void>();
+  const props = { unit: "ms", legend: false } as const;
+  const { rerender, unmount } = mountChart({ ...props, data: [[0], [1], [2]], labels: ["a", "b"], soft: [false, true], bands: [{ lower: 1, upper: 0 }], hidden: new Set<number>(), onFocus: first });
+  try {
+    expect(plots).toHaveLength(1);
+    const plot = plots[0];
+    // 同一个集合对象一直传下去：隐藏集合没变，重建后的图只能靠建图时读到的最新集合隐藏第 2 条线。
+    const hidden = new Set([1]);
+    rerender(<Chart {...props} data={[[0], [1], [2]]} labels={["a", "b"]} soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} hidden={hidden} onFocus={latest} />);
+    expect(plots).toHaveLength(1);
+    expect(plot.setSeries).toHaveBeenLastCalledWith(2, { show: false });
+    const next: AlignedData = [[0], [3], [4]];
+    rerender(<Chart {...props} data={next} labels={["a", "b"]} soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} hidden={hidden} onFocus={latest} />);
+    expect(plots).toHaveLength(1);
+    expect(plot.setData).toHaveBeenLastCalledWith(next);
+    // 建图之后才换的悬停回调，也是 uPlot 钩子调到的那一个。
+    plot.options.hooks!.setSeries![0]!(plot as unknown as uPlot, 1, { focus: true } as unknown as uPlot.Series);
+    expect(latest).toHaveBeenLastCalledWith(0);
+    expect(first).not.toHaveBeenCalled();
+
+    rerender(<Chart {...props} data={next} labels={["a", "c"]} soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} hidden={hidden} onFocus={latest} />);
+    expect(plots).toHaveLength(2);
+    expect(plot.destroy).toHaveBeenCalled();
+    const rebuilt = plots[1];
+    expect(rebuilt.options.series.map((s) => s.label)).toEqual(["时间", "a", "c"]);
+    expect(rebuilt.data).toBe(next);
+    expect(rebuilt.setSeries).toHaveBeenCalledWith(2, { show: false });
+  } finally {
+    unmount();
+  }
+});
+
+it("浅线标记或填充带的取值变化时重建", () => {
+  const { rerender, unmount } = mountChart({ data: [[0], [1], [2]], labels: ["a", "b"], unit: "ms", soft: [false, false] });
+  try {
+    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" soft={[false, true]} />);
+    expect(plots).toHaveLength(2);
+    expect(plots[1].options.series[2].width).toBeLessThan(plots[1].options.series[1].width as number);
+    rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} />);
+    expect(plots).toHaveLength(3);
+    expect(plots[2].options.bands).toEqual([{ series: [1, 2], fill: `${strokeOf(plots[2].options.series[1])}33` }]);
   } finally {
     unmount();
   }

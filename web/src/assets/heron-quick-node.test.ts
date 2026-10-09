@@ -12,7 +12,7 @@ const fullRelease: Snapshot = { hubVersion: "v1.2.3", boundAgentVersion: "v1.2.3
 function hub(snapshot: Snapshot) {
   return (request: Request) => {
     const method = request.url.split("/").pop();
-    const body = JSON.parse(request.data);
+    const body = JSON.parse(request.data) as { preview?: boolean };
     const reply = method === "GetSnapshot" ? snapshot
       : body.preview ? { expectedVersion: "7" }
       : { result: { token: "node-tok", node: { id: "5", name: "vps" } } };
@@ -26,7 +26,10 @@ async function addNode(store: Map<string, string>, snapshot: Snapshot = fullRele
   vi.stubGlobal("GM_registerMenuCommand", () => {});
   vi.stubGlobal("GM_xmlhttpRequest", hub(snapshot));
   document.title = "vps";
-  new Function(buildUserscript("https://hub.example:28080", "api-token"))();
+  // 被测对象就是分发出去的脚本源码本身：像脚本管理器一样把它当一段代码执行，不是把数据当代码。
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const run = new Function(buildUserscript("https://hub.example:28080", "api-token")) as () => void;
+  run();
   const root = (document.documentElement.lastElementChild as HTMLElement).shadowRoot!;
   await new Promise((resolve) => setTimeout(resolve, 0));
   (root.querySelector(".fab") as HTMLButtonElement).click();
@@ -36,7 +39,7 @@ async function addNode(store: Map<string, string>, snapshot: Snapshot = fullRele
   return root;
 }
 
-const field = (root: ShadowRoot, label: string) => root.querySelector(`[aria-label="${label}"]`) as HTMLInputElement | null;
+const field = (root: ShadowRoot, label: string) => root.querySelector<HTMLInputElement>(`[aria-label="${label}"]`);
 const setPort = (root: ShadowRoot, value: string) => {
   const input = field(root, "本机代理端口")!;
   input.value = value;

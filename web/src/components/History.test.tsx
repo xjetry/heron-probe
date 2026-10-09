@@ -19,6 +19,9 @@ vi.mock("./Chart", () => ({
 
 afterEach(() => vi.restoreAllMocks());
 
+// 替身 Chart 把入参序列化进 data-*；读回来只做 toEqual 比较，不需要具体类型。属性缺失时得到 null，比较随之失败。
+const parseJson = (json: string | undefined): unknown => JSON.parse(json ?? "null");
+
 const queryMetrics = async (req: QueryMetricsRequest) => {
   const start = Number(req.from) - Number(req.from) % 60;
   return create(QueryMetricsResponseSchema, {
@@ -84,7 +87,7 @@ it.each([
   const panels = expectedPanels.map((expected) => {
     const panel = screen.getByRole("heading", { name: expected.title }).parentElement!;
     const chart = within(panel).getByTestId("chart");
-    return { title: expected.title, labels: chart.dataset.labels, unit: chart.dataset.unit, soft: JSON.parse(chart.dataset.soft!), points: JSON.parse(chart.dataset.points!) };
+    return { title: expected.title, labels: chart.dataset.labels, unit: chart.dataset.unit, soft: parseJson(chart.dataset.soft), points: parseJson(chart.dataset.points) };
   });
   expect(panels).toEqual(expectedPanels);
   expect(screen.getByRole("tooltip")).toHaveTextContent("级别 1m，每点 60 秒。峰值为每个图表时间桶内已采集样本的最大值");
@@ -161,7 +164,7 @@ it.each([
   const tip = await screen.findByRole("button", { name: "上报覆盖率说明" });
   const note = tip.closest(".coverage-note")!;
   expect(note.closest(".detail-header")).not.toBeNull();
-  expect(note.textContent?.replace(tip.parentElement!.textContent!, "")).toBe(shown);
+  expect(note.textContent?.replace(tip.parentElement!.textContent, "")).toBe(shown);
   expect(screen.getByText(/这是 hub 观测到的分钟里节点有上报的比例，不是在线率/)).toHaveAttribute("role", "tooltip");
   expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
 });

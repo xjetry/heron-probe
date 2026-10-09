@@ -1,4 +1,3 @@
-// @ts-nocheck -- 这个测试读仓库文件，app tsconfig 只带 vite/client，没有 node 类型。
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -12,7 +11,7 @@ const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "style
 // 按系统明暗的媒体查询改写变量会绕过 data-theme，所以一处都不能有。浏览器里的实际效果由公开页的浏览器验收核对。
 it("调色板随 color-scheme 取值，data-theme 能强制明暗", () => {
   expect(css).not.toMatch(/prefers-color-scheme/);
-  const root = css.match(/:root\s*\{([^}]*)\}/)[1];
+  const root = /:root\s*\{([^}]*)\}/.exec(css)?.[1];
   expect(root).toMatch(/color-scheme:\s*light dark/);
   for (const name of ["--bg", "--card", "--fg", "--muted", "--line", "--accent"]) {
     expect(root, name).toMatch(new RegExp(`${name}:\\s*light-dark\\(`));
@@ -23,6 +22,6 @@ it("调色板随 color-scheme 取值，data-theme 能强制明暗", () => {
 
 // 外观页取色器的兜底色就是内置浅色主题的主色：不另存一份，改了 styles.css 这里跟着变。
 it("内置主色取自 styles.css 的 --accent 浅色值", () => {
-  const light = css.match(/--accent:\s*light-dark\(\s*(#[0-9a-fA-F]{6})/)[1].toLowerCase();
+  const light = /--accent:\s*light-dark\(\s*(#[0-9a-fA-F]{6})/.exec(css)?.[1].toLowerCase();
   expect(BUILT_IN_ACCENT).toBe(light);
 });

@@ -24,7 +24,7 @@ it.each([-8, 8])("窗口只随 hub 分钟变化，不随浏览器偏差 %i 小�
   expect(result.current.to).toBe(END);
   rerender({ now: NOW + 40 });
   expect(result.current.to).toBe(END + 60);
-  act(() => vi.advanceTimersByTime(3600_000));
+  act(() => { vi.advanceTimersByTime(3600_000); });
   expect(result.current.to).toBe(END + 60);
 });
 

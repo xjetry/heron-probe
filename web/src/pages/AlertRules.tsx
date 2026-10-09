@@ -182,7 +182,7 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
       <div className="row">
         <label>名称<input required value={draft.name} onChange={(e) => set({ name: e.target.value })} /></label>
         <label>类型
-          <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) as AlertKind })}>
+          <select value={draft.kind} onChange={(e) => set({ kind: Number(e.target.value) })}>
             {ALERT_KINDS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
@@ -221,7 +221,7 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
             </select>
           </label>
           <label>指标
-            <select value={draft.metric} onChange={(e) => set({ metric: Number(e.target.value) as ProbeMetric })}>
+            <select value={draft.metric} onChange={(e) => set({ metric: Number(e.target.value) })}>
               {PROBE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
@@ -259,7 +259,7 @@ function ResourceFields({ draft, set }: { draft: Draft; set: (patch: Partial<Dra
   return (
     <>
       <div className="row">
-        <label>资源指标<select value={draft.resourceMetric} onChange={(e) => set({ resourceMetric: Number(e.target.value) as ResourceMetric })}>
+        <label>资源指标<select value={draft.resourceMetric} onChange={(e) => set({ resourceMetric: Number(e.target.value) })}>
           {RESOURCE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
         </select></label>
         <label>触发阈值（{unitLabel}）<input type="number" required step="any" min={0} max={max} value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>

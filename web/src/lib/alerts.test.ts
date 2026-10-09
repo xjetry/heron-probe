@@ -125,8 +125,9 @@ describe("deliveryText", () => {
 
   it("文案表覆盖协议枚举里的每个失败类别", () => {
     for (const { number, name } of DeliveryFailureSchema.values) {
-      if (number === DeliveryFailure.UNSPECIFIED) continue;
-      const got = failureText(create(AlertDeliverySchema, { failure: number, httpStatus: 500 }));
+      const failure: DeliveryFailure = number;
+      if (failure === DeliveryFailure.UNSPECIFIED) continue;
+      const got = failureText(create(AlertDeliverySchema, { failure, httpStatus: 500 }));
       expect(got, name).not.toMatch(/^类别 /);
     }
   });
@@ -134,8 +135,9 @@ describe("deliveryText", () => {
 
 it("类型表覆盖协议枚举里除未指定之外的每个种类", () => {
   for (const { number, name } of AlertKindSchema.values) {
-    if (number === AlertKind.UNSPECIFIED) continue;
-    expect(labelOf(ALERT_KINDS, number), name).not.toMatch(/^未知/);
+    const kind: AlertKind = number;
+    if (kind === AlertKind.UNSPECIFIED) continue;
+    expect(labelOf(ALERT_KINDS, kind), name).not.toMatch(/^未知/);
   }
 });
 
