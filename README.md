@@ -26,7 +26,7 @@ tar -xzf heron-hub_linux_amd64.tar.gz
 ```
 
 - hub 只监听明文 HTTP，TLS 由反代（Caddy、nginx、CDN）终止；反代地址用 `--trusted-proxies` 声明，否则不信任转发头。
-- 管理面板在 `/admin/`，内置公开页页头的「登录」链到它；第三方主题与面板共用域名，但在沙箱中运行。离线判定的时限由环境变量 `HERON_OFFLINE_AFTER` 设定（默认 30s，10s–180s）。
+- 管理面板在 `/admin/`，内置公开页页头的「登录」链到它；第三方主题与面板共用域名，但在沙箱中运行。离线判定的时限由 `--offline-after`（亦可用环境变量 `HERON_OFFLINE_AFTER`）设定（默认 30s，10s–180s）。
 - 其余参数见 `heron-hub serve -h`；节点、注册窗口与 API token 也可在 hub 主机上用 `heron-hub node|window|token` 管理。
 - 节点可在面板里记录价格、币种、计费周期与到期日，周期支持 1 月、3 月、半年、1 年、2 年、3 年、5 年：只用于展示与提醒，hub 不汇总、不换算。公开节点填了的这几项也显示在公开页，自动续期开关除外。建「到期」类型的告警规则可在到期前若干天提醒；开着自动续期的节点过了到期日，hub 按周期把到期日推后。到期日按天计，天的边界与流量周期一样取 `--timezone`。
 - 节点可设置周期流量配额与收+发、只收、只发、取大者口径，面板与公开页显示同一份已用 / 配额（百分比），留空配额即停用该节点的配额告警。
@@ -189,10 +189,12 @@ docker exec heron heron-hub security-reset --db /data/heron.db --yes
 
 ### 环境变量
 
+`serve` 的每个 flag 都可以用环境变量 `HERON_<FLAG>` 给出：flag 名的横线换成下划线、转大写，例如 `--offline-after` ↔ `HERON_OFFLINE_AFTER`、`--trusted-proxies` ↔ `HERON_TRUSTED_PROXIES`。同一项两处都给时以显式 flag 为准。环境变量设置为空串等于显式给出空值，空值的含义与该 flag 写成空值时相同（例如 `HERON_GEO_MMDB=` 与 `--geo-mmdb=` 一样报错退出，不会退回出网的 HTTP 查询；`HERON_OFFLINE_AFTER=` 取默认值）。
+
 | 变量 | 作用 |
 |---|---|
-| `TZ` | IANA 时区名；没有给 `--timezone` 时使用 |
-| `HERON_OFFLINE_AFTER` | 节点离线判定时长（Go duration，`10s` 到 `3m`，默认 `30s`）；上报间隔、退避上限与告警宽限期的下限都由它推出 |
+| `TZ` | IANA 时区名；`--timezone` 与 `HERON_TIMEZONE` 都没有给出时使用 |
+| `HERON_OFFLINE_AFTER` | 即 `--offline-after`：节点离线判定时长（Go duration，`10s` 到 `3m`，默认 `30s`，空串取默认）；上报间隔、退避上限与告警宽限期的下限都由它推出 |
 
 ### 数据卷与备份
 

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xjetry/heron-probe/internal/agentwire"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/alert"
 	"github.com/xjetry/heron-probe/internal/hub/api"
@@ -140,8 +141,8 @@ type serveOptions struct {
 }
 
 // parseServeOptions 解析并校验 serve 的全部用户输入，不打开数据库、不监听：配置有误时 serve 不留下任何副作用就退出。
-// lookupEnv 是环境变量的唯一来源（runServeWith 传 os.LookupEnv）；--timezone 缺席时 loadZone 读的 TZ 与
-// /etc/localtime 是时区自己的回落，不经它。
+// 每个 flag 都可以由 HERON_<FLAG> 给出（applyFlagEnv），lookupEnv 是它的唯一来源（runServeWith 传 os.LookupEnv）；
+// --timezone 连同 HERON_TIMEZONE 都缺席时 loadZone 读的 TZ 与 /etc/localtime 是时区自己的回落，不经它。
 func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (serveOptions, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	db := fs.String("db", "heron.db", "SQLite database path")
@@ -151,16 +152,25 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	adminOrigin := fs.String("admin-origin", "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout; a node's recorded source address is also the proxy address")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
+	offlineAfter := fs.String(offlineAfterFlag, defaultTTL.String(), fmt.Sprintf("how long a node may go without reporting before it is shown offline, between %v and %v; the agent report interval, its retry backoff ceiling and the minimum node offline grace are derived from it; empty means the default", minTTL, agentwire.MaxTTL))
 	retention := store.DefaultRetention
 	fs.DurationVar(&retention.M1, "retention-1m", retention.M1, fmt.Sprintf("how long to keep 1-minute rows (minimum %s)", store.MinRetentionM1))
 	fs.DurationVar(&retention.M5, "retention-5m", retention.M5, fmt.Sprintf("how long to keep 5-minute rows (minimum %s)", store.MinRetentionM5))
 	fs.DurationVar(&retention.H1, "retention-1h", retention.H1, fmt.Sprintf("how long to keep hourly rows (minimum %s)", store.MinRetentionH1))
 	fs.DurationVar(&retention.AlertEvents, "retention-alert-events", retention.AlertEvents, fmt.Sprintf("how long to keep alert events and their deliveries (minimum %s)", store.MinRetentionAlertEvents))
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of serve:\nEvery flag can also be given as the environment variable HERON_<FLAG> (dashes become underscores, upper case: --%s is %s); an explicit flag takes precedence, and a variable set to the empty string is the same as the flag given empty.\n", offlineAfterFlag, flagEnvName(offlineAfterFlag))
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		return serveOptions{}, err
 	}
+	if err := applyFlagEnv(fs, lookupEnv); err != nil {
+		return serveOptions{}, err
+	}
 	opts := serveOptions{db: *db, listen: *listen, adminOrigin: *adminOrigin, publicDir: *publicDir, geoMMDB: *geoMMDB}
-	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。
+	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。HERON_GEO_MMDB 经 applyFlagEnv
+	// 回填后同样算作给出，设为空串也是显式空路径。
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "geo-mmdb" {
 			opts.geoMMDBSet = true
@@ -174,8 +184,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	if opts.loc, opts.zoneFallback, err = loadZone(*tz); err != nil {
 		return serveOptions{}, err
 	}
-	ttlEnv, _ := lookupEnv("HERON_OFFLINE_AFTER")
-	if opts.ttl, err = parseTTL(ttlEnv); err != nil {
+	if opts.ttl, err = parseTTL(*offlineAfter); err != nil {
 		return serveOptions{}, err
 	}
 	if opts.trusted, err = auth.ParsePrefixes(*proxies); err != nil {

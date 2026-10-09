@@ -507,7 +507,7 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 	for _, grace := range []uint32{29, 30, 0} {
 		resp, err := h.admin.UpdateNode(t.Context(), connect.NewRequest(&heronv1.UpdateNodeRequest{Id: id, Name: "n", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(grace)}))
 		if grace == 29 {
-			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (HERON_OFFLINE_AFTER); got 29" {
+			if codeOf(err) != connect.CodeInvalidArgument || err.Error() != "invalid_argument: offline_grace_s: must be 0 or at least 30 seconds (--offline-after, HERON_OFFLINE_AFTER); got 29" {
 				t.Fatalf("err=%v", err)
 			}
 			continue
