@@ -147,12 +147,17 @@ it("关闭抽屉后明文不在页面上，再次打开是空白表单", async (
   expect(within(reopened).getByLabelText("名称")).toHaveValue("");
 });
 
-it("说明入口卡片的保存路径", async () => {
+it("说明技能文件的保存路径，以及 token 经环境变量交给 agent、不写进文件", async () => {
   render({});
-  expect(await screen.findByText(/~\/\.claude\/skills\/heron-hub\/SKILL\.md/)).toBeInTheDocument();
+  const integrations = within(await screen.findByRole("region", { name: "接入方式" }));
+  expect(integrations.getByText(/~\/\.claude\/skills\/heron-hub\/SKILL\.md/)).toBeInTheDocument();
+  expect(integrations.getByText(/token 不写进 SKILL\.md，由环境变量提供/)).toBeInTheDocument();
+  expect(integrations.getByText(`HERON_HUB=${window.location.origin}`)).toBeInTheDocument();
+  expect(integrations.getByText(`{"env": {"HERON_HUB": "${window.location.origin}", "HERON_TOKEN": "heron_at_…"}}`)).toBeInTheDocument();
+  expect(integrations.queryByText(/入口卡片/)).toBeNull();
 });
 
-it("下载的入口卡片就是 hub 下发的 guide", async () => {
+it("下载的 SKILL.md 就是 hub 下发的 guide", async () => {
   // waitFor 自己也靠定时器；时间要跟着真实时间走，否则点击永远等不到。
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const blobs: Blob[] = [];
@@ -161,7 +166,7 @@ it("下载的入口卡片就是 hub 下发的 guide", async () => {
   const clicked: HTMLAnchorElement[] = [];
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
   render({ getApiReference: async () => ({ guide: "---\nname: heron-hub\n---\n卡片", files: [] }) });
-  fireEvent.click(await screen.findByRole("button", { name: "下载入口卡片" }));
+  fireEvent.click(await screen.findByRole("button", { name: "下载 SKILL.md" }));
   await waitFor(() => expect(clicked).toHaveLength(1));
   expect(clicked[0].download).toBe("SKILL.md");
   // undici 的 Response 不认 jsdom 的 Blob，读出来是 "[object Blob]"；这个 jsdom 实现了 Blob.text。
@@ -225,6 +230,6 @@ it("没有 token 时不画只有表头的空表，空态与接入方式各自成
   await expectEmptyState("还没有 API token。", { region: "API token 管理" });
   expect(screen.queryByRole("columnheader")).toBeNull();
   const integrations = screen.getByRole("region", { name: "接入方式" });
-  expect(within(integrations).getByRole("button", { name: "下载入口卡片" })).toBeInTheDocument();
+  expect(within(integrations).getByRole("button", { name: "下载 SKILL.md" })).toBeInTheDocument();
   expect(within(integrations).getByRole("button", { name: "复制油猴脚本" })).toBeInTheDocument();
 });

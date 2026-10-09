@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Heron 快速添加节点
 // @namespace    https://github.com/xjetry/heron-probe
-// @version      1.2.0
+// @version      1.3.0
 // @description  任意站点右下角的悬浮按钮：把正在浏览的机器（名称、到期日、费用）一键添加为 Heron 监控节点，创建后直接给出安装凭据与安装命令。适配 Tampermonkey / Violentmonkey。
 // @match        *://*/*
 // @noframes
@@ -163,8 +163,18 @@
     :host { all: initial; }
     * { box-sizing: border-box; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
     .fab { position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; width: 44px; height: 44px; border-radius: 50%;
-      border: none; cursor: pointer; background: #4f46e5; color: #fff; font-size: 22px; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
-    .fab:hover { background: #4338ca; }
+      display: grid; place-items: center; padding: 0; border: 1px solid #d1d5db; cursor: pointer; background: #fff;
+      box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+    .fab:hover { border-color: #214e57; }
+    .fab svg { width: 30px; height: 30px; display: block; }
+    .fab .bird { fill: #214e57; }
+    .fab .legs { stroke: #214e57; }
+    @media (prefers-color-scheme: dark) {
+      .fab { background: #11161d; border-color: #2f3646; }
+      .fab:hover { border-color: #a9d4d6; }
+      .fab .bird { fill: #a9d4d6; }
+      .fab .legs { stroke: #a9d4d6; }
+    }
     .panel { position: fixed; right: 18px; bottom: 72px; z-index: 2147483646; width: 340px; max-height: 82vh; overflow: auto;
       background: #fff; color: #111; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.28); padding: 14px 16px; }
     @media (prefers-color-scheme: dark) { .panel { background: #1f2430; color: #e5e7eb; } .panel input, .panel select { background: #111827; color: #e5e7eb; border-color: #4b5563; } }
@@ -207,10 +217,36 @@
   style.textContent = CSS;
   root.appendChild(style);
 
+  // Heron 标志：与面板的 web/src/assets/heron.svg 同一图形与配色（UserscriptButton.test 核对两边一致，改一边须同改另一边）。
+  // 脚本跑在任意第三方页面里，图形用 createElementNS 逐个建：启用 Trusted Types 的页面会拒绝 innerHTML 与 DOMParser 解析
+  // 字符串，createElementNS 不受影响。
+  const MARK = {
+    viewBox: "0 0 64 64",
+    parts: [
+      ["path", { class: "bird", d: "M7 43c4-10 11-17 21-19l5-1c4-1 5-3 3-6l-3-4c-3-5 0-10 5-10 4 0 6 2 7 5l12 4-14 2c-2-1-3-2-3-4-2 0-3 1-2 3l4 5c4 6 1 11-5 14-2 10-10 15-20 13L7 43Z" }],
+      ["path", { d: "M12 40c5-7 11-10 19-11-3 7-9 11-19 11Z", fill: "#fff", "fill-opacity": ".24" }],
+      ["path", { class: "legs", d: "m24 45-2 13h-7m17-14 4 8-5 6h7", "stroke-width": "2.5", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["circle", { cx: "40", cy: "7.5", r: "1.5", fill: "#e5ad64" }],
+    ],
+  };
+  function heronMark() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", MARK.viewBox);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    for (const [tag, attrs] of MARK.parts) {
+      const el = document.createElementNS(ns, tag);
+      for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, value);
+      svg.appendChild(el);
+    }
+    return svg;
+  }
+
   const fab = document.createElement("button");
   fab.className = "fab";
   fab.type = "button";
-  fab.textContent = "+";
+  fab.appendChild(heronMark());
   fab.title = "添加 Heron 节点";
   fab.setAttribute("aria-label", "添加 Heron 节点");
   root.appendChild(fab);

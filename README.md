@@ -8,7 +8,7 @@
 
 在「API token」页按操作预授权监控配置与节点生命周期，并选择全站或指定节点。AI 和脚本经 HTTP+JSON 自主执行，支持真实事务预览、字段级修改、并发版本检查、安全重试及操作审计。旧 token 保持全站只读。注册入口按凭据隔离，自己创建或注册的节点自动纳入范围，普通标签不能扩权。
 
-不开放远程命令、云主机操作、Hub 升级、管理员或 API 凭据管理、通知密钥修改。调用约定和示例见 [API 入口卡片](proto/SKILL.md)；也可从面板下载与 Hub 同版本的卡片。同页还能复制油猴脚本：粘贴进脚本管理器后任意站点出现悬浮按钮，在 IDC 页面看着价格与到期一步建节点并拿到安装命令。
+不开放远程命令、云主机操作、Hub 升级、管理员或 API 凭据管理、通知密钥修改。调用约定和示例见给 AI agent 用的技能文件 [proto/SKILL.md](proto/SKILL.md)；也可在面板「API token」页下载与 Hub 同版本的这份文件，token 经环境变量 `HERON_HUB` / `HERON_TOKEN` 交给 agent。同页还能复制油猴脚本：粘贴进脚本管理器后任意站点出现悬浮按钮，在 IDC 页面看着价格与到期一步建节点并拿到安装命令。
 
 名称、图形与命名边界见 [品牌约定](docs/brand.md)。Heron 使用独立的命令、服务路径与 `heron.v1` API，不兼容旧 probe 部署，安装器不自动迁移旧数据。
 
@@ -181,7 +181,7 @@ docker exec heron heron-hub security-reset --db /data/heron.db --yes
 
 旧主题域名不再按 Host 分流：仍指向 hub 时，也会提供 `/admin/` 及管理 API 的认证入口。若只保留一个域名，应撤掉旧域名的反代配置或将其重定向到新域名；不能继续依赖旧的“主题域名不承载管理入口”行为。
 
-主题的开发、包布局、清单字段、上限与本地调试见 [主题开发指南](docs/theme-guide.md)。
+主题的开发（SDK、公开数据字段、沙箱约束、包布局与清单、上限、构建与预览）见给 AI agent 与人共用的 [主题开发指南](web/src/assets/heron-theme-skill.md)，面板「主题」页可下载填好 hub 地址的版本；安装、升级、隔离、迁移与备份见 [主题运维说明](docs/theme-guide.md)。
 
 ### 时区
 
@@ -244,7 +244,7 @@ docker start heron
 
 ## 安装 agent
 
-先在面板的「注册窗口」开一个窗口拿到 key（或在 hub 主机上 `heron-hub window open`）；也可以在「节点」页直接添加节点，用创建时返回的 `heron_install_` 安装凭据当 `--key`。hub 认领该节点后使安装凭据失效，返回只用于上报的运行 token；安装凭据不能上报，运行 token 不能再次注册。CLI `node create`、`node rotate-token` 与管理 API 的 `token` 字段也返回安装凭据，不能直接填入 agent 配置。旧版运行 token 继续上报，旧版尚未使用的无前缀安装 token 须在面板重新换发；库中的完整凭据哈希格式不变，无需数据库迁移。
+先在面板的「批量添加节点」开一个接入窗口拿到 key（或在 hub 主机上 `heron-hub window open`）；也可以在「节点」页直接添加节点，用创建时返回的 `heron_install_` 安装凭据当 `--key`。hub 认领该节点后使安装凭据失效，返回只用于上报的运行 token；安装凭据不能上报，运行 token 不能再次注册。CLI `node create`、`node rotate-token` 与管理 API 的 `token` 字段也返回安装凭据，不能直接填入 agent 配置。旧版运行 token 继续上报，旧版尚未使用的无前缀安装 token 须在面板重新换发；库中的完整凭据哈希格式不变，无需数据库迁移。
 
 普通重跑安装命令即升级：已有配置时沿用现有注册，不消费 `--key`。在面板「换 token」后，必须使用弹窗中带 **`--re-register`** 的命令（Linux、macOS 安装脚本均支持），并给出 `--hub`、`--key`：它显式重新注册并重启服务，沿用本地探测策略，不删除配置。换发会立即撤销旧凭据，直到原机完成重新注册才能恢复上报；不要把凭据替换当作普通升级。
 
@@ -262,7 +262,7 @@ hub 与 agent 的版本：每个 hub 版本绑定一个 agent 版本（一套 ta
 
 ### Linux
 
-面板注册窗口页给出的命令形如下面这条（hub 为正式版本时脚本地址是 hub 同版本的 `releases/download/vX.Y.Z/install.sh`，装上的是该 hub 版本绑定的 agent）：
+面板「批量添加节点」页给出的命令形如下面这条（hub 为正式版本时脚本地址是 hub 同版本的 `releases/download/vX.Y.Z/install.sh`，装上的是该 hub 版本绑定的 agent）：
 
 ```sh
 curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/install.sh | sh -s -- --hub https://heron.example.com --key <key>

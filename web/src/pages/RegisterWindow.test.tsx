@@ -21,8 +21,8 @@ const renderOpen = (hubVersion: string, boundAgentVersion = "") => {
 };
 
 async function openDrawer() {
-  fireEvent.click(await screen.findByRole("button", { name: "开启新窗口" }));
-  return screen.getByRole("dialog", { name: "开启新窗口" });
+  fireEvent.click(await screen.findByRole("button", { name: "开启接入窗口" }));
+  return screen.getByRole("dialog", { name: "开启接入窗口" });
 }
 
 async function openWindow() {
@@ -75,14 +75,14 @@ describe("RegisterWindow", () => {
     queryClient.setQueryData(nodesKey, create(ListNodesResponseSchema));
     await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(1));
     if (operation === "open") await openWindow();
-    else fireEvent.click(await screen.findByRole("button", { name: "关闭窗口" }));
+    else fireEvent.click(await screen.findByRole("button", { name: "关闭接入窗口" }));
     await waitFor(() => expect(getRegisterWindow).toHaveBeenCalledTimes(2));
     expect([snapshotKey, nodesKey].map((key) => queryClient.getQueryState(key)?.isInvalidated)).toEqual([false, false]);
   });
 
   it("清空名额保留空白而不是零值", async () => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    const input = within(await openDrawer()).getByLabelText("可注册节点数") as HTMLInputElement;
+    const input = within(await openDrawer()).getByLabelText("最多接入台数") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
     expect({ value: input.value, nan: Number.isNaN(input.valueAsNumber) }).toEqual({ value: "", nan: true });
   });
@@ -90,22 +90,22 @@ describe("RegisterWindow", () => {
   it("状态挂起时显示加载中，不渲染页头主按钮", async () => {
     renderWithAdmin({ getRegisterWindow: () => new Promise(() => {}) }, [{ path: "/register", Component: RegisterWindow }], "/register");
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "开启新窗口" })).toBeNull();
-    expect(screen.queryByText("当前没有开启的窗口。")).toBeNull();
+    expect(screen.queryByRole("button", { name: "开启接入窗口" })).toBeNull();
+    expect(screen.queryByText("当前没有开启的接入窗口。")).toBeNull();
   });
 
   it("状态首次失败只显示错误", async () => {
     renderWithAdmin({ getRegisterWindow: async () => { throw new ConnectError("status unavailable", Code.Unavailable); } }, [{ path: "/register", Component: RegisterWindow }], "/register");
     expect(await screen.findByRole("alert")).toHaveTextContent("status unavailable");
-    expect(screen.queryByText("当前没有开启的窗口。")).toBeNull();
-    expect(screen.queryByRole("button", { name: "开启新窗口" })).toBeNull();
+    expect(screen.queryByText("当前没有开启的接入窗口。")).toBeNull();
+    expect(screen.queryByRole("button", { name: "开启接入窗口" })).toBeNull();
   });
 
   it.each(["", "0", "-1"])("名额为 '%s' 时禁用开窗", async (value) => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByText("当前没有开启的接入窗口。");
     const drawer = within(await openDrawer());
-    fireEvent.change(drawer.getByLabelText("可注册节点数"), { target: { value } });
+    fireEvent.change(drawer.getByLabelText("最多接入台数"), { target: { value } });
     expect(drawer.getByRole("button", { name: "开启" })).toBeDisabled();
   });
 
@@ -117,14 +117,14 @@ describe("RegisterWindow", () => {
       openRegisterWindow: async () => { opened = true; return { key: "expires", expiresAt: 4_000_000_000n, maxNodes: 3 }; },
       getSnapshot: snapshotOf("v1.2.3"),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByText("当前没有开启的接入窗口。");
     await openWindow();
-    await screen.findByRole("button", { name: "关闭窗口" });
+    await screen.findByRole("button", { name: "关闭接入窗口" });
     await screen.findByLabelText("注册 key");
     expect(await screen.findAllByText(/install\.sh \| sh -s --/)).toHaveLength(2);
     opened = false;
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByText("当前没有开启的接入窗口。");
     expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
     expect(screen.queryByText(/install\.sh/)).not.toBeInTheDocument();
   });
@@ -145,7 +145,7 @@ describe("RegisterWindow", () => {
       { getRegisterWindow: async () => ({ open: opened, expiresAt: 4_000_000_000n, remaining: 5 }), openRegisterWindow, getSnapshot: snapshotOf("v1.2.3") },
       [{ path: "/register", Component: RegisterWindow }, { path: "/away", element: <h1>away</h1> }], "/register",
     );
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByText("当前没有开启的接入窗口。");
     await openWindow();
     expect(await screen.findByLabelText("注册 key")).toHaveTextContent("cafe");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -153,7 +153,7 @@ describe("RegisterWindow", () => {
     expect(openRegisterWindow).toHaveBeenCalledWith(expect.objectContaining({ ttlS: 3600, maxNodes: 5 }), expect.anything());
     await act(() => router.navigate("/away"));
     await act(() => router.navigate("/register"));
-    await screen.findByRole("button", { name: "关闭窗口" });
+    await screen.findByRole("button", { name: "关闭接入窗口" });
     expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
   });
 
@@ -163,10 +163,10 @@ describe("RegisterWindow", () => {
       { getRegisterWindow: async () => ({ open: true, expiresAt: 4_000_000_000n, remaining: 3 }), closeRegisterWindow },
       [{ path: "/register", Component: RegisterWindow }], "/register",
     );
-    expect(await screen.findByText(/剩余 3 个名额/)).toBeInTheDocument();
+    expect(await screen.findByText(/还能接入 3 台/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "窗口状态" })).toHaveClass("card");
-    expect(screen.getByRole("button", { name: "开启新窗口" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "关闭窗口" }));
+    expect(screen.getByRole("button", { name: "开启接入窗口" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "关闭接入窗口" }));
     await waitFor(() => expect(closeRegisterWindow).toHaveBeenCalled());
   });
 
@@ -178,12 +178,12 @@ describe("RegisterWindow", () => {
       closeRegisterWindow: async () => { opened = false; return {}; },
       getSnapshot: snapshotOf("v1.2.3"),
     }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    await screen.findByText("当前没有开启的窗口。");
+    await screen.findByText("当前没有开启的接入窗口。");
     await openWindow();
     await screen.findByLabelText("注册 key");
     expect(await screen.findAllByText(/install\.sh \| sh -s --/)).toHaveLength(2);
-    fireEvent.click(await screen.findByRole("button", { name: "关闭窗口" }));
-    await screen.findByText("当前没有开启的窗口。");
+    fireEvent.click(await screen.findByRole("button", { name: "关闭接入窗口" }));
+    await screen.findByText("当前没有开启的接入窗口。");
     expect(screen.queryByLabelText("注册 key")).not.toBeInTheDocument();
     expect(screen.queryByText(/install\.sh/)).not.toBeInTheDocument();
   });
@@ -200,7 +200,7 @@ describe("RegisterWindow", () => {
       expect(p.textContent).toContain("--key k1");
       expect(p.textContent).not.toContain("--re-register");
     }
-    expect(screen.getByText(/以 root 执行/)).toBeInTheDocument();
+    expect(screen.getByText(/以 root 执行（agent 若经其他地址访问 hub/)).toBeInTheDocument();
     expect(screen.queryByText(/将安装最新 release/)).toBeNull();
     expect(screen.getByText(/安装命令的可信来源是 README 与 GitHub Release/)).toBeInTheDocument();
   });
@@ -320,4 +320,28 @@ describe("RegisterWindow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("snapshot refresh failed");
     expect(screen.getAllByText(/releases\/download\/v1\.2\.3\/install\.sh/)).toHaveLength(2);
   });
+});
+
+it("页面说明是批量添加服务器节点：限时限量的接入窗口、每台执行一次安装命令、名称默认取主机名，并指向逐台添加的入口", async () => {
+  renderOpen("v0.9.4");
+  const guide = within(await screen.findByRole("region", { name: "使用说明" }));
+  expect(screen.getByRole("heading", { name: "批量添加节点" })).toBeInTheDocument();
+  expect(screen.getByText("一次接入多台服务器，不用逐台在面板里建节点。")).toBeInTheDocument();
+  expect(guide.getByText(/在每台要监控的服务器上以 root 执行一次，它就自动注册为一个新节点，名称默认取主机名/)).toBeInTheDocument();
+  expect(guide.getByText("--name 名称")).toBeInTheDocument();
+  expect(guide.getByRole("link", { name: "节点" })).toHaveAttribute("href", "/nodes");
+});
+
+it("有效期是自绘下拉，默认 1 小时，选中的有效期随开窗请求提交", async () => {
+  const openRegisterWindow = vi.fn(async () => ({ key: "k", expiresAt: 4_000_000_000n, maxNodes: 5 }));
+  renderWithAdmin({ getRegisterWindow: async () => ({ open: false, expiresAt: 0n, remaining: 0 }), openRegisterWindow, getSnapshot: snapshotOf("v1.2.3") },
+    [{ path: "/register", Component: RegisterWindow }], "/register");
+  const drawer = within(await openDrawer());
+  const ttl = drawer.getByRole("button", { name: /^有效期 / });
+  expect(ttl).toHaveAccessibleName("有效期 1 小时");
+  fireEvent.click(ttl);
+  fireEvent.click(drawer.getByRole("option", { name: "24 小时" }));
+  expect(ttl).toHaveAccessibleName("有效期 24 小时");
+  fireEvent.click(drawer.getByRole("button", { name: "开启" }));
+  await waitFor(() => expect(openRegisterWindow).toHaveBeenCalledWith(expect.objectContaining({ ttlS: 86400, maxNodes: 5 }), expect.anything()));
 });

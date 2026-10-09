@@ -27,7 +27,7 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await page.goto('/admin/login');
   await rpc(page, 'Login', { password: 'local-browser-test-password' });
   await page.goto('/admin/register');
-  await page.getByRole('button', { name: '开启新窗口' }).click();
+  await page.getByRole('button', { name: '开启接入窗口' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '开启', exact: true }).click();
   await expect(page.getByLabel('curl 安装命令')).toBeVisible();
   if (browserName === 'chromium') {
@@ -45,7 +45,7 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await expect(page.getByRole('button', { name: '复制 curl 命令' })).toBeVisible();
   await expect(page.getByRole('button', { name: '复制 wget 命令' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('register-copy-mobile.png'), fullPage: true });
-  await page.getByRole('button', { name: '关闭窗口' }).click();
+  await page.getByRole('button', { name: '关闭接入窗口' }).click();
   await expect(page.getByRole('button', { name: '复制 curl 命令' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '复制 wget 命令' })).toHaveCount(0);
 });
@@ -197,7 +197,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   for (const [route, heading] of [
     ['probes', '探测任务'], ['alerts', '告警规则'], ['events', '告警事件'], ['channels', '通知渠道'],
     ['appearance', '外观'], ['themes', '主题'], ['storage', '存储'], ['updates', '在线更新'], ['security', '安全'],
-    ['security/credentials', '账户安全'], ['tokens', 'API token'], ['register', '注册窗口'],
+    ['security/credentials', '账户安全'], ['tokens', 'API token'], ['register', '批量添加节点'],
   ]) {
     await page.goto('/admin/' + route);
     await expect(page.getByRole('heading', { name: heading, exact: true, level: 1 })).toBeVisible();

@@ -1,8 +1,27 @@
 /* 只由管理端入口加载。颜色、字体、圆角、控件高度都来自 styles.css :root 的 token（设计 §2）；这里只有布局与管理端专有部件。 */
 .admin-shell { min-height: 100dvh; font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 .admin-shell :is(input, textarea)::placeholder { color: var(--muted); opacity: .85; }
-/* 勾选与单选是 16px 方块：清掉基础 input 的 min-height（控件高 32px），否则单行表格的勾选列把行高撑到 44px 以上。 */
-.admin-shell input:is([type="checkbox"], [type="radio"]) { accent-color: var(--accent); width: 16px; height: 16px; min-height: 0; flex: none; }
+/* 勾选与单选是 16px 方块：清掉基础 input 的 min-height（控件高 32px），否则单行表格的勾选列把行高撑到 44px 以上。
+   外观自绘（appearance: none），不用浏览器按系统主题画的方框：选中为强调色实底加白勾，半选（MixedCheckbox 的
+   indeterminate）为实底加一横，单选为圆环加实心点；语义、键盘与表单行为仍是原生的 input。开关（.switch-field 里的
+   input 与 input.switch）有自己的画法，排除在外——这里的 ::before 勾号会盖掉开关的圆钮。 */
+.admin-shell input:is([type="checkbox"], [type="radio"]) { width: 16px; height: 16px; min-height: 0; flex: none; }
+.admin-shell input:is([type="checkbox"], [type="radio"]):not(.switch, .switch-field input) {
+  appearance: none; display: inline-grid; place-content: center; margin: 0; padding: 0; border: 1px solid var(--line-strong);
+  background: var(--card); cursor: pointer; vertical-align: middle;
+}
+.admin-shell input[type="checkbox"]:not(.switch, .switch-field input) { border-radius: 4px; }
+.admin-shell input[type="radio"] { border-radius: 50%; }
+.admin-shell input:is([type="checkbox"], [type="radio"]):not(.switch, .switch-field input):hover:not(:disabled) { border-color: var(--accent); }
+.admin-shell input[type="checkbox"]:not(.switch, .switch-field input):is(:checked, :indeterminate) { border-color: var(--accent); background: var(--accent); }
+.admin-shell input[type="checkbox"]:not(.switch, .switch-field input):checked::before { content: ""; width: 8px; height: 4px; border: solid var(--on-accent); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+.admin-shell input[type="checkbox"]:not(.switch, .switch-field input):indeterminate::before { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--on-accent); }
+.admin-shell input[type="radio"]:checked { border-color: var(--accent); }
+.admin-shell input[type="radio"]:checked::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.admin-shell input:is([type="checkbox"], [type="radio"]):not(.switch, .switch-field input):disabled { opacity: 0.5; cursor: default; }
+/* 数字框不画浏览器自带的上下微调箭头（系统控件，外观随平台变），与其它输入框同一种外框；方向键照常增减。 */
+.admin-shell input[type="number"] { appearance: textfield; }
+.admin-shell input[type="number"]::-webkit-inner-spin-button, .admin-shell input[type="number"]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .admin-shell .skip-link { position: fixed; z-index: 50; top: -100px; left: 16px; padding: 12px 18px; background: var(--card); }
 .admin-shell .skip-link:focus { top: 12px; }
 .admin-sidebar { position: fixed; inset: 0 auto 0 0; width: 232px; display: flex; flex-direction: column; background: var(--card); border-right: 1px solid var(--line); z-index: 20; }
@@ -127,7 +146,7 @@ span.node-subtext { margin-right: 8px; }
 .billing-edit .switch-field { grid-column: 1 / -1; }
 .admin-shell .tags-edit { min-width: 0; }
 .tags-input-row { display: flex; gap: 8px; }
-.tags-input-row input { flex: 1; }
+.tags-input-row .suggest { flex: 1; }
 .address-diagnostics { background: var(--bg); border: 1px solid var(--line); padding: 14px; border-radius: 8px; margin-bottom: 18px; }
 .address-diagnostics .node-address { flex-wrap: wrap; }
 .address-diagnostics .node-address time { color: var(--muted); font-size: 10px; margin-left: auto; }
