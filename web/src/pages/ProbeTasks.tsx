@@ -110,10 +110,10 @@ export function ProbeTasks() {
             return <tr key={String(t.id)} aria-label={t.target}>
               <td data-label="排序"><button type="button" className="link" aria-label={`上移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, -1)}>↑</button><button type="button" className="link" aria-label={`下移 ${label}`} disabled={!movable} onClick={() => order.move(t.id, 1)}>↓</button></td>
               <td data-label="类型">{kindLabel(t.kind)}</td>
-              <td data-label="目标" className="num">{t.target}</td>
+              <td data-label="目标" className="num"><span className="clip-text clip-wide" title={t.target}>{t.target}</span></td>
               <td data-label="间隔" className="num">{t.intervalS} s</td>
               <td data-label="超时" className="num">{t.timeoutMs} ms</td>
-              <td data-label="分配"><span title={assignment.title || undefined} className={assignment.text === "未分配" ? "muted" : undefined}>{assignment.text}</span></td>
+              <td data-label="分配" className="wrap-text"><span title={assignment.title || undefined} className={assignment.text === "未分配" ? "muted" : undefined}>{assignment.text}</span></td>
               <td data-column="actions"><RowMenu label={label} items={[
                 { label: "编辑", disabled: busy, onSelect: (trigger) => { update.reset(); setDrawer({ kind: "edit", entry, opener: trigger }); } },
                 // 导航项不随保存禁用：保存只发生在抽屉里，抽屉打开时整页已 inert，行菜单本就不可达。

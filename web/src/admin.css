@@ -264,7 +264,7 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .node-secondary .badge-attention { flex: none; }
 .chip-public { background: var(--card-raised); }
 .badge-attention { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 12px; line-height: 18px; white-space: nowrap; color: var(--status-attention); background: color-mix(in srgb, var(--status-attention) 14%, transparent); }
-.node-note { margin: 2px 0 0; font-size: 12px; min-width: 0; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-note { margin: 2px 0 0; font-size: 12px; }
 .node-management .tag-chips { display: flex; flex-wrap: nowrap; gap: 4px; list-style: none; margin: 2px 0 0; padding: 0; min-width: 0; overflow: hidden; }
 .node-secondary { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
 .node-management .tag-chips .chip { flex: none; }

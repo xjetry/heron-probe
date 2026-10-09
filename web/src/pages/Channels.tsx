@@ -110,7 +110,7 @@ export function Channels() {
               return <tr key={String(c.id)}>
                 <td data-label="名称">{c.name}</td>
                 <td data-label="类型">{labelOf(CHANNEL_KINDS, c.kind)}</td>
-                <td data-label="目标">{channelTarget(c)}</td>
+                <td data-label="目标"><span className="clip-text clip-wide" title={channelTarget(c)}>{channelTarget(c)}</span></td>
                 <td data-label="节奏上限">{rateLabel(c)}</td>
                 <td data-label="创建于" className="muted">{day(c.createdAt)}</td>
                 <td data-column="actions"><RowMenu label={label} items={[

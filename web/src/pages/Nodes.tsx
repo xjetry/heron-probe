@@ -297,7 +297,7 @@ function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderC
       {(lagging || node.tags.length > 0 || node.note) && <div className="node-secondary">
         {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}
         {node.tags.length > 0 && <ul className="tag-chips" aria-label={`标签 ${label}`} title={node.tags.join("、")}>{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
-        {node.note && <p className="node-note muted" title={node.note}>{node.note}</p>}
+        {node.note && <p className="node-note clip-text muted" title={node.note}>{node.note}</p>}
       </div>}
     </td>
     <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.facts?.network} /></td>
