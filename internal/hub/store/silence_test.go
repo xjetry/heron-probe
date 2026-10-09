@@ -47,8 +47,8 @@ func TestSilenceRoundTripAndScope(t *testing.T) {
 		t.Fatalf("once=%+v", got[1])
 	}
 	// 显式集合升序去重。
-	if !slices.Equal(got[2].NodeIDs, ids) {
-		t.Fatalf("explicit node ids=%v, want %v", got[2].NodeIDs, ids)
+	if got[2].ID != explicit.ID || !slices.Equal(got[2].NodeIDs, ids) {
+		t.Fatalf("explicit=%+v, want id %d node ids %v", got[2], explicit.ID, ids)
 	}
 	// 更新整体替换作用域与字段，created_at 不动。
 	daily.AllNodes, daily.Enabled, daily.NodeIDs = false, false, []int64{ids[1]}

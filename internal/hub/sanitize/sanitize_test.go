@@ -3,8 +3,8 @@ package sanitize
 import "testing"
 
 func TestStringStripsControlsKeepsFormatChars(t *testing.T) {
-	got := String("a\x00b\x1fc\x7fd\u0085\u009b‮‌é", 64)
-	if got != "abcd‌é" {
+	got := String("a\x00b\x1fc\x7fd\u0085\u009b\u202e\u200cé", 64)
+	if got != "abcd\u200cé" {
 		t.Fatalf("got %q", got)
 	}
 }

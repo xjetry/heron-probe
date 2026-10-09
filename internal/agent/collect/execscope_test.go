@@ -501,7 +501,7 @@ func TestMetricsUnknownScopesLeaveReadingsMissing(t *testing.T) {
 	}
 
 	// 识别整体失败（nil 快照按失败处理）同样缺读数。
-	m, err = c.Metrics(nil)
+	m, _ = c.Metrics(nil)
 	if m.CpuPct != nil || m.MemTotal != nil || m.Load1 != nil {
 		t.Fatalf("identify failure must leave readings unset, got %+v", m)
 	}

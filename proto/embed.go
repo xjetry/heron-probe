@@ -1,6 +1,6 @@
 // Package protosrc 把 proto 源文件与 agent 入口卡片嵌入 hub，由 GetApiReference 下发：
 // 不在仓库里的 agent 由此取得与 hub 同版本的 schema，注释即接口文档。
-// go:embed 只能取包目录之下的文件，所以这个包放在 proto/ 根；buf 只看 .proto，不受影响。
+// 嵌入指令只能取包目录之下的文件，所以这个包放在 proto/ 根；buf 只看 .proto，不受影响。
 package protosrc
 
 import "embed"

@@ -595,7 +595,7 @@ func TestUpdateAndReorderNodes(t *testing.T) {
 	ctx := context.Background()
 	a, _ := h.createNode(t, "a")
 	b, _ := h.createNode(t, "b")
-	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note‮", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
+	upd, err := h.admin.UpdateNode(ctx, connect.NewRequest(&heronv1.UpdateNodeRequest{Id: a, Name: "a2", Public: true, Note: "note\u202e", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0)}))
 	if err != nil || upd.Msg.GetNode().GetName() != "a2" || !upd.Msg.GetNode().GetPublic() || upd.Msg.GetNode().GetNote() != "note" {
 		t.Fatalf("UpdateNode = %v %v", upd, err)
 	}

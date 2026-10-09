@@ -2,7 +2,6 @@ package alert
 
 import (
 	"bytes"
-	"fmt"
 	"testing"
 	"time"
 
@@ -164,7 +163,7 @@ func TestSaveRuleEvaluatesEnabledCertExpiryRules(t *testing.T) {
 	wantState(t, f.e, r.ID, f.ids[0], store.StateOK)
 	events := f.events(t)
 	if len(events) != 2 || events[0].Transition != store.TransitionRecovered ||
-		events[0].Summary != fmt.Sprintf("节点 node1 的证书已不在提醒窗口内（规则 证书到期）") {
+		events[0].Summary != "节点 node1 的证书已不在提醒窗口内（规则 证书到期）" {
 		t.Fatalf("events = %+v", events)
 	}
 }

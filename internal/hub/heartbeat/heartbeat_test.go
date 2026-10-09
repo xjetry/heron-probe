@@ -18,18 +18,16 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
-// fakeSource 是 Source 的替换件：用例摆出每轮的设置与计数，并可记录读设置的次数以钉住"每轮重读"。
+// fakeSource 是 Source 的替换件：用例摆出每轮的设置与计数。
 type fakeSource struct {
 	mu       sync.Mutex
 	settings store.HeartbeatSettings
 	counts   Counts
-	reads    int
 }
 
 func (f *fakeSource) HeartbeatSettings(context.Context) (store.HeartbeatSettings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.reads++
 	return f.settings, nil
 }
 
@@ -43,12 +41,6 @@ func (f *fakeSource) set(s store.HeartbeatSettings) {
 	f.mu.Lock()
 	f.settings = s
 	f.mu.Unlock()
-}
-
-func (f *fakeSource) readCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.reads
 }
 
 type logBuffer struct {

@@ -217,7 +217,7 @@ func TestUpdateNodeTagValidation(t *testing.T) {
 		{[]string{"ok", ""}, "tags[1]: must be 1–64 characters after trimming whitespace; got 0"},
 		{[]string{"a\x00b"}, "tags[0]: must not contain control characters"},
 		{[]string{"a\tb"}, "tags[0]: must not contain control characters"},
-		{[]string{"a‮b"}, "tags[0]: must not contain control characters"},
+		{[]string{"a\u202eb"}, "tags[0]: must not contain control characters"},
 		{[]string{"a\u0085b"}, "tags[0]: must not contain control characters"},
 	} {
 		_, err := updateTags(t, h, id, "renamed", false, c.tags...)

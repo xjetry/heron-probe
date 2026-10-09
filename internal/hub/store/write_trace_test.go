@@ -46,8 +46,10 @@ func (d traceDriver) Open(name string) (driver.Conn, error) {
 	}
 	return &traceConn{Conn: c, trace: d.trace}, nil
 }
-func (c *traceConn) Begin() (driver.Tx, error) {
-	tx, err := c.Conn.Begin()
+
+// 包装 BeginTx 而不是已废弃的 Begin：database/sql 对实现了 ConnBeginTx 的连接只调 BeginTx，包装它才与被包装的驱动走同一条入口。
+func (c *traceConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	tx, err := c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}

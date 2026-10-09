@@ -94,7 +94,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	want := &heronv1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(true), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
 		GeoBackend: heronv1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &heronv1.LoginNotify{}}
 	want.Backup = defaultBackup()
-	if got := saveSettings(t, h, &heronv1.Settings{Title: " ‮\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
+	if got := saveSettings(t, h, &heronv1.Settings{Title: " \u202e\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}
 	if got := currentSettings(t, h); !proto.Equal(got, want) {

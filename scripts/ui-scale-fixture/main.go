@@ -130,7 +130,7 @@ func run(ctx context.Context, base string, count int, password string) error {
 			return err
 		}
 		if registered.Token == "" {
-			return errors.New("Register 未返回运行 token")
+			return errors.New("hub returned no run token from Register")
 		}
 		tokens = append(tokens, registered.Token)
 	}

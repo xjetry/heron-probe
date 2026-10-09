@@ -435,19 +435,12 @@ func loadAvgLine() string {
 
 func ctxOf(t *testing.T) context.Context { return t.Context() }
 
-// curveDur / directDur：闭环每档与直连每档的时长；smoke 缩到 1 秒。
+// curveDur：闭环每档的时长；smoke 缩到 1 秒。
 func curveDur() time.Duration {
 	if smoke {
 		return time.Second
 	}
 	return 30 * time.Second
-}
-
-func directDur() time.Duration {
-	if smoke {
-		return time.Second
-	}
-	return 10 * time.Second
 }
 
 // reportPairedPhase 合并一组饱和相位：重锤记账 + 读者按区间分类后的闲/压比值。

@@ -56,14 +56,22 @@ lint:
 	go vet ./...
 	GOOS=linux go vet ./...
 	GOOS=darwin go vet ./...
+	go tool staticcheck ./...
+	@# 另外两个 GOOS 用已经按本机平台编译好的二进制：`GOOS=linux go tool staticcheck` 会把工具本身交叉编译成 linux 产物再执行，exec 直接失败；
+	@# go tool -n 给出本机产物的路径（缺失时先构建），对它设 GOOS 才是"按另一个平台分析这份源码"。
+	staticcheck=$$(go tool -n staticcheck) && GOOS=linux "$$staticcheck" ./... && GOOS=darwin "$$staticcheck" ./...
+	go tool govulncheck ./...
 	go run ./scripts/releasekind -check-file AGENT_VERSION
 
 # deploy 包的替身测试每个用例都用 sh 真跑一遍安装脚本，负载高时整包要六七分钟（make ci 里实测 395 秒），
 # 逼近 go test 给每个测试二进制的默认 10 分钟超时，到点被杀看起来像随机失败。只给这个包放宽到 20 分钟，其余包
 # 保持默认，卡住的测试仍尽早暴露。包清单先落到变量：go list 失败或清单为空时整条命令失败，它的退出码不会被管道
 # 吞掉；再滤掉 deploy，滤空时 grep 以 1 退出、同样失败。两处都防的是退化成不带包参数、只测当前目录。
+# -race：hub 的内存缓存、写协程与跨包锁序都靠并发纪律维持，竞态只有检测器照得到，没有它的绿灯证明不了这些不变式。
+# 检测器下各包慢 3–10 倍，store 包在本机实测约 10 分钟，贴着默认的每包超时，所以放宽到 20 分钟。
+# deploy 包是替身脚本测试，没有并发可查，不带 -race。
 test:
-	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/heron-probe/deploy) && go test -count=1 $$pkgs
+	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/heron-probe/deploy) && go test -race -count=1 -timeout 20m $$pkgs
 	go test -count=1 -timeout 20m ./deploy/
 
 # 发布规则（版本号守卫、预发布判定）与回读判定的回归检查：只跑 make 的检查、-n 展开与 docker 桩，

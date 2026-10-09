@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,10 +17,6 @@ import (
 type githubRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f githubRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func githubResponse(r *http.Request, status int, body string) *http.Response {
-	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r, ContentLength: int64(len(body))}
-}
 
 func TestGitHubDialRejectsAllNonPublicAddresses(t *testing.T) {
 	for _, address := range []string{
