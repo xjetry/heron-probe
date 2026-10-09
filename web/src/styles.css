@@ -249,6 +249,13 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 /* 筛选行（public/FilterRow.tsx 与管理端列表页共用）。 */
 .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
 .filter-row input[type="search"] { width: min(100%, 260px); }
+/* 带放大镜与「输入 / 搜索」提示的搜索框（SearchHint）：提示叠在输入框上、不接收指针，输入框有内容时不渲染。 */
+.search-field { position: relative; display: inline-flex; align-items: center; width: min(100%, 260px); }
+.filter-row .search-field > input[type="search"] { width: 100%; padding-left: 32px; }
+.search-field > svg { position: absolute; left: 9px; color: var(--muted); pointer-events: none; }
+.search-field > .search-hint { position: absolute; left: 33px; right: 8px; pointer-events: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.search-hint { color: var(--muted); font-size: 13px; }
+.search-hint kbd { display: inline-block; min-width: 18px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 4px; font-size: 11px; line-height: 16px; text-align: center; color: var(--fg); }
 .filter-row .toggle[aria-pressed="true"], .view-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .view-switch { display: inline-flex; }
 .view-switch button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }

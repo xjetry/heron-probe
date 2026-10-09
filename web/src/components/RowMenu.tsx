@@ -7,6 +7,8 @@ export type RowMenuItem = {
   label: string;
   onSelect?: (trigger: HTMLElement) => void;
   to?: string;
+  // 随 to 一起交给 Link 的导航 state（例如节点列表的返回位置）。
+  state?: unknown;
   danger?: boolean;
   disabled?: boolean;
   confirm?: string;
@@ -78,7 +80,7 @@ export function RowMenu({ label, items }: { label: string; items: readonly RowMe
             const text = armed === index && item.confirm ? item.confirm : item.label;
             const className = item.danger ? "danger" : undefined;
             if (item.to && !item.disabled) {
-              return <Link key={index} role="menuitem" aria-label={name} className={className} to={item.to} onClick={() => close(false)}>{text}</Link>;
+              return <Link key={index} role="menuitem" aria-label={name} className={className} to={item.to} state={item.state} onClick={() => close(false)}>{text}</Link>;
             }
             return (
               <Fragment key={index}>

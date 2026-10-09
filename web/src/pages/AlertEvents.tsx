@@ -1,5 +1,5 @@
 import { useQuery } from "@connectrpc/connect-query";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { EventFeed, useAlertEvents, filtersFromParams, paramsWithFilters, matchesFilters, type EventFilters } from "../components/EventFeed";
@@ -8,9 +8,10 @@ import { ruleLabel, TRANSITIONS } from "../lib/alerts";
 import { withId } from "../lib/ids";
 import { DateInput } from "../components/DateInput";
 import { isDate } from "../lib/format";
+import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 
 export function AlertEvents() {
-  const [params, setParams] = useSearchParams();
+  const [params, setParams] = useSyncedSearchParams();
   const raw = params.get("node");
   // 无效参数不能退化成"全部节点"——那是放宽；直接报错，不发请求。
   const valid = raw === null || /^[1-9]\d*$/.test(raw);
@@ -20,7 +21,7 @@ export function AlertEvents() {
   const rules = useQuery(AdminService.method.listAlertRules, {});
   const events = useAlertEvents(valid ? nodeId : null);
   const filters = filtersFromParams(params);
-  const setFilters = (next: EventFilters) => setParams(paramsWithFilters(params, next), { replace: true });
+  const setFilters = (next: EventFilters) => setParams((current) => paramsWithFilters(current, next));
   if (!valid) return <p role="alert" className="error">节点参数 {raw} 无效。<Link to="/events">查看全部事件</Link></p>;
   // 外壳（标题、筛选、节点名）只依赖节点列表；事件列表是页内区域，区域未就绪不卸载外壳与筛选焦点。
   const shell = queryGate(nodes);
@@ -39,7 +40,7 @@ export function AlertEvents() {
         <select value={String(nodeId)} onChange={(e) => {
           const next = paramsWithFilters(params, filters);
           if (e.target.value === "0") next.delete("node"); else next.set("node", e.target.value);
-          setParams(next, { replace: true });
+          setParams(next);
         }}>
           <option value="0">全部节点</option>
           {nodeList.map((n) => <option key={String(n.id)} value={String(n.id)}>{withId(n.name, n.id)}</option>)}
@@ -61,7 +62,7 @@ export function AlertEvents() {
       {filtered && <button type="button" className="link" onClick={() => {
         const next = paramsWithFilters(params, { ruleId: null, transition: null, from: "", to: "" });
         next.delete("node");
-        setParams(next, { replace: true });
+        setParams(next);
       }}>清除筛选</button>}
       </div>
       {errorBanner(nodes.error, events.error, channels.error, rules.error)}

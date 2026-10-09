@@ -7,6 +7,7 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
 import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
+import { withId as withIdLabel } from "../lib/ids";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 import { fillSegments, segmentsValue } from "../test/fields";
 import { expectEmptyState } from "../test/empty";
@@ -1334,6 +1335,64 @@ it("维护中的节点在状态列标注，编辑里的维护开关随整体替�
   await waitFor(() => expect(updateNode).toHaveBeenCalledWith(expect.objectContaining({ id: 2n, maintenance: true }), expect.anything()));
 });
 
+describe("筛选由 URL 持有", () => {
+  const tagged = [
+    { ...two[0], tags: ["db"] },
+    { ...two[1], tags: [] },
+  ];
+  const routes = [{ path: "/nodes", Component: Nodes }, { path: "/nodes/:id", Component: () => <p>详情页</p> }];
+  const open = (path: string, impl: AdminImpl = {}) => renderWithAdmin({
+    getSnapshot: snapshotOf("v1.1.0"), listTags: async () => ({ tags: [{ name: "db", nodeCount: 1 }] }), listNodes: async () => ({ nodes: tagged }), ...impl,
+  }, routes, path);
+  const search = (router: { state: { location: { search: string } } }) => new URLSearchParams(router.state.location.search);
+
+  it("带筛选的 URL 打开即生效：搜索词回填，URL 里大小写不同的标签按清单写法请求并显示胶囊", async () => {
+    const requests: ListNodesRequest[] = [];
+    open("/nodes?q=a&tag=DB", { listNodes: async (request: ListNodesRequest) => { requests.push(request); return { nodes: tagged }; } });
+    expect(await screen.findByRole("searchbox", { name: "搜索节点" })).toHaveValue("a");
+    expect(await screen.findByRole("button", { name: "移除 db" })).toBeInTheDocument();
+    await waitFor(() => expect(requests.at(-1)?.tags).toEqual(["db"]));
+    expect(screen.getByRole("link", { name: withIdLabel("a", 1n) })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: withIdLabel("b", 2n) })).toBeNull();
+  });
+
+  it("搜索、标签、无标签与状态的改动写进 URL；无标签与标签同时出现时按无标签", async () => {
+    const { router } = open("/nodes?untagged=1&tag=db");
+    expect(await screen.findByRole("checkbox", { name: "只看没有标签的节点" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "只看没有标签的节点" }));
+    await waitFor(() => expect(search(router).get("untagged")).toBeNull());
+    expect(search(router).getAll("tag")).toEqual([]);
+    fireEvent.click(await findFilterBox("db"));
+    await waitFor(() => expect(search(router).getAll("tag")).toEqual(["db"]));
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "a" } });
+    await waitFor(() => expect(search(router).get("q")).toBe("a"));
+    fireEvent.change(screen.getByRole("combobox", { name: "状态" }), { target: { value: "offline" } });
+    await waitFor(() => expect(search(router).get("status")).toBe("offline"));
+    expect(search(router).get("q")).toBe("a");
+    expect(search(router).getAll("tag")).toEqual(["db"]);
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(screen.getByRole("searchbox", { name: "搜索节点" })).toHaveValue("");
+  });
+
+  it("URL 里清单没有的标签显示为可移除的胶囊，移除后 URL 不再带它", async () => {
+    const { router } = open("/nodes?tag=gone");
+    fireEvent.click(await screen.findByRole("button", { name: "移除 gone" }));
+    await waitFor(() => expect(search(router).getAll("tag")).toEqual([]));
+  });
+
+  it("名称链接与「查看详情」都把列表的查询串带进详情的导航 state", async () => {
+    const { router } = open("/nodes?q=a&tag=db");
+    fireEvent.click(await screen.findByRole("link", { name: withIdLabel("a", 1n) }));
+    await screen.findByText("详情页");
+    expect(router.state.location.state).toEqual({ nodeListSearch: "?q=a&tag=db" });
+    await act(async () => { await router.navigate("/nodes?q=b"); });
+    openRowAction(withIdLabel("b", 2n), "查看详情");
+    await screen.findByText("详情页");
+    expect(router.state.location.state).toEqual({ nodeListSearch: "?q=b" });
+  });
+});
+
 describe("移动到指定位置", () => {
   // a、c 挂 db，b、d 挂 web；position 是全序名次（服务端随读算出，过滤不改变）。
   const positioned = [
@@ -1349,6 +1408,14 @@ describe("移动到指定位置", () => {
   });
   // 行首序号：手柄按钮里唯一的文字就是序号。
   const positionOf = (label: string) => screen.getByRole("button", { name: `调整顺序 ${label}` }).textContent;
+
+  it("排序说明写出全部入口，含行菜单与批量的「移动到…」", async () => {
+    renderNodes({ listNodes: listHub, listTags: tagList });
+    await screen.findByRole("link", { name: "a（#1）" });
+    const help = document.getElementById("node-order-help")!;
+    expect(help).toHaveTextContent("上移、下移、置顶、置底或「移动到…」指定位置");
+    expect(help).toHaveTextContent("勾选多个节点后可批量「移动到…」");
+  });
 
   it("未过滤时序号是当前位次，过滤时序号是服务端全序名次", async () => {
     renderNodes({ listNodes: listHub, listTags: tagList });

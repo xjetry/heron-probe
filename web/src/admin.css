@@ -238,13 +238,13 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
 @media (max-width: 900px) { .cards-3 { grid-template-columns: 1fr; } }
 .quick-search-trigger { display: inline-flex; align-items: center; gap: 8px; height: var(--control-h); padding: 0 10px; color: var(--muted); background: var(--bg); min-width: 220px; }
-.quick-search-trigger kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+.quick-search-trigger > kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .admin-modal.quick-search { width: min(560px, calc(100vw - 32px)); }
 .quick-search input[type="search"] { width: 100%; }
 .quick-search ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .quick-search li a { display: block; padding: 0 10px; line-height: 36px; border-radius: var(--radius-control); color: var(--fg); }
 .quick-search li[aria-selected="true"] a { background: var(--card-hover); }
-@media (max-width: 900px) { .quick-search-trigger { min-width: 0; } .quick-search-trigger span, .quick-search-trigger kbd { display: none; } }
+@media (max-width: 900px) { .quick-search-trigger { min-width: 0; } .quick-search-trigger > .search-hint, .quick-search-trigger > kbd { display: none; } }
 /* 分段单选与抽屉中的双列字段。 */
 .form-grid.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 /* 节点管理表（pages/Nodes.tsx）：行高 52px（设计 §4.3），名称格紧凑排列，操作列只有 ⋯。 */

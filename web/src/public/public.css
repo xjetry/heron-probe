@@ -37,7 +37,7 @@
 .node-card-foot dt { color: var(--muted); }
 .node-card-foot dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; margin: 0; }
 .folded-nodes { margin-top: 16px; }
-.folded-nodes > summary { cursor: pointer; color: var(--muted); font-size: 13px; height: 32px; display: flex; align-items: center; }
+.folded-nodes > summary { cursor: pointer; color: var(--muted); font-size: 13px; height: 32px; display: flex; align-items: center; gap: 8px; list-style: none; }
 .compact-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
 .compact-table th { height: 32px; text-align: left; padding: 0 10px; color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); }
 .compact-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -49,7 +49,12 @@
 .wall { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 28px; }
 .wall-group { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 12px; }
 .wall-group > summary { display: flex; align-items: center; gap: 8px; height: 32px; font-weight: 600; font-size: 13px; cursor: pointer; list-style: none; }
-.wall-group > summary::-webkit-details-marker { display: none; }
+/* 可折叠的分组标题（状态墙分组、卡片下方的离线与从未上报）都是 flex 布局，浏览器自带的三角不显示；这里画一个随 open
+   旋转的箭头，让"能点开 / 收起"看得出来。 */
+:is(.wall-group, .folded-nodes) > summary::-webkit-details-marker { display: none; }
+:is(.wall-group, .folded-nodes) > summary::before { content: ""; flex: none; width: 6px; height: 6px; margin: 0 2px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+:is(.wall-group, .folded-nodes)[open] > summary::before { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { :is(.wall-group, .folded-nodes) > summary::before { transition: none; } }
 .tiles { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .tile { width: 132px; }
 .tile > a { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 2px 6px; min-height: 56px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); color: var(--fg); font-size: 12px; }
@@ -93,4 +98,7 @@
   .tile-meters { display: flex; flex-wrap: wrap; justify-content: end; max-width: 170px; }
   .tile-meters .bar { display: none; }
   .tile-chevron { display: inline; color: var(--faint); }
+  /* 宽屏上名称列靠 max-width: 0 吃掉其余列（不换行）剩下的宽度、放不下就截断；窄屏上剩下的只够几个字，改为折行显示全名。 */
+  .compact-table :is(th, td) { padding-inline: 6px; }
+  .compact-table td:first-child { max-width: none; white-space: normal; overflow-wrap: anywhere; padding-block: 6px; }
 }

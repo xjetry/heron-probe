@@ -5,7 +5,7 @@ import { PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
-import { PUBLIC_VIEW_KEY } from "./view";
+import { PUBLIC_VIEW_KEY, PUBLIC_WALL_GROUP_KEY } from "./prefs";
 
 const snapshot = create(PublicSnapshotSchema, {
   now: 1_000n,
@@ -140,6 +140,40 @@ it("没有任何标签时不出分组下拉，按地区分组", async () => {
   await act(async () => vi.advanceTimersByTimeAsync(POLL_MS + 100));
   await waitFor(() => expect(screen.queryByRole("combobox", { name: "分组" })).toBeNull());
   expect(groupHeads()).toEqual(["日本 · 1 / 2 在线", "香港 · 1 / 1 在线", "未知 · 0 / 1 在线"]);
+});
+
+it("搜索框：/ 与 ⌘K 聚焦，空时显示「输入 / 搜索」提示，有内容时不显示；在别的输入框里打 / 不抢焦点", async () => {
+  render();
+  await screen.findByText("2 / 4 在线");
+  const box = screen.getByRole("searchbox", { name: "搜索节点" });
+  expect(box).toHaveAttribute("aria-keyshortcuts", "/ Meta+K Control+K");
+  const hint = () => box.parentElement!.querySelector(".search-hint");
+  expect(hint()).toHaveTextContent("输入 / 搜索名称、标签、备注");
+  fireEvent.keyDown(document.body, { key: "/" });
+  expect(box).toHaveFocus();
+  fireEvent.change(box, { target: { value: "web" } });
+  expect(hint()).toBeNull();
+  box.blur();
+  fireEvent.keyDown(window, { key: "k", metaKey: true });
+  expect(box).toHaveFocus();
+  open("标签");
+  const tagSearch = within(screen.getByRole("group", { name: "标签" })).getByRole("searchbox");
+  tagSearch.focus();
+  fireEvent.keyDown(tagSearch, { key: "/" });
+  expect(tagSearch).toHaveFocus();
+});
+
+it("状态墙分组选择记到 localStorage，下次打开沿用", async () => {
+  localStorage.setItem(PUBLIC_VIEW_KEY, "wall");
+  render();
+  await screen.findByText("2 / 4 在线");
+  fireEvent.change(screen.getByRole("combobox", { name: "分组" }), { target: { value: "tag" } });
+  expect(localStorage.getItem(PUBLIC_WALL_GROUP_KEY)).toBe("tag");
+  cleanup();
+  render();
+  await screen.findByText("2 / 4 在线");
+  expect(screen.getByRole("combobox", { name: "分组" })).toHaveValue("tag");
+  expect(groupHeads()).toEqual(["db · 1 / 2 在线", "prod · 1 / 2 在线", "web · 1 / 1 在线", "无标签 · 0 / 1 在线"]);
 });
 
 it("访客选的视图记到 localStorage，下次打开沿用", async () => {

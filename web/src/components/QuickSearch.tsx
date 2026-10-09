@@ -1,12 +1,14 @@
 import { useQuery } from "@connectrpc/connect-query";
 import { skipToken } from "@tanstack/react-query";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { errorBanner } from "../api/queryGate";
 import { AdminService } from "../gen/heron/v1/admin_pb";
 import { filterNodes } from "../lib/nodeSearch";
+import { SEARCH_KEYSHORTCUTS, useSearchShortcut } from "../lib/useSearchShortcut";
 import { Icon } from "./Icon";
 import { Modal } from "./Modal";
+import { SearchHint } from "./SearchHint";
 
 const LIMIT = 8;
 
@@ -19,16 +21,7 @@ export function QuickSearch() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const nodes = useQuery(AdminService.method.listNodes, opener ? {} : skipToken);
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setOpener((current) => current ?? trigger.current ?? document.body);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useSearchShortcut(useCallback(() => setOpener((current) => current ?? trigger.current ?? document.body), []));
   const close = () => { setOpener(null); setQuery(""); setActive(0); };
   const matches = nodes.data ? filterNodes(nodes.data.nodes, query).slice(0, LIMIT) : [];
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -39,8 +32,8 @@ export function QuickSearch() {
   };
   return (
     <>
-      <button ref={trigger} type="button" className="quick-search-trigger" aria-label="搜索节点" onClick={(event) => setOpener(event.currentTarget)}>
-        <Icon name="search" /><span>搜索节点</span><kbd>⌘K</kbd>
+      <button ref={trigger} type="button" className="quick-search-trigger" aria-label="搜索节点" aria-keyshortcuts={SEARCH_KEYSHORTCUTS} onClick={(event) => setOpener(event.currentTarget)}>
+        <Icon name="search" /><SearchHint text="搜索节点" /><kbd>⌘K</kbd>
       </button>
       {opener && (
         <Modal title="搜索节点" opener={opener} onClose={close} className="quick-search">

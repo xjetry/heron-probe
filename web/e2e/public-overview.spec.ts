@@ -51,6 +51,19 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
 
   // 汇总与分组：维护中不算在线；组按在线数降序，未知最后。
   await expect(page.getByText("2 / 5 在线")).toBeVisible();
+  // 搜索框：空时显示「输入 / 搜索」提示；/ 与 ⌘K / Ctrl+K 聚焦，输入后提示消失。
+  const searchBox = page.getByRole("searchbox", { name: "搜索节点" });
+  const searchHint = page.locator(".search-field .search-hint");
+  await expect(searchHint).toHaveText("输入 / 搜索名称、标签、备注");
+  await page.keyboard.press("/");
+  await expect(searchBox).toBeFocused();
+  await page.keyboard.type("tokyo");
+  await expect(searchHint).toHaveCount(0);
+  await searchBox.fill("");
+  await searchBox.blur();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(searchBox).toBeFocused();
+  await searchBox.blur();
   // 没选过时默认卡片；切到状态墙后记在浏览器里，刷新沿用。
   const views = page.getByRole("group", { name: "视图" });
   await expect(views.getByRole("button", { name: "卡片" })).toHaveAttribute("aria-pressed", "true");
@@ -64,6 +77,10 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   // 分组切到标签：节点进它的每个标签组，同计数按 hub 的标签顺序，无标签最后；再切回地区。
   const grouping = page.getByRole("combobox", { name: "分组" });
   await grouping.selectOption("tag");
+  await expect(page.locator(".wall-group > summary")).toHaveText(["家宽 · 1 / 2 在线", "机房 · 1 / 2 在线", "无标签 · 0 / 1 在线"]);
+  // 分组选择记在浏览器里，刷新沿用。
+  await page.reload();
+  await expect(grouping).toHaveValue("tag");
   await expect(page.locator(".wall-group > summary")).toHaveText(["家宽 · 1 / 2 在线", "机房 · 1 / 2 在线", "无标签 · 0 / 1 在线"]);
   await grouping.selectOption("region");
   await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
@@ -105,8 +122,13 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await expect(folded).toHaveAttribute("open");
   await expect(folded.getByRole("row")).toHaveCount(3);
   await expect(folded.getByRole("link", { name: "tokyo-home" })).toBeVisible();
+  // 标题前的箭头随展开状态转向：flex 标题没有浏览器自带的三角，靠它看出能收起。
+  const chevron = () => folded.locator("summary").evaluate((el) => getComputedStyle(el, "::before").transform);
+  const expanded = await chevron();
+  expect(expanded).not.toBe("none");
   await folded.locator("summary").click();
   await expect(folded).not.toHaveAttribute("open");
+  expect(await chevron()).not.toBe(expanded);
   const withExtra = (route: Route) => route.fulfill({ json: { now: String(now), nodes: [...nodes, { id: "6", name: "新离线节点", country: "", online: false, tags: [], lastSeenAt: String(now - 600) }], tags: ["家宽", "机房"] } });
   await page.route("**/heron.v1.PublicService/GetSnapshot**", withExtra);
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 3");
@@ -126,9 +148,10 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   const text = await page.evaluate(() => document.body.innerText);
   for (const word of FORBIDDEN) expect(text, word).not.toContain(word);
 
-  // 手机：卡片视图没有横向溢出。
+  // 手机：卡片视图没有横向溢出；离线表的名称折行显示全名，不截断。
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  for (const cell of await folded.locator("tbody td:first-child").all()) expect(await cell.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("cards-mobile.png"), fullPage: true });
   // 手机：墙是单列列表，点行直接进节点页，没有横向溢出。
   await views.getByRole("button", { name: "状态墙" }).click();

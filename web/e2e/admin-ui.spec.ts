@@ -446,3 +446,73 @@ test('总览轮询的快照压缩，其余管理响应不压缩', async ({ page 
   await expect(page.getByRole('list', { name: '需要处理' })).toBeVisible();
   await expect.poll(() => [encodings.get('GetSnapshot'), encodings.get('ListNodes')]).toEqual(['gzip', '']);
 });
+
+test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字，进详情再返回还原；/ 与 ⌘K 打开快速搜索', async ({ page, browserName, hub }) => {
+  await page.goto('/admin/login');
+  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  const tag = `url-${browserName}`;
+  const names = [`url-a-${browserName}`, `url-b-${browserName}`];
+  const ids: string[] = [];
+  for (const name of names) {
+    const { node } = await rpc(page, 'CreateNode', { name });
+    ids.push(node.id);
+    hub.deleteNodeAtEnd(node.id);
+  }
+  hub.deleteAtEnd('DeleteTag', { name: tag });
+  await rpc(page, 'UpdateNode', { id: ids[0], name: names[0], tags: [tag], trafficResetDay: 1, offlineGraceS: 0 });
+  await page.goto('/admin/nodes');
+  const box = page.getByRole('searchbox', { name: '搜索节点' });
+  const row = (i: number) => page.getByRole('link', { name: `${names[i]}（#${ids[i]}）`, exact: true });
+  const params = () => new URL(page.url()).searchParams;
+
+  // 不留间隔的真实按键：导航异步落地时输入框也不丢字、不乱序。
+  await box.click();
+  await page.keyboard.type(names[0]);
+  await expect(box).toHaveValue(names[0]);
+  await expect.poll(() => params().get('q')).toBe(names[0]);
+  await expect(row(0)).toBeVisible();
+  await expect(row(1)).toHaveCount(0);
+
+  if (browserName === 'chromium') {
+    // 输入法组字：组字中途的拼音不留下，确认后只剩确认的字。
+    await box.fill('');
+    await box.focus();
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text: 'l', selectionStart: 1, selectionEnd: 1 });
+    await cdp.send('Input.imeSetComposition', { text: 'lian', selectionStart: 4, selectionEnd: 4 });
+    await cdp.send('Input.insertText', { text: '链' });
+    await expect(box).toHaveValue('链');
+    await expect.poll(() => params().get('q')).toBe('链');
+    await box.fill(names[0]);
+  }
+
+  // 标签也进 URL；进详情（中途切 tab）再点返回，搜索词与标签都还原。
+  await page.getByRole('button', { name: /^标签/ }).click();
+  await page.getByRole('checkbox', { name: tag, exact: true }).check();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => params().getAll('tag')).toEqual([tag]);
+  await row(0).click();
+  await expect(page).toHaveURL(new RegExp(`/admin/nodes/${ids[0]}$`));
+  await page.getByRole('tab', { name: 'Agent 诊断' }).click();
+  await page.getByRole('link', { name: '返回节点列表' }).click();
+  await expect(box).toHaveValue(names[0]);
+  expect(params().get('q')).toBe(names[0]);
+  expect(params().getAll('tag')).toEqual([tag]);
+  await expect(page.getByRole('button', { name: `移除 ${tag}` })).toBeVisible();
+
+  // 快捷键：焦点不在输入框时 / 打开快速搜索；在输入框里 / 照常输入；⌘K / Ctrl+K 在输入框里也打开。
+  const dialog = page.getByRole('dialog', { name: '搜索节点' });
+  await page.getByRole('heading', { name: '节点', exact: true }).click();
+  await page.keyboard.press('/');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('searchbox')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await box.focus();
+  await page.keyboard.press('/');
+  await expect(box).toHaveValue(`${names[0]}/`);
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+});

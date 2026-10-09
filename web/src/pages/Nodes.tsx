@@ -1,7 +1,7 @@
 import { createConnectQueryKey, createQueryOptions, useMutation, useQuery, useTransport } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type DragEvent, type ReactNode, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { useLatestError } from "../api/useLatestError";
@@ -20,6 +20,7 @@ import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron
 import { priceText } from "../lib/billing";
 import { withId } from "../lib/ids";
 import { POLL_MS } from "../lib/poll";
+import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { sameTag, withoutTag } from "../lib/tags";
 import { olderThan } from "../lib/version";
 import { Missing } from "../components/Bar";
@@ -28,23 +29,26 @@ import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { StatusBadge } from "../components/StatusBadge";
 import { liveById, liveStatus } from "../lib/adminStatus";
-import { applyScope, isScoped, paramsWithScope, scopeFromParams, STATUS_OPTIONS, type ScopeFilters } from "../lib/nodeFilters";
+import { applyScope, canonicalTagFilter, isScoped, NO_SCOPE, NO_TAG_FILTER, nodeListReturnState, paramsWithScope, paramsWithSearch, paramsWithTagFilter, scopeFromParams, searchFromParams, STATUS_OPTIONS, tagFilterFromParams, type ScopeFilters, type TagFilter } from "../lib/nodeFilters";
 import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 import { trafficParts } from "../lib/traffic";
 import { EmptyState } from "../components/EmptyState";
 
-// 标签过滤二选一：按一组标签取交集，或只要无标签节点。空 names 表示不过滤。
-// 用判别式联合让"既选了标签又选了无标签"在类型上不可表示——hub 对两个条件同时给出返回 InvalidArgument
-// （ListNodesRequest.untagged 注释），页面不该存在能构造出该请求的路径。
-type TagFilterState = { kind: "tags"; names: string[] } | { kind: "untagged" };
-
 export function Nodes() {
   const qc = useQueryClient();
   const transport = useTransport();
   const { error, mutationOptions } = useLatestError();
-  const [tagFilter, setTagFilter] = useState<TagFilterState>({ kind: "tags", names: [] });
-  // 请求由状态推出，两条分支在类型上已经互斥（见 TagFilterState）：无标签只带 untagged，标签只带 tags。
+  // 全部筛选（搜索词、标签、状态、到期、落后）由 URL 持有（经 useSyncedSearchParams，控件不随异步导航闪回）：从详情返回列表时
+  // 原样还原（nodeListReturnState）。切换任一筛选都清空选择，避免批量操作修改已经不可见的节点。
+  const [params, setParams] = useSyncedSearchParams();
+  const tags = useQuery(AdminService.method.listTags, {});
+  const tagFilter = canonicalTagFilter(tagFilterFromParams(params), tags.data?.tags.map((tag) => tag.name));
+  const search = searchFromParams(params);
+  // 进详情时带上列表此刻的查询串（本地副本，不等异步导航落地）。
+  const listReturnState = nodeListReturnState(params.size > 0 ? `?${params}` : "");
+  const scope = scopeFromParams(params);
+  // 请求由筛选推出，两条分支在类型上已经互斥（见 TagFilter）：无标签只带 untagged，标签只带 tags。
   // 过滤切换失败时保留旧列表；弹窗草稿独立于列表，刷新与排序不会卸载正在编辑的节点。
   const nodes = useRetained(useQuery(
     AdminService.method.listNodes,
@@ -54,7 +58,6 @@ export function Nodes() {
   // 全部节点总数 N（未过滤）：移动目标位置的合法区间 1..N-k+1 按 N 计算。与 useOrder 的 reload / 未过滤的
   // nodes 查询同一个键 listNodes({ tags: [] })——未过滤时复用同一条查询，过滤时是额外一条轮询。
   const allNodes = useQuery(AdminService.method.listNodes, { tags: [] }, { refetchInterval: 10_000 });
-  const tags = useQuery(AdminService.method.listTags, {});
   const snapshot = useQuery(AdminService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
   const hubVersion = snapshot.data?.hubVersion;
   // 落后标记只看 hub 绑定的 agent 版本（spec §14.1）：hub 自己升到 v0.5.6 不代表节点落后。
@@ -69,7 +72,6 @@ export function Nodes() {
   const [secret, setSecret] = useState<{ id: bigint; title: string; label: string; value: string; reRegister: boolean; opener: HTMLElement } | null>(null);
   const lastOpener = useRef<HTMLElement | null>(null);
   const [creating, setCreating] = useState<HTMLElement | null>(null);
-  const [search, setSearch] = useState("");
   const [drag, setDrag] = useState<{ id: bigint; members: string } | null>(null);
   const [drop, setDrop] = useState<{ target: bigint; edge: "before" | "after" } | null>(null);
   const [editor, setEditor] = useState<{ node: Node; opener: HTMLElement } | null>(null);
@@ -126,11 +128,11 @@ export function Nodes() {
       return qc.invalidateQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.listNodes, cardinality: "finite" }) });
     },
   });
-  const [params, setParams] = useSearchParams();
-  const scope = scopeFromParams(params);
-  // 筛选由 URL 持有；切换时清空选择，避免批量操作修改已经不可见的节点。
-  const setScope = (next: ScopeFilters) => { setParams(paramsWithScope(params, next), { replace: true }); setSelected([]); };
-  const clearFilters = () => { setSearch(""); setTagFilter({ kind: "tags", names: [] }); setScope({ status: null, expiring: false, lagging: false }); };
+  const setFilters = (next: (current: URLSearchParams) => URLSearchParams) => { setParams(next); setSelected([]); };
+  const setSearch = (value: string) => setFilters((current) => paramsWithSearch(current, value));
+  const setTagFilter = (filter: TagFilter) => setFilters((current) => paramsWithTagFilter(current, filter));
+  const setScope = (next: ScopeFilters) => setFilters((current) => paramsWithScope(current, next));
+  const clearFilters = () => setFilters((current) => paramsWithScope(paramsWithTagFilter(paramsWithSearch(current, ""), NO_TAG_FILTER), NO_SCOPE));
   const filtered = search !== "" || tagFilter.kind === "untagged" || tagFilter.names.length > 0 || isScoped(scope);
   // narrowed（过滤或沿用旧结果）表示显示的不是当前条件下的完整列表：行首序号改用服务端全序名次，
   // 拖动排序也只在未收窄时开放（它们保存完整排列）。
@@ -150,7 +152,10 @@ export function Nodes() {
     // 删掉的标签必须从过滤里去掉，否则条件引用一个已不存在的标签，列表会永远为空
     // （ListNodesRequest.tags 注释：有不存在的标签时结果为空）。无标签过滤下没有标签可选，状态不变。
     onSuccess: (_result, request) => {
-      setTagFilter((current) => current.kind === "tags" ? { kind: "tags", names: withoutTag(current.names, request.name ?? "") } : current);
+      setParams((current) => {
+        const filter = tagFilterFromParams(current);
+        return filter.kind === "tags" ? paramsWithTagFilter(current, { kind: "tags", names: withoutTag(filter.names, request.name ?? "") }) : current;
+      });
       return refresh();
     },
   });
@@ -194,10 +199,10 @@ export function Nodes() {
     {snapshot.error != null && <p role="alert" className="error">{boundAgentVersion === undefined ? "无法取得 hub 绑定的 agent 版本，落后标记不可用" : `刷新失败，落后标记按上次取得的绑定版本 ${boundAgentVersion || "空"} 判断`}；在线状态与流量可能不是最新值：{errorText(snapshot.error)}</p>}
     {secret && <NodeCredentialsDrawer title={secret.title} secretLabel={secret.label} token={secret.value} hubVersion={hubVersion} boundAgentVersion={boundAgentVersion} error={snapshot.error} reRegister={secret.reRegister} opener={secret.opener} onClose={() => setSecret(null)} />}
     <div className="filter-row" role="group" aria-label="筛选">
-      <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} />
-      <MultiSelect label="标签" searchable options={tagOptions} selected={tagFilter.kind === "tags" ? tagFilter.names : []} onChange={(names) => { setTagFilter({ kind: "tags", names }); setSelected([]); }} />
+      <input type="search" aria-label="搜索节点" placeholder="名称、IP、地区、备注或主机名" value={search} onChange={(event) => setSearch(event.target.value)} />
+      <MultiSelect label="标签" searchable options={tagOptions} selected={tagFilter.kind === "tags" ? tagFilter.names : []} onChange={(names) => setTagFilter({ kind: "tags", names })} />
       {/* "无标签"不依赖 ListTags：清单加载中、为空或失败都照常可勾。它的可访问名称与标签项分开命名——用户可能真的建一个叫"无标签"的标签。 */}
-      <label className="check"><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => { setTagFilter(untagged ? { kind: "tags", names: [] } : { kind: "untagged" }); setSelected([]); }} />无标签</label>
+      <label className="check"><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => setTagFilter(untagged ? NO_TAG_FILTER : { kind: "untagged" })} />无标签</label>
       <select aria-label="状态" value={scope.status ?? ""} onChange={(event) => setScope({ ...scope, status: (event.target.value || null) as ScopeFilters["status"] })}>
         <option value="">全部状态</option>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
@@ -225,7 +230,7 @@ export function Nodes() {
         {allNodes.error != null && <span className="error">无法取得节点总数，「移动到…」不可用：{errorText(allNodes.error)}</span>}
         <button type="button" className="link" disabled={editing} onClick={() => setSelected([])}>清除选择</button>
       </div>}
-      <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可用行菜单（⋯）上移、下移、置顶、置底，或聚焦手柄后按方向键、Home / End。</p>
+      <p className="node-subtext order-help" id="node-order-help">拖动手柄调整顺序，松开后自动保存。也可用行菜单（⋯）上移、下移、置顶、置底或「移动到…」指定位置，或聚焦手柄后按方向键、Home / End；勾选多个节点后可批量「移动到…」。</p>
       {list.length === 0
         ? scope.lagging && boundAgentVersion === undefined
           ? <EmptyState status title="无法取得 hub 绑定的 agent 版本，「agent 版本落后」筛选暂时没有结果。" />
@@ -237,7 +242,7 @@ export function Nodes() {
         </tr></thead>
           <tbody>{list.map((node, index) => {
             const label = withId(node.name, node.id);
-            return <NodeRow key={String(node.id)} node={node} live={live.get(node.id)} boundAgentVersion={boundAgentVersion}
+            return <NodeRow key={String(node.id)} node={node} live={live.get(node.id)} boundAgentVersion={boundAgentVersion} detailState={listReturnState}
               selection={<MixedCheckbox label={`选择 ${label}`} checked={selectedIds.has(node.id)} disabled={editing || nodes.stale} onChange={() => setSelected((current) => current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])} />}
               orderClass={dragging === node.id ? "is-dragging" : dragging !== null && drop?.target === node.id ? `drop-${drop.edge}` : undefined}
               onDragOver={(event) => { if (dragging === null || dragging === node.id) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDrop(dropPosition(event, node.id)); }}
@@ -247,7 +252,7 @@ export function Nodes() {
                 onDragStart={(event) => { if (!sortable) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(node.id)); setDrag({ id: node.id, members }); setDrop(null); }} />}
               menu={<RowMenu label={label} items={[
                 { label: "编辑", disabled: editing, onSelect: (trigger) => openEditor(node, trigger) },
-                { label: "查看详情", to: `/nodes/${node.id}` },
+                { label: "查看详情", to: `/nodes/${node.id}`, state: listReturnState },
                 // 上下移与置顶置底和排序手柄同一入口（完整排列），可用条件也相同：筛选或排序会话阻塞时整组禁用。
                 { label: "上移一位", disabled: !sortable || index === 0, onSelect: () => moveNode(node.id, -1) },
                 { label: "下移一位", disabled: !sortable || index === list.length - 1, onSelect: () => moveNode(node.id, 1) },
@@ -274,8 +279,8 @@ export function Nodes() {
   </section>;
 }
 
-function NodeRow({ node, live, boundAgentVersion, selection, orderControl, orderClass, onDragOver, onDrop, menu }: {
-  node: Node; live: NodeStatus | undefined; boundAgentVersion?: string; selection: ReactNode; orderControl: ReactNode; menu: ReactNode;
+function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderControl, orderClass, onDragOver, onDrop, menu }: {
+  node: Node; live: NodeStatus | undefined; boundAgentVersion?: string; detailState: unknown; selection: ReactNode; orderControl: ReactNode; menu: ReactNode;
   orderClass?: string; onDragOver: (event: DragEvent<HTMLTableRowElement>) => void; onDrop: (event: DragEvent<HTMLTableRowElement>) => void;
 }) {
   const label = withId(node.name, node.id);
@@ -285,7 +290,7 @@ function NodeRow({ node, live, boundAgentVersion, selection, orderControl, order
     <td data-column="select">{selection}</td>
     <td data-column="order" data-label="排序">{orderControl}</td>
     <td data-column="name" data-label="节点">
-      <div className="node-name-line"><Link to={`/nodes/${node.id}`} aria-label={label}>{node.name}</Link><NodeCountry node={node} />
+      <div className="node-name-line"><Link to={`/nodes/${node.id}`} state={detailState} aria-label={label}>{node.name}</Link><NodeCountry node={node} />
         {node.public && <span className="chip chip-public">公开</span>}</div>
       {(lagging || node.tags.length > 0 || node.note) && <div className="node-secondary">
         {lagging && <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${boundAgentVersion}`}>agent 低于 {boundAgentVersion}</span>}

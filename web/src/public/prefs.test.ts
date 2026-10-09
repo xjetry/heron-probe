@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { PUBLIC_VIEW_KEY, readPublicView, writePublicView } from "./view";
+import { PUBLIC_VIEW_KEY, PUBLIC_WALL_GROUP_KEY, readPublicView, readWallGroupBy, writePublicView, writeWallGroupBy } from "./prefs";
 
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -24,3 +24,20 @@ it("存储被禁用时读得到卡片、写入不抛", () => {
   expect(readPublicView()).toBe("cards");
   expect(() => writePublicView("wall")).not.toThrow();
 });
+
+it("状态墙分组没选过时是地区；写入后按记住的分组读出；不认识的值按地区", () => {
+  expect(readWallGroupBy()).toBe("region");
+  writeWallGroupBy("tag");
+  expect(localStorage.getItem(PUBLIC_WALL_GROUP_KEY)).toBe("tag");
+  expect(readWallGroupBy()).toBe("tag");
+  localStorage.setItem(PUBLIC_WALL_GROUP_KEY, "country");
+  expect(readWallGroupBy()).toBe("region");
+});
+
+it("存储被禁用时分组读得到地区、写入不抛", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("denied"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("denied"); });
+  expect(readWallGroupBy()).toBe("region");
+  expect(() => writeWallGroupBy("tag")).not.toThrow();
+});
+

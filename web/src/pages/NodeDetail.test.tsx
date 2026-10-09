@@ -625,3 +625,18 @@ it("返回节点列表在数据到达前就可用，点击回到节点列表", a
   expect(router.state.location.pathname).toBe("/nodes");
   expect(router.state.location.search).toBe("");
 });
+
+it("从列表带着查询串进入时，返回链接还原同一组筛选，切 tab 后仍保留；state 不合法时回到不带筛选的列表", async () => {
+  const { router } = renderWithAdmin(defaultImpl, [{ path: "/nodes/:id", Component: NodeDetail }], "/");
+  await act(async () => { await router.navigate("/nodes/7", { state: { nodeListSearch: "?q=db&tag=prod" } }); });
+  const back = await screen.findByRole("link", { name: "返回节点列表" });
+  expect(back).toHaveAttribute("href", "/nodes?q=db&tag=prod");
+  fireEvent.click(screen.getByRole("tab", { name: "流量校正" }));
+  await waitFor(() => expect(router.state.location.search).toBe("?tab=traffic"));
+  expect(screen.getByRole("link", { name: "返回节点列表" })).toHaveAttribute("href", "/nodes?q=db&tag=prod");
+  for (const state of [{ nodeListSearch: "javascript:alert(1)" }, { nodeListSearch: 3 }, "?q=x", null]) {
+    await act(async () => { await router.navigate("/nodes/7", { state }); });
+    expect(screen.getByRole("link", { name: "返回节点列表" })).toHaveAttribute("href", "/nodes");
+  }
+});
+

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { liveById } from "./adminStatus";
-import { applyScope, isScoped, paramsWithScope, scopeFromParams } from "./nodeFilters";
+import { applyScope, canonicalTagFilter, isScoped, nodeListReturnPath, nodeListReturnState, paramsWithScope, paramsWithSearch, paramsWithTagFilter, scopeFromParams, searchFromParams, tagFilterFromParams } from "./nodeFilters";
 
 it("URL 参数解析：合法值进入筛选，非法值被忽略而不是变成空列表", () => {
   expect(scopeFromParams(new URLSearchParams("status=offline&expiring=1&lagging=1"))).toEqual({ status: "offline", expiring: true, lagging: true });
@@ -31,3 +31,29 @@ it("按状态 / 到期 / 落后过滤；未知状态只在不按状态筛时出�
   expect(names({ status: "online", expiring: true, lagging: true }, "on")).toEqual(["on"]);
   expect(applyScope(nodes, live, undefined, { status: null, expiring: false, lagging: true }, "")).toEqual([]);
 });
+
+it("标签过滤与搜索词在 URL 里往返；无标签优先于 tag，空的 tag 丢弃；写入时保留其他参数", () => {
+  expect(tagFilterFromParams(new URLSearchParams("tag=db&tag=&tag=prod"))).toEqual({ kind: "tags", names: ["db", "prod"] });
+  expect(tagFilterFromParams(new URLSearchParams("tag=db&untagged=1"))).toEqual({ kind: "untagged" });
+  expect(tagFilterFromParams(new URLSearchParams("untagged=yes"))).toEqual({ kind: "tags", names: [] });
+  const base = new URLSearchParams("status=offline&tag=old&untagged=1");
+  expect(paramsWithTagFilter(base, { kind: "tags", names: ["a", "b"] }).toString()).toBe("status=offline&tag=a&tag=b");
+  expect(paramsWithTagFilter(base, { kind: "untagged" }).toString()).toBe("status=offline&untagged=1");
+  expect(searchFromParams(new URLSearchParams("q=%E9%A6%99%E6%B8%AF"))).toBe("香港");
+  expect(paramsWithSearch(new URLSearchParams("q=x&status=offline"), "").toString()).toBe("status=offline");
+  expect(searchFromParams(paramsWithSearch(new URLSearchParams(), "a&b=c"))).toBe("a&b=c");
+});
+
+it("URL 里的标签按清单换成清单写法并去重，清单没有的原样保留；清单未到或无标签过滤时原样返回", () => {
+  expect(canonicalTagFilter({ kind: "tags", names: ["DB", "db", "gone"] }, ["db", "prod"])).toEqual({ kind: "tags", names: ["db", "gone"] });
+  expect(canonicalTagFilter({ kind: "tags", names: ["DB"] }, undefined)).toEqual({ kind: "tags", names: ["DB"] });
+  expect(canonicalTagFilter({ kind: "untagged" }, ["db"])).toEqual({ kind: "untagged" });
+});
+
+it("返回节点列表的路径只认以 ? 开头的字符串 state，其余回到不带筛选的列表", () => {
+  expect(nodeListReturnPath(nodeListReturnState("?q=a&tag=db"))).toBe("/nodes?q=a&tag=db");
+  for (const state of [nodeListReturnState(""), { nodeListSearch: "//evil.example" }, { nodeListSearch: 1 }, "?q=a", null, undefined]) {
+    expect(nodeListReturnPath(state)).toBe("/nodes");
+  }
+});
+

@@ -4,7 +4,6 @@ import { type FormEvent, useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { useLatestError } from "../api/useLatestError";
-import { useSearchParams } from "react-router";
 import { Drawer } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
@@ -15,6 +14,7 @@ import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labe
 import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
 import { EmptyState } from "../components/EmptyState";
+import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 
 type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
@@ -69,12 +69,12 @@ function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) 
 
 export function AlertRules() {
   const qc = useQueryClient();
-  const [params, setParams] = useSearchParams();
+  const [params, setParams] = useSyncedSearchParams();
   const firingOnly = params.get("state") === "firing";
   const setFiringOnly = (on: boolean) => {
     const next = new URLSearchParams(params);
     if (on) next.set("state", "firing"); else next.delete("state");
-    setParams(next, { replace: true });
+    setParams(next);
   };
   const [drawer, setDrawer] = useState<{ kind: "create"; opener: HTMLElement } | { kind: "edit"; rule: AlertRule; opener: HTMLElement } | null>(null);
   const [toggling, setToggling] = useState<bigint | null>(null);

@@ -1,7 +1,7 @@
 import { createConnectQueryKey, useMutation, useQuery } from "@connectrpc/connect-query";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { errorText } from "../api/auth";
 import { AgentDiagnostics } from "../components/AgentDiagnostics";
@@ -14,6 +14,8 @@ import { NowGrid } from "../components/NowGrid";
 import { StatusBadge } from "../components/StatusBadge";
 import { AdminService, type GetTrafficResponse } from "../gen/heron/v1/admin_pb";
 import { liveStatus } from "../lib/adminStatus";
+import { nodeListReturnPath } from "../lib/nodeFilters";
+import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
 import { ago, bytes, dateTime } from "../lib/format";
 import { POLL_MS, TRAFFIC_MS } from "../lib/poll";
 import { trafficDetail, trafficText } from "../lib/traffic";
@@ -28,7 +30,9 @@ const tabOf = (raw: string | null): DetailTab => (TABS.some((t) => t.id === raw)
 
 export function NodeDetail() {
   const { id } = useParams();
-  const [params, setParams] = useSearchParams();
+  const [params, setParams] = useSyncedSearchParams();
+  // 从节点列表进入时 state 带着列表的查询串；切 tab 只换本页 URL，state 原样带上，返回仍落回同一组筛选。
+  const location = useLocation();
   const tab = tabOf(params.get("tab"));
   const validId = /^\d+$/.test(id ?? "");
   const nodeId = validId ? BigInt(id!) : 0n;
@@ -61,7 +65,7 @@ export function NodeDetail() {
   const live = snap.data?.nodes.find((n) => n.id === nodeId);
   const bound = snap.data?.boundAgentVersion;
   const status = node ? liveStatus(node, live) : undefined;
-  const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); setParams(p, { replace: true }); };
+  const select = (next: DetailTab) => { const p = new URLSearchParams(params); if (next === "overview") p.delete("tab"); else p.set("tab", next); setParams(p, { state: typeof location.state === "object" ? location.state : null }); };
   const panel = (
     <section id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
       {tab === "overview" && (time.ready ? <>
@@ -87,7 +91,7 @@ export function NodeDetail() {
   );
   return (
     <section className="node-detail">
-      <p><Link to="/nodes">返回节点列表</Link></p>
+      <p><Link to={nodeListReturnPath(location.state)}>返回节点列表</Link></p>
       {errorBanner(nodes.error, snap.error, traffic.error, history.metrics.error, history.probes.error, tab === "events" ? events.error : undefined, tab === "events" ? channels.error : undefined, tab === "events" ? rules.error : undefined)}
       <header className="node-head" role="group" aria-label="节点状态">
         <div className="node-head-title">

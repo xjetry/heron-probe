@@ -4,7 +4,7 @@ import { PublicService } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
-import { PUBLIC_VIEW_KEY } from "./view";
+import { PUBLIC_VIEW_KEY } from "./prefs";
 
 const snapshot = {
   now: 1_000n, tags: ["prod"],

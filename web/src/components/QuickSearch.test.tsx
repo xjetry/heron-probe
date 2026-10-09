@@ -34,7 +34,9 @@ it("点击顶栏按钮也能打开；没有匹配时说明；Escape 关闭并回
   renderWithAdmin({ listNodes: async () => ({ nodes }) }, routes, "/");
   const trigger = screen.getByRole("button", { name: "搜索节点" });
   expect(trigger).toHaveClass("quick-search-trigger");
-  expect(trigger.querySelector("kbd")).toHaveTextContent("⌘K");
+  expect(Array.from(trigger.querySelectorAll("kbd")).map((k) => k.textContent)).toEqual(["/", "⌘K"]);
+  expect(trigger).toHaveTextContent("输入 / 搜索节点");
+  expect(trigger).toHaveAttribute("aria-keyshortcuts", "/ Meta+K Control+K");
   fireEvent.click(trigger);
   const box = await screen.findByRole("searchbox");
   fireEvent.change(box, { target: { value: "nothing" } });
@@ -126,3 +128,20 @@ it("点击结果链接进入对应节点详情并关闭面板", async () => {
   await waitFor(() => expect(router.state.location.pathname).toBe("/nodes/2"));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+it("/ 在焦点不在可编辑元素上时打开；在输入框里、带修饰键或输入法组字时不打开", async () => {
+  renderWithAdmin({ listNodes: async () => ({ nodes }) }, [{ path: "/", element: <><QuickSearch /><input aria-label="别处的输入框" /></> }], "/");
+  const other = screen.getByRole("textbox", { name: "别处的输入框" });
+  for (const init of [{ target: other }, { target: window, ctrlKey: true }, { target: window, altKey: true }, { target: window, isComposing: true }]) {
+    const { target, ...modifiers } = init;
+    const event = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true, ...modifiers });
+    fireEvent(target, event);
+    expect(event.defaultPrevented, JSON.stringify(modifiers)).toBe(false);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  }
+  const slash = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });
+  fireEvent(document.body, slash);
+  expect(slash.defaultPrevented).toBe(true);
+  expect(within(await screen.findByRole("dialog", { name: "搜索节点" })).getByRole("searchbox")).toHaveFocus();
+});
+
