@@ -173,14 +173,6 @@ func TestHistoryTailReadsOneSnapshot(t *testing.T) {
 				if _, err := s.rollupLevel(t.Context(), f, 2, base+60*60); err != nil {
 					t.Fatal(err)
 				}
-				var seq int
-				var name, path string
-				if err := s.r.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
-					t.Fatal(err)
-				}
-				if err := s.r.Close(); err != nil {
-					t.Fatal(err)
-				}
 				var once sync.Once
 				var advanceErr error
 				advanced := false
@@ -205,10 +197,7 @@ func TestHistoryTailReadsOneSnapshot(t *testing.T) {
 					})
 					return advanceErr
 				}})
-				s.r, err = sql.Open(driverName, dsn(path, "&_pragma=query_only(1)"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				reopenReadPools(t, s, driverName)
 				assertHistoryMinutes(t, s, f, batch, base, base+197*60, lv, 3*lv.Bucket)
 				if !advanced {
 					t.Fatal("concurrent rollup and prune did not run")

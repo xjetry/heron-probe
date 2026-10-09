@@ -63,14 +63,6 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var seq int
-	var name, path string
-	if err := s.r.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.r.Close(); err != nil {
-		t.Fatal(err)
-	}
 	changed := false
 	driverName := fmt.Sprintf("snapshot-sqlite-%d", traceID.Add(1))
 	sql.Register(driverName, snapshotDriver{afterVersion: func() error {
@@ -81,10 +73,7 @@ func TestLoadProbeTasksReadsOneSnapshot(t *testing.T) {
 		changed = err == nil
 		return err
 	}})
-	s.r, err = sql.Open(driverName, dsn(path, "&_pragma=query_only(1)"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	reopenReadPools(t, s, driverName)
 	version, tasks, err := s.LoadProbeTasks(ctx)
 	if err != nil {
 		t.Fatal(err)
