@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import { PublicNodeSchema, type PublicNode } from "../gen/heron/v1/public_pb";
-import { CARD_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortCards, summarize, tileLevel, type CardSort, type ColorBy, type PublicFilters } from "./filters";
+import { CARD_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortCards, summarize, tagOptions, tileLevel, type CardSort, type ColorBy, type PublicFilters } from "./filters";
 
 const node = (init: Parameters<typeof create<typeof PublicNodeSchema>>[1]): PublicNode => create(PublicNodeSchema, init);
 const nodes = [
@@ -27,9 +27,10 @@ it.each<[PublicFilters, string[]]>([
   [NO_FILTERS, ["tokyo-1", "tokyo-2", "hk-1", "fresh", "hk-2"]],
   [{ ...NO_FILTERS, regions: ["JP", ""] }, ["tokyo-1", "tokyo-2", "fresh"]],
   [{ ...NO_FILTERS, tags: ["prod", "db"] }, ["tokyo-2"]],
+  [{ ...NO_FILTERS, tags: ["prod", "db"], tagMatch: "any" }, ["tokyo-1", "tokyo-2"]],
   [{ ...NO_FILTERS, onlineOnly: true }, ["tokyo-1", "hk-2"]],
   [{ ...NO_FILTERS, search: "hk", onlineOnly: true }, ["hk-2"]],
-])("筛选取交集，地区取并集、标签取交集、在线排除维护中：%o", (filters, expected) => {
+])("筛选取交集，地区取并集、标签默认取交集（可改并集）、在线排除维护中：%o", (filters, expected) => {
   expect(names(filterPublicNodes(nodes, filters))).toEqual(expected);
 });
 
@@ -67,6 +68,14 @@ it.each([
   ["JP", "日本"], ["HK", "香港"], ["", "未知"], ["ZZ", "未知地区"], ["XX", "XX"], ["invalid", "invalid"],
 ])("地区中文短名 %s，空代码未知、无名称或无效代码回退", (code, expected) => {
   expect(regionName(code)).toBe(expected);
+});
+
+it("标签选项按 hub 给的顺序，计数按折叠比较，带上没有节点的标签", () => {
+  expect(tagOptions(nodes, ["db", "prod", "gone"])).toEqual([
+    { value: "db", label: "db", count: 1 },
+    { value: "prod", label: "prod", count: 2 },
+    { value: "gone", label: "gone", count: 0 },
+  ]);
 });
 
 it("地区选项按代码排序，未知最后，带国旗与计数", () => {

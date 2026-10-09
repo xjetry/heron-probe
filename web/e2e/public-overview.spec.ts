@@ -75,15 +75,33 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
   await expect(page.locator(".tile[data-status='offline']").getByText("离线 · 2 小时前")).toBeVisible();
   // 分组切到标签：节点进它的每个标签组，同计数按 hub 的标签顺序，无标签最后；再切回地区。
-  const grouping = page.getByRole("combobox", { name: "分组" });
-  await grouping.selectOption("tag");
+  // 分组是自绘下拉：触发按钮写当前值，点开是自绘列表，不弹系统菜单。
+  const grouping = page.getByRole("button", { name: /^分组 / });
+  await expect(grouping).toHaveAccessibleName("分组 地区");
+  await grouping.click();
+  await page.getByRole("listbox", { name: "分组" }).getByRole("option", { name: "标签", exact: true }).click();
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   await expect(page.locator(".wall-group > summary")).toHaveText(["家宽 · 1 / 2 在线", "机房 · 1 / 2 在线", "无标签 · 0 / 1 在线"]);
   // 分组选择记在浏览器里，刷新沿用。
   await page.reload();
-  await expect(grouping).toHaveValue("tag");
+  await expect(grouping).toHaveAccessibleName("分组 标签");
   await expect(page.locator(".wall-group > summary")).toHaveText(["家宽 · 1 / 2 在线", "机房 · 1 / 2 在线", "无标签 · 0 / 1 在线"]);
-  await grouping.selectOption("region");
+  // 键盘：下键打开并聚焦当前项，上键移动，Enter 选中、收起并把焦点还给触发按钮。
+  await grouping.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "标签", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByRole("option", { name: "地区", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(grouping).toBeFocused();
+  await expect(grouping).toHaveAccessibleName("分组 地区");
   await expect(page.locator(".wall-group > summary")).toHaveText(["香港 · 1 / 2 在线", "日本 · 1 / 2 在线", "未知 · 0 / 1 在线"]);
+  // Tab 收起列表，焦点落到下拉之后的控件，与原生 select 一致。
+  await grouping.press("ArrowDown");
+  await expect(page.getByRole("option", { name: "地区", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^着色依据 / })).toBeFocused();
 
   // 详情面板默认选中第一个节点；点另一个方块只切换，不导航。
   const panel = page.getByRole("complementary", { name: "节点详情" });
@@ -99,19 +117,31 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
   await page.screenshot({ path: testInfo.outputPath("wall-dark.png"), fullPage: true });
 
-  // 筛选：地区下拉 + 标签下拉 + 只看在线。
-  await page.getByRole("group", { name: "地区" }).getByRole("button", { name: /^地区/ }).click();
-  await page.getByRole("checkbox", { name: "日本" }).check();
-  await page.getByRole("checkbox", { name: "日本" }).press("Escape");
+  // 筛选：地区入口（默认单选，点一个只看它，再点回到全部）+ 只看在线。
+  const regionFacet = page.getByRole("button", { name: /^地区 / });
+  const japan = page.getByRole("group", { name: "地区" }).getByRole("button", { name: /^日本 \d+$/ });
+  await regionFacet.click();
+  await japan.click();
+  await expect(regionFacet).toHaveAccessibleName("地区 日本");
   await expect(page.locator(".summary-count")).toHaveText("1 / 2 在线");
   await page.getByRole("button", { name: "只看在线" }).click();
   await expect(page.locator(".tile")).toHaveCount(1);
-  await page.getByRole("button", { name: "移除 日本" }).click();
+  await japan.click();
+  await expect(regionFacet).toHaveAccessibleName("地区 全部");
   await page.getByRole("button", { name: "只看在线" }).click();
+  await regionFacet.click();
 
   // 卡片视图：只有在线与维护中出卡片，离线折叠；卡片有费用与到期。
   await views.getByRole("button", { name: "卡片" }).click();
   await expect(page.getByRole("article")).toHaveCount(3);
+  // 排序同样是自绘下拉，列表里当前项打勾。
+  const sorting = page.getByRole("button", { name: /^排序 / });
+  await sorting.click();
+  await expect(page.getByRole("listbox", { name: "排序" }).getByRole("option")).toHaveText(["默认", "到期", "CPU", "流量"]);
+  await expect(page.getByRole("option", { name: "默认" })).toHaveAttribute("aria-selected", "true");
+  await page.screenshot({ path: testInfo.outputPath("cards-sort-open.png") });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   const card = page.getByRole("article", { name: "tokyo-core" });
   await expect(card.getByText("US$12 / 月")).toBeVisible();
   await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");

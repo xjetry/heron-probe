@@ -246,6 +246,22 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .page-header-actions { display: flex; align-items: center; gap: 8px; }
 .primary-button { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 500; }
 
+/* 自绘单选下拉（components/Select.tsx）。公开页的地区 / 标签入口（public/Facet.tsx）沿用同一个触发按钮外观。 */
+.select { position: relative; display: inline-flex; }
+.select-trigger { display: inline-flex; align-items: center; gap: 6px; max-width: 16rem; }
+.select-label { color: var(--muted); font-size: 13px; }
+.select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-caret { flex: none; color: var(--muted); transition: transform .15s; }
+.select-trigger[aria-expanded="true"] { border-color: var(--accent); }
+.select-trigger[aria-expanded="true"] .select-caret { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .select-caret { transition: none; } }
+.select-popup { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; min-width: 100%; width: max-content; margin: 0; padding: 4px; list-style: none; background: var(--card-raised); border: 1px solid var(--line); border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+.select-popup [role="option"] { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px 0 8px; border-radius: var(--radius-control); cursor: pointer; white-space: nowrap; font-size: 13px; }
+/* 选项靠背景色标出焦点与悬停，不另画轮廓。 */
+.select-popup [role="option"]:is(:hover, :focus) { background: var(--card-hover); outline: none; }
+.select-check { flex: none; visibility: hidden; color: var(--accent); }
+.select-popup [aria-selected="true"] .select-check { visibility: visible; }
+
 /* 筛选行（public/FilterRow.tsx 与管理端列表页共用）。 */
 .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 0 16px; }
 .filter-row input[type="search"] { width: min(100%, 260px); }

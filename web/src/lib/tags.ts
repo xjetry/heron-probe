@@ -23,8 +23,13 @@ export function withoutTag(tags: readonly string[], name: string): string[] {
   return tags.filter((t) => !sameTag(t, name));
 }
 
-// 多选取交集：节点必须带有所选的每一个标签。空选择不过滤——空条件匹配一切，这一分支显式写出而不靠 every 对空数组恒真。
-export function matchesTags(nodeTags: readonly string[], selected: readonly string[]): boolean {
+// 多选标签的两种口径：all 要求节点带有所选的每一个标签（交集），any 带其中任一个即可（并集）。
+export type TagMatch = "all" | "any";
+
+// 空选择不过滤——空条件匹配一切。这一分支显式写出：all 靠 every 对空数组恒真会碰巧对，any 的 some 对空数组恒假，
+// 方向正好相反。
+export function matchesTags(nodeTags: readonly string[], selected: readonly string[], match: TagMatch): boolean {
   if (selected.length === 0) return true;
-  return selected.every((s) => nodeTags.some((t) => sameTag(t, s)));
+  const has = (s: string) => nodeTags.some((t) => sameTag(t, s));
+  return match === "all" ? selected.every(has) : selected.some(has);
 }

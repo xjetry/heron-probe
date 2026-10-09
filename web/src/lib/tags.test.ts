@@ -27,15 +27,21 @@ describe("tags", () => {
   });
 
   describe("matchesTags", () => {
-    it("空选择匹配一切，含没有标签的节点", () => {
-      expect(matchesTags([], [])).toBe(true);
-      expect(matchesTags(["db"], [])).toBe(true);
+    it.each(["all", "any"] as const)("空选择匹配一切，含没有标签的节点（%s）", (match) => {
+      expect(matchesTags([], [], match)).toBe(true);
+      expect(matchesTags(["db"], [], match)).toBe(true);
     });
-    it("多选取交集，按折叠比较", () => {
-      expect(matchesTags(["db", "web"], ["web", "db"])).toBe(true);
-      expect(matchesTags(["db"], ["web", "db"])).toBe(false);
-      expect(matchesTags(["DB"], ["db"])).toBe(true);
-      expect(matchesTags([], ["db"])).toBe(false);
+    it("all 取交集，按折叠比较", () => {
+      expect(matchesTags(["db", "web"], ["web", "db"], "all")).toBe(true);
+      expect(matchesTags(["db"], ["web", "db"], "all")).toBe(false);
+      expect(matchesTags(["DB"], ["db"], "all")).toBe(true);
+      expect(matchesTags([], ["db"], "all")).toBe(false);
+    });
+    it("any 取并集，按折叠比较", () => {
+      expect(matchesTags(["db"], ["web", "db"], "any")).toBe(true);
+      expect(matchesTags(["DB"], ["web", "db"], "any")).toBe(true);
+      expect(matchesTags(["lab"], ["web", "db"], "any")).toBe(false);
+      expect(matchesTags([], ["db"], "any")).toBe(false);
     });
   });
 });

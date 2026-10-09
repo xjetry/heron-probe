@@ -3,10 +3,11 @@ import type { PublicNode } from "../gen/heron/v1/public_pb";
 import { sortByExpiry } from "../lib/billing";
 import { literalPattern } from "../lib/fold";
 import { expiryLevel, nodeStatus, STATUS_ORDER, usageLevel, type Level, type NodeStatus } from "../lib/status";
-import { matchesTags, sameTag } from "../lib/tags";
+import { matchesTags, sameTag, type TagMatch } from "../lib/tags";
 
-export type PublicFilters = { search: string; regions: readonly string[]; tags: readonly string[]; onlineOnly: boolean };
-export const NO_FILTERS: PublicFilters = { search: "", regions: [], tags: [], onlineOnly: false };
+// tagMatch 只在选了至少两个标签时影响结果；默认交集，与管理端的标签过滤同一口径。
+export type PublicFilters = { search: string; regions: readonly string[]; tags: readonly string[]; tagMatch: TagMatch; onlineOnly: boolean };
+export const NO_FILTERS: PublicFilters = { search: "", regions: [], tags: [], tagMatch: "all", onlineOnly: false };
 
 // 名称、标签与公开备注共用 lib/fold 的折叠字面匹配，不把访客输入当成正则表达式。
 export function matchesSearch(node: PublicNode, search: string): boolean {
@@ -15,13 +16,14 @@ export function matchesSearch(node: PublicNode, search: string): boolean {
   return pattern.test(node.name) || node.tags.some((tag) => pattern.test(tag)) || pattern.test(node.publicRemark);
 }
 
-// 地区取并集，标签由 matchesTags 取交集，再与搜索及四态在线判定取交集。
+// 地区取并集（一个节点只有一个地区，选了至少两个地区时交集必然为空），标签按 tagMatch 取交集或并集，再与搜索及
+// 四态在线判定取交集。
 // 地区空选择表示不过滤、匹配一切；显式保留这一放宽分支。
 export function filterPublicNodes(nodes: readonly PublicNode[], f: PublicFilters): PublicNode[] {
   return nodes.filter((n) =>
     matchesSearch(n, f.search)
     && (f.regions.length === 0 || f.regions.includes(n.country))
-    && matchesTags(n.tags, f.tags)
+    && matchesTags(n.tags, f.tags, f.tagMatch)
     && (!f.onlineOnly || nodeStatus(n) === "online"));
 }
 
@@ -79,12 +81,18 @@ export function regionName(code: string): string {
 
 const byCodeUnknownLast = (a: string, b: string) => (a === b ? 0 : a === "" ? 1 : b === "" ? -1 : a.localeCompare(b));
 
-export type RegionOption = { value: string; label: string; count: number };
+// 地区与标签筛选的选项（public/Facet.tsx），计数是当前快照里的节点数、不随其他筛选变化。
+export type FacetOption = { value: string; label: string; count: number };
 
-export function regionOptions(nodes: readonly PublicNode[]): RegionOption[] {
+export function regionOptions(nodes: readonly PublicNode[]): FacetOption[] {
   const counts = new Map<string, number>();
   for (const n of nodes) counts.set(n.country, (counts.get(n.country) ?? 0) + 1);
   return [...counts.keys()].sort(byCodeUnknownLast).map((code) => ({ value: code, label: regionName(code), count: counts.get(code)! }));
+}
+
+// 标签的集合与顺序取 hub 下发的并集（按折叠键排序，与面板同序），页面不自己汇总、排序：折叠规则只在 hub 一处。
+export function tagOptions(nodes: readonly PublicNode[], tags: readonly string[]): FacetOption[] {
+  return tags.map((tag) => ({ value: tag, label: tag, count: nodes.filter((n) => n.tags.some((t) => sameTag(t, tag))).length }));
 }
 
 export type GroupBy = "region" | "tag";

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { PUBLIC_VIEW_KEY, PUBLIC_WALL_GROUP_KEY, readPublicView, readWallGroupBy, writePublicView, writeWallGroupBy } from "./prefs";
+import { PUBLIC_FACET_MODE_KEYS, PUBLIC_TAG_MATCH_KEY, PUBLIC_VIEW_KEY, PUBLIC_WALL_GROUP_KEY, readFacetMode, readPublicView, readTagMatch, readWallGroupBy, writeFacetMode, writePublicView, writeTagMatch, writeWallGroupBy } from "./prefs";
 
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -41,3 +41,28 @@ it("存储被禁用时分组读得到地区、写入不抛", () => {
   expect(() => writeWallGroupBy("tag")).not.toThrow();
 });
 
+
+it("选择方式按入口分开记：没选过时单选；写一个不影响另一个；不认识的值按单选", () => {
+  expect([readFacetMode("region"), readFacetMode("tag")]).toEqual(["single", "single"]);
+  writeFacetMode("tag", "multi");
+  expect(localStorage.getItem(PUBLIC_FACET_MODE_KEYS.tag)).toBe("multi");
+  expect([readFacetMode("region"), readFacetMode("tag")]).toEqual(["single", "multi"]);
+  localStorage.setItem(PUBLIC_FACET_MODE_KEYS.region, "MULTI");
+  expect(readFacetMode("region")).toBe("single");
+});
+
+it("标签匹配方式没选过时同时满足；写入后按记住的读出；不认识的值按同时满足", () => {
+  expect(readTagMatch()).toBe("all");
+  writeTagMatch("any");
+  expect(localStorage.getItem(PUBLIC_TAG_MATCH_KEY)).toBe("any");
+  expect(readTagMatch()).toBe("any");
+  localStorage.setItem(PUBLIC_TAG_MATCH_KEY, "or");
+  expect(readTagMatch()).toBe("all");
+});
+
+it("存储被禁用时选择方式读得到单选、匹配方式读得到同时满足，写入不抛", () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("denied"); });
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("denied"); });
+  expect([readFacetMode("region"), readTagMatch()]).toEqual(["single", "all"]);
+  expect(() => { writeFacetMode("region", "multi"); writeTagMatch("any"); }).not.toThrow();
+});

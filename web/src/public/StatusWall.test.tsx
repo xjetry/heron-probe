@@ -5,6 +5,7 @@ import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
 import { PUBLIC_VIEW_KEY } from "./prefs";
+import { chooseOption } from "../test/select";
 
 const snapshot = {
   now: 1_000n, tags: ["prod"],
@@ -154,7 +155,7 @@ it("着色依据切到 CPU 时方块带档位，状态时不带", async () => {
   render();
   await screen.findByText("1 / 4 在线");
   expect(tile("tokyo-1").closest("li")).not.toHaveAttribute("data-level");
-  fireEvent.change(screen.getByRole("combobox", { name: "着色依据" }), { target: { value: "cpu" } });
+  chooseOption("着色依据", "CPU");
   expect(tile("tokyo-1").closest("li")).toHaveAttribute("data-level", "critical");
   expect(tile("fresh").closest("li")).not.toHaveAttribute("data-level");
 });

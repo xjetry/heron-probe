@@ -5,6 +5,7 @@ import { BillingCycle } from "../gen/heron/v1/types_pb";
 import { TrafficQuotaMode } from "../gen/heron/v1/types_pb";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
+import { chooseOption } from "../test/select";
 
 afterEach(() => { vi.useRealTimers(); localStorage.clear(); });
 
@@ -94,13 +95,13 @@ it("卡片排序：默认顺序与到期 / CPU / 流量排序", async () => {
   ]);
   const order = () => screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"));
   expect.soft(order()).toEqual(["a", "b"]);
-  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), { target: { value: "cpu" } });
+  chooseOption("排序", "CPU");
   expect.soft(order()).toEqual(["b", "a"]);
-  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), { target: { value: "expiry" } });
+  chooseOption("排序", "到期");
   expect.soft(order()).toEqual(["b", "a"]);
-  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), { target: { value: "traffic" } });
+  chooseOption("排序", "流量");
   expect.soft(order()).toEqual(["b", "a"]);
-  fireEvent.change(screen.getByRole("combobox", { name: "排序" }), { target: { value: "default" } });
+  chooseOption("排序", "默认");
   expect.soft(order()).toEqual(["a", "b"]);
 });
 
