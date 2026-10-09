@@ -23,6 +23,7 @@ import (
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -68,7 +69,7 @@ func TestRestoreStartsHubWithRecoveredConfig(t *testing.T) {
 		}
 		return addr != ""
 	}, "restored hub never listened: %s", output)
-	client := heronv1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
+	client := heronv1connect.NewPublicServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Timeout: testwait.Bound}, "http://"+addr)
 	site, err := client.GetSite(context.Background(), connect.NewRequest(&heronv1.GetSiteRequest{}))
 	if err != nil || site.Msg.Title != "snapshot" {
 		t.Fatalf("restored configuration not served: %v %v", site, err)

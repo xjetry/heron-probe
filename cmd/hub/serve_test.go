@@ -29,6 +29,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/web"
 	"github.com/xjetry/heron-probe/internal/hubclient"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testlog"
 	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
@@ -52,6 +53,11 @@ func (events serveEvents) Write(p []byte) (int, error) {
 //   - 不与别的用例共享 hub、Store 或假时钟：进程内的 hub 经 startTestHub 起在自己的 t.TempDir 里，子进程经 hubCommand；
 //   - 不用 t.Setenv：serve 的每个 flag 都读 HERON_<FLAG>，环境变量是进程级的，所以夹具一律用 flag 传配置；
 //   - 不改包级可变状态（localtimePath、os.Args），断言不以进程级计数（runtime.NumGoroutine）为基线；
+//   - 发出的每个 HTTP 请求都走夹具拥有的 Transport，不走进程共享的 http.DefaultTransport：标准库
+//     httptest.Server.Close 会对 http.DefaultTransport 调 CloseIdleConnections，本包并行的用例也起并关 httptest 服务
+//     （告警接收端、备份目标、主题源），别的用例收尾就会关掉本用例正要复用的连接（机制见 testdeps 的
+//     OwnedTransport）。对真实监听的 hub 用 ownedClient 或 testdeps.OwnedTransport；TestTestClientsOwnTheirTransport
+//     经 testdeps.RequireOwnedTransports 在源码上守着这一条；
 //   - 断言里的耗时阈值（上界或比值）远大于负载能造成的停顿：负载下一次调度停顿可达几十毫秒，阈值在这个量级的
 //     不并行；阈值在百毫秒以上且比被量操作的正常耗时大两个数量级的，或只用来区分"等满了某个超时"与"没等"的
 //     （如 drainTimeout，缺陷路径至少要等满它），可以并行。
@@ -60,6 +66,18 @@ func (events serveEvents) Write(p []byte) (int, error) {
 func startTestHub(t *testing.T, db string, clk clock.Clock, flags ...string) (string, serveEvents, func()) {
 	t.Helper()
 	return startTestHubWithTTL(t, db, clk, "45s", flags...)
+}
+
+// ownedClient 是只属于 t 的 HTTP 客户端，Transport 来自 testdeps.OwnedTransport（为什么不用 http.DefaultClient 见上面
+// 的并行前提）。要 cookie jar、Timeout 或 CheckRedirect 的用例自己建 http.Client，Transport 同样取 OwnedTransport。
+func ownedClient(t *testing.T) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: testdeps.OwnedTransport(t)}
+}
+
+func TestTestClientsOwnTheirTransport(t *testing.T) {
+	t.Parallel()
+	testdeps.RequireOwnedTransports(t, ".")
 }
 
 // backgroundRun 是在协程里跑、直到被取消才返回的 serve（runServeWith 或 hub.run）。
@@ -202,7 +220,7 @@ func TestServeMountsAdminAndPasswdRevokesWithoutRestart(t *testing.T) {
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	url, _, stop := startTestHub(t, db, clk, "--trusted-proxies", "127.0.0.1/32")
-	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+	client := heronv1connect.NewAdminServiceClient(ownedClient(t), url)
 	ctx := context.Background()
 	login := connect.NewRequest(&heronv1.LoginRequest{Password: old})
 	login.Header().Set("X-Forwarded-Proto", "https")
@@ -296,7 +314,7 @@ func TestServeThemesAreAvailableWithoutOriginConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 			url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), tc.flags...)
-			client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+			client := heronv1connect.NewAdminServiceClient(ownedClient(t), url)
 			logged, err := client.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: pw}))
 			if err != nil {
 				t.Fatal(err)
@@ -397,7 +415,7 @@ pruned:
 	// 把 --retention-* 传给了 api.Config.Retention 的那份值。标红结论是否也用这份配置由
 	// internal/hub/api 的 TestGetStorageStatsUsesTheConfiguredRetention 钉住——那边的夹具不跑
 	// RunMaintenance，判定不依赖任何真实时间窗。
-	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+	client := heronv1connect.NewAdminServiceClient(ownedClient(t), url)
 	logged, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
 		t.Fatalf("login for storage stats check: %v", err)
@@ -512,7 +530,7 @@ func TestServeFlushesTrafficOnShutdown(t *testing.T) {
 	}
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	url, _, stop := startTestHub(t, db, clk, "--timezone", "UTC")
-	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+	client := heronv1connect.NewAdminServiceClient(ownedClient(t), url)
 	ctx := context.Background()
 	logged, err := client.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
@@ -588,7 +606,7 @@ func TestServeMountsPublicService(t *testing.T) {
 	t.Parallel()
 	db := filepath.Join(t.TempDir(), "hub.db")
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	resp, err := http.Get(url + "/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
+	resp, err := ownedClient(t).Get(url + "/heron.v1.PublicService/GetSite?connect=v1&encoding=json&message=%7B%7D")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +628,7 @@ func TestServeMountsPublicService(t *testing.T) {
 func TestServeMountsBuiltinPublicPageAtRoot(t *testing.T) {
 	t.Parallel()
 	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	resp, err := http.Get(url + "/nodes/3")
+	resp, err := ownedClient(t).Get(url + "/nodes/3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +679,7 @@ func TestServePublicDirReplacesRootButNotPanelOrRPC(t *testing.T) {
 	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), "--public-dir", dir)
 	fetch := func(path string) (*http.Response, string) {
 		t.Helper()
-		resp, err := http.Get(url + path)
+		resp, err := ownedClient(t).Get(url + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -708,7 +726,7 @@ func TestServePublicDirOverridesStoredTheme(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Host = host
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := ownedClient(t).Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

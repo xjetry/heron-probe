@@ -18,6 +18,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/alert"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -43,7 +44,7 @@ func startAlertHub(t *testing.T, clk clock.Clock, seed func(*store.Store), flags
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := heronv1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	client := heronv1connect.NewAdminServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Jar: jar, Timeout: testwait.Bound}, url)
 	if _, err := client.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin := heronv1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	admin := heronv1connect.NewAdminServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Jar: jar, Timeout: testwait.Bound}, url)
 	if _, err := admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func TestServeReportsDaysLeftInTheHubZone(t *testing.T) {
 	if err != nil || len(nodes.Msg.GetNodes()) != 1 || nodes.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
 		t.Fatalf("admin ListNodes = %v %v, want days_left 5", nodes, err)
 	}
-	public := heronv1connect.NewPublicServiceClient(&http.Client{Timeout: testwait.Bound}, url)
+	public := heronv1connect.NewPublicServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Timeout: testwait.Bound}, url)
 	snap, err := public.GetSnapshot(t.Context(), connect.NewRequest(&heronv1.PublicServiceGetSnapshotRequest{}))
 	if err != nil || len(snap.Msg.GetNodes()) != 1 || snap.Msg.GetNodes()[0].GetBilling().GetDaysLeft() != 5 {
 		t.Fatalf("public GetSnapshot = %v %v, want days_left 5", snap, err)

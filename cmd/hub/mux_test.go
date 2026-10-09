@@ -27,6 +27,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -97,7 +98,7 @@ func TestMuxRoutesPanelAndRootAroundRPC(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(newTestMux(t))
 	t.Cleanup(srv.Close)
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: testdeps.OwnedTransport(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for _, path := range []string{"/", "/nodes/3"} {
 		resp, err := client.Get(srv.URL + path)
 		if err != nil {

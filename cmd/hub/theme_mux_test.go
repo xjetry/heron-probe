@@ -15,6 +15,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/web"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 )
@@ -78,7 +79,7 @@ func hostDo(t *testing.T, srv *httptest.Server, method, host, path, body string,
 	for k, v := range header {
 		req.Header[k] = v
 	}
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: testdeps.OwnedTransport(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)

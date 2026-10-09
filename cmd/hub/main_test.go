@@ -19,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -95,7 +96,7 @@ func TestMainPasswdServeAndSignal(t *testing.T) {
 		}
 		return addr != ""
 	}, "serve command never listened: %s", output)
-	client := heronv1connect.NewAdminServiceClient(&http.Client{Timeout: testwait.Bound}, "http://"+addr)
+	client := heronv1connect.NewAdminServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Timeout: testwait.Bound}, "http://"+addr)
 	if _, err := client.Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: password})); err != nil {
 		t.Fatalf("command password cannot authenticate real serve: %v", err)
 	}

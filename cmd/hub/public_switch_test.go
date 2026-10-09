@@ -18,6 +18,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 )
 
 func TestServePublicSwitchBothSources(t *testing.T) {
@@ -54,7 +55,7 @@ func TestServePublicSwitchBothSources(t *testing.T) {
 			}
 			base, _, _ := startTestHub(t, db, clk, flags...)
 			jar, _ := cookiejar.New(nil)
-			client := &http.Client{Jar: jar}
+			client := &http.Client{Transport: testdeps.OwnedTransport(t), Jar: jar}
 			admin := heronv1connect.NewAdminServiceClient(client, base)
 			if _, err := admin.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: "public-switch-password"})); err != nil {
 				t.Fatal(err)

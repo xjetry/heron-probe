@@ -31,7 +31,7 @@ func TestServeSessionCookieFilledToHeaderLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	url, _, _ := startTestHub(t, db, clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	logged, err := heronv1connect.NewAdminServiceClient(http.DefaultClient, url).Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: pw}))
+	logged, err := heronv1connect.NewAdminServiceClient(ownedClient(t), url).Login(context.Background(), connect.NewRequest(&heronv1.LoginRequest{Password: pw}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -184,7 +184,7 @@ func TestRunDrainsInFlightRequestsBeforeClosingTheStore(t *testing.T) {
 	}
 	responses := make(chan response, 1)
 	go func() {
-		resp, err := http.Get("http://" + addr + "/slow")
+		resp, err := ownedClient(t).Get("http://" + addr + "/slow")
 		if err != nil {
 			responses <- response{err: err}
 			return

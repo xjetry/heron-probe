@@ -53,7 +53,7 @@ func TestServeRunsCountryLookupWithTheNoRedirectClient(t *testing.T) {
 	// 第一次启动：开启查询、建节点、让节点经可信代理以 8.8.8.8 上报。来源地址随分钟行刷出落盘，这里靠退出时的
 	// 那次刷出写入；查询器先于刷出停止，所以这次启动不会查。
 	url, _, stop := startTestHub(t, db, clk, "--trusted-proxies", "127.0.0.1/32")
-	admin := heronv1connect.NewAdminServiceClient(http.DefaultClient, url)
+	admin := heronv1connect.NewAdminServiceClient(ownedClient(t), url)
 	ctx := context.Background()
 	logged, err := admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
 	if err != nil {
@@ -75,7 +75,7 @@ func TestServeRunsCountryLookupWithTheNoRedirectClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	report := connect.NewRequest(&heronv1.ReportRequest{Metrics: &heronv1.Metrics{CpuPct: proto.Float64(1)}})
-	agent := heronv1connect.NewAgentServiceClient(http.DefaultClient, url)
+	agent := heronv1connect.NewAgentServiceClient(ownedClient(t), url)
 	registered, err := agent.Register(ctx, connect.NewRequest(&heronv1.RegisterRequest{Key: node.Msg.Token}))
 	if err != nil {
 		t.Fatal(err)

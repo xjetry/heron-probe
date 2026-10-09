@@ -26,6 +26,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/auth"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hubclient"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
@@ -177,7 +178,7 @@ func adminClient(t *testing.T, url string) heronv1connect.AdminServiceClient {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := heronv1connect.NewAdminServiceClient(&http.Client{Jar: jar, Timeout: testwait.Bound}, url)
+	client := heronv1connect.NewAdminServiceClient(&http.Client{Transport: testdeps.OwnedTransport(t), Jar: jar, Timeout: testwait.Bound}, url)
 	if _, err := client.Login(t.Context(), connect.NewRequest(&heronv1.LoginRequest{Password: reloadPassword})); err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,7 @@ import (
 func TestHealthzServedByReadyHub(t *testing.T) {
 	t.Parallel()
 	url, _, _ := startTestHub(t, filepath.Join(t.TempDir(), "hub.db"), clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
-	resp, err := http.Get(url + "/healthz")
+	resp, err := ownedClient(t).Get(url + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
