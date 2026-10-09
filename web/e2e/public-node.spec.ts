@@ -1,22 +1,24 @@
 import { expect, test } from "@playwright/test";
+import { AdminService } from "../src/gen/heron/v1/admin_pb";
+import { PublicService } from "../src/gen/heron/v1/public_pb";
+import { ProbeKind } from "../src/gen/heron/v1/types_pb";
+import { fulfillRpc, login, must, rpc, rpcRoute } from "./fixtures";
 
 // 横轴刻度由共享 Chart 按容器宽度决定（设计 §5）：相邻刻度 ≥80px。刻度文字画在 canvas 上，Chart 把刻度数写在
 // data-x-ticks；这里从用户入口在两个宽度下核对，并确认画布不超出容器。
 test("节点页：现值头、两列图表与横轴刻度随宽度变化", async ({ page }, testInfo) => {
   // 总闸默认关闭，先打开（同 public-overview.spec）。
   await page.goto("/admin/login");
-  await page.evaluate(async () => {
-    const call = async (method: string, body: unknown) => { const r = await fetch("/heron.v1.AdminService/" + method, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (!r.ok) throw new Error(method + ": " + await r.text()); };
-    await call("Login", { password: "local-browser-test-password" });
-    await call("UpdateSettings", { settings: { publicEnabled: true } });
-  });
+  await login(page);
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: true } }));
   const now = Math.floor(Date.now() / 1000);
   const from = now - 86_400;
-  const ts = Array.from({ length: 24 }, (_, i) => String(from - (from % 3600) + i * 3600));
-  await page.route("**/heron.v1.PublicService/GetSite**", (route) => route.fulfill({ json: { title: "状态" } }));
-  await page.route("**/heron.v1.PublicService/GetSnapshot**", (route) => route.fulfill({ json: { now: String(now), nodes: [{ id: "1", name: "tokyo-core", online: true, lastSeenAt: String(now - 2), facts: { os: "Debian 13", arch: "amd64", cpuModel: "EPYC", cpuCores: 4 }, metrics: { cpuPct: 42, memUsed: String(1024 ** 3), memTotal: String(4 * 1024 ** 3), uptimeS: "7200" } }], tags: [] } }));
-  await page.route("**/heron.v1.PublicService/QueryMetrics**", (route) => route.fulfill({ json: { level: "1h", stepS: 3600, ts, series: [{ name: "cpu", unit: "percent", samples: ts.map((_, i) => ({ n: 60, mean: 20 + i, max: 40 + i })) }] } }));
-  await page.route("**/heron.v1.PublicService/QueryProbes**", (route) => route.fulfill({ json: { level: "1h", stepS: 3600, series: [["3", "PROBE_KIND_ICMP", "1.1.1.1"], ["4", "PROBE_KIND_TCP", "8.8.8.8:53"], ["5", "PROBE_KIND_HTTP", "https://example.com/health"]].map(([taskId, kind, target]) => ({ taskId, kind, target, samples: ts.map((t) => ({ ts: t, sent: 60, lost: 1, errors: 0, rttMeanUs: 20000, rttMinUs: 10000, rttMaxUs: 50000 })) })) } }));
+  const ts = Array.from({ length: 24 }, (_, i) => BigInt(from - (from % 3600) + i * 3600));
+  await page.route(rpcRoute(PublicService.method.getSite), (route) => fulfillRpc(route, PublicService.method.getSite, () => ({ title: "状态" })));
+  await page.route(rpcRoute(PublicService.method.getSnapshot), (route) => fulfillRpc(route, PublicService.method.getSnapshot, () => ({ now: BigInt(now), nodes: [{ id: 1n, name: "tokyo-core", online: true, lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", cpuModel: "EPYC", cpuCores: 4 }, metrics: { cpuPct: 42, memUsed: BigInt(1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), uptimeS: 7200n } }], tags: [] })));
+  await page.route(rpcRoute(PublicService.method.queryMetrics), (route) => fulfillRpc(route, PublicService.method.queryMetrics, () => ({ level: "1h", stepS: 3600, ts, series: [{ name: "cpu", unit: "percent", samples: ts.map((_, i) => ({ n: 60, mean: 20 + i, max: 40 + i })) }] })));
+  const probes = [[3n, ProbeKind.ICMP, "1.1.1.1"], [4n, ProbeKind.TCP, "8.8.8.8:53"], [5n, ProbeKind.HTTP, "https://example.com/health"]] as const;
+  await page.route(rpcRoute(PublicService.method.queryProbes), (route) => fulfillRpc(route, PublicService.method.queryProbes, () => ({ level: "1h", stepS: 3600, series: probes.map(([taskId, kind, target]) => ({ taskId, kind, target, samples: ts.map((t) => ({ ts: t, sent: 60, lost: 1, errors: 0, rttMeanUs: 20000, rttMinUs: 10000, rttMaxUs: 50000 })) })) })));
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto("/nodes/1");
   await expect(page.getByRole("group", { name: "CPU" })).toContainText("42%");

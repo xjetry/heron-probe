@@ -35,7 +35,8 @@ beforeAll(async () => {
   await act(async () => {
     await import("./main.tsx");
   });
-  reactRoot = createRoot.mock.results[0]?.value;
+  const created = createRoot.mock.results[0];
+  reactRoot = created?.type === "return" ? created.value : undefined;
   queryClient = mount.mock.instances[0] as QueryClient | undefined;
   mount.mockRestore();
   router = (await import("./App")).router;

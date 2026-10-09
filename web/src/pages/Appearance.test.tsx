@@ -1,6 +1,6 @@
 import { isFieldSet } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within, type BoundFunctions, type queries } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GeoBackend, SettingsSchema, type UpdateSettingsRequest } from "../gen/heron/v1/admin_pb";
 import { MAX_LOGO_BYTES } from "../lib/appearance";
@@ -216,7 +216,7 @@ function useFakeReader() {
 
 afterEach(() => vi.unstubAllGlobals());
 
-const pick = (f: ReturnType<typeof within>, name: string) =>
+const pick = (f: BoundFunctions<typeof queries>, name: string) =>
   fireEvent.change(f.getByLabelText("logo"), { target: { files: [new File([new Uint8Array([1])], name, { type: "image/png" })] } });
 
 // 至多一个读者在飞：读取进行中文件输入禁用，reading 才恰好等于"有读者在飞"，保存也随之被拒。

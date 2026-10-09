@@ -1,5 +1,8 @@
 import { type Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { AdminService, DeliveryFailure } from "../src/gen/heron/v1/admin_pb";
+import { AgentService } from "../src/gen/heron/v1/agent_pb";
+import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
+import { expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
 
 async function setScheme(page: Page, want: 'light' | 'dark') {
   for (let i = 0; i < 3; i++) {
@@ -14,18 +17,9 @@ async function openRowAction(page: Page, label: string, action: string) {
   await page.getByRole('menuitem', { name: `${action} ${label}`, exact: true }).click();
 }
 
-async function rpc(page: Page, method: string, body: unknown = {}) {
-  return page.evaluate(async ({ method, body }) => {
-    const response = await fetch('/heron.v1.AdminService/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(method + ': ' + JSON.stringify(result));
-    return result;
-  }, { method, body });
-}
-
 test('注册命令复制与移动端布局', async ({ page, context, browserName }, testInfo) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   await page.goto('/admin/register');
   await page.getByRole('button', { name: '开启新窗口' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '开启', exact: true }).click();
@@ -51,30 +45,25 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
 });
 
 test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, context, browserName, hub }, testInfo) => {
-  const ids: string[] = [];
+  const ids: bigint[] = [];
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   for (const [index, name] of ['tokyo-edge', 'seattle-core', 'frankfurt-worker'].entries()) {
-    const result = await rpc(page, 'CreateNode', { name: `${name}-${browserName}` });
-    const id = result.node.id;
+    const result = must(await rpc(page, AdminService.method.createNode, { name: `${name}-${browserName}` }));
+    const id = result.node!.id;
     ids.push(id);
     hub.deleteNodeAtEnd(id);
-    await rpc(page, 'UpdateNode', { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: 'BILLING_CYCLE_MONTHLY', expiresOn: '2027-10-01' } });
-    await page.evaluate(async ({ key, index }) => {
-      const registered = await fetch('/heron.v1.AgentService/Register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
-      if (!registered.ok) throw new Error(await registered.text());
-      const { token } = await registered.json();
-      const checkedAt = String(Math.floor(Date.now() / 1000));
-      const response = await fetch('/heron.v1.AgentService/Report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({
-        factsHash: '1', metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: '536870912', memTotal: '2147483648', diskUsed: '2147483648', diskTotal: '21474836480', load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: '524288', netTxBps: '131072' },
-        facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
-          ipv4: { state: index === 2 ? 'ADDRESS_DETECTION_STATE_FAILED' : 'ADDRESS_DETECTION_STATE_AVAILABLE', address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
-          ipv6: index === 1 ? { state: 'ADDRESS_DETECTION_STATE_UNSUPPORTED', checkedAt } : { state: 'ADDRESS_DETECTION_STATE_AVAILABLE', address: '2606:4700:4700::1111', checkedAt },
-        } },
-      }) });
-      if (!response.ok) throw new Error(await response.text());
-    }, { key: result.token, index });
+    must(await rpc(page, AdminService.method.updateNode, { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: BillingCycle.MONTHLY, expiresOn: '2027-10-01' } }));
+    const { token } = must(await rpc(page, AgentService.method.register, { key: result.token }));
+    const checkedAt = BigInt(Math.floor(Date.now() / 1000));
+    must(await rpc(page, AgentService.method.report, {
+      factsHash: 1n, metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: 536870912n, memTotal: 2147483648n, diskUsed: 2147483648n, diskTotal: 21474836480n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: 524288n, netTxBps: 131072n },
+      facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
+        ipv4: { state: index === 2 ? AddressDetectionState.FAILED : AddressDetectionState.AVAILABLE, address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
+        ipv6: index === 1 ? { state: AddressDetectionState.UNSUPPORTED, checkedAt } : { state: AddressDetectionState.AVAILABLE, address: '2606:4700:4700::1111', checkedAt },
+      } },
+    }, token));
   }
   await page.goto('/admin/nodes');
   await setScheme(page, 'dark');
@@ -125,8 +114,8 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   await day.fill('29');
   await dialog.getByRole('button', { name: '保存', exact: true }).click();
   await expect(dialog).toBeVisible();
-  const unchanged = await rpc(page, 'ListNodes');
-  expect(unchanged.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2027-10-01');
+  const unchanged = must(await rpc(page, AdminService.method.listNodes, {}));
+  expect(unchanged.nodes.find((node) => node.id === ids[0])?.billing?.expiresOn).toBe('2027-10-01');
   await year.fill('');
   await year.pressSequentially('2031');
   await expect(month).toBeFocused();
@@ -140,8 +129,8 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   await dialog.getByRole('button', { name: '保存', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText('US$29.50 / 月')).toBeVisible();
-  const updated = await rpc(page, 'ListNodes');
-  expect(updated.nodes.find((node: { id: string }) => node.id === ids[0]).billing.expiresOn).toBe('2031-12-25');
+  const updated = must(await rpc(page, AdminService.method.listNodes, {}));
+  expect(updated.nodes.find((node) => node.id === ids[0])?.billing?.expiresOn).toBe('2031-12-25');
   const renamedMenu = page.getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）`, exact: true });
   await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
   await page.keyboard.press('Escape');
@@ -215,12 +204,12 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
 
 test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({ page, browserName, hub }, testInfo) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
-  const ids: string[] = [];
+  await login(page);
+  const ids: bigint[] = [];
   const label = (index: number) => `order-${index}-${browserName}（#${ids[index]}）`;
-  const actual = async () => (await rpc(page, 'ListNodes')).nodes.filter((node: { id: string }) => ids.includes(node.id)).map((node: { id: string }) => node.id);
+  const actual = async () => must(await rpc(page, AdminService.method.listNodes, {})).nodes.filter((node) => ids.includes(node.id)).map((node) => node.id);
   for (let i = 0; i < 3; i++) {
-    const { node } = await rpc(page, 'CreateNode', { name: `order-${i}-${browserName}` });
+    const node = must(await rpc(page, AdminService.method.createNode, { name: `order-${i}-${browserName}` })).node!;
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }
@@ -267,7 +256,7 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
   await page.setViewportSize({ width: 375, height: 812 });
   await openRowAction(page, label(0), '移动到…');
   const move = page.getByRole('dialog', { name: '移动节点', exact: true });
-  const total = (await rpc(page, 'ListNodes')).nodes.length;
+  const total = must(await rpc(page, AdminService.method.listNodes, {})).nodes.length;
   await move.getByRole('spinbutton').fill(String(total));
   await move.getByRole('button', { name: '移动', exact: true }).click();
   await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
@@ -277,18 +266,18 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
 
 test('节点按全序名次整体移动到指定位置', async ({ page, browserName, hub }, testInfo) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
-  const ids: string[] = [];
+  await login(page);
+  const ids: bigint[] = [];
   const label = (index: number) => `move-${index}-${browserName}（#${ids[index]}）`;
   // ListNodes 返回的是 hub 的完整列表：本用例只断言自己那批节点的相对顺序，名次则对完整列表验证（1 起且与行序一致）。
-  const hubList = async () => (await rpc(page, 'ListNodes')).nodes as { id: string; position: number }[];
+  const hubList = async () => must(await rpc(page, AdminService.method.listNodes, {})).nodes;
   const mineInOrder = async () => (await hubList()).filter((node) => ids.includes(node.id)).map((node) => node.id);
   const positionsMatchList = async () => {
     const all = await hubList();
     return all.every((node, index) => node.position === index + 1);
   };
   for (let i = 0; i < 5; i++) {
-    const { node } = await rpc(page, 'CreateNode', { name: `move-${i}-${browserName}` });
+    const node = must(await rpc(page, AdminService.method.createNode, { name: `move-${i}-${browserName}` })).node!;
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }
@@ -350,7 +339,7 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
 test('在线更新展示实际平台能力并禁止不支持的更新', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   await page.goto('/admin/updates');
   await expect(page.getByRole('heading', { name: '在线更新', exact: true })).toBeVisible();
   await expect(page.getByText(/不支持在线更新：/).first()).toBeVisible();
@@ -368,13 +357,13 @@ test('在线更新展示实际平台能力并禁止不支持的更新', async ({
 // 一条事件可有多条投递，每条是块级元素；它们要与「未配置渠道」一样起在「投递」标签右侧，而不是掉到标签下一行。
 test('手机上的告警事件排成卡片：不横向滚动，投递起在标签右侧', async ({ page }, testInfo) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   const now = Math.floor(Date.now() / 1000);
-  const delivery = (id: string, ok: boolean) => ({ id, channelId: id, attempts: ok ? 1 : 3, ok, done: true, ...(ok ? { deliveredAt: String(now) } : { failure: 'DELIVERY_FAILURE_TRANSPORT' }) });
-  await page.route('**/heron.v1.AdminService/ListAlertEvents**', (route) => route.fulfill({ json: { events: [
-    { id: '2', ruleId: '1', nodeId: '1', transition: 'firing', at: String(now), summary: '节点 tokyo 离线 39s', value: 39, deliveries: [delivery('11', true), delivery('12', false)] },
-    { id: '1', ruleId: '1', nodeId: '1', transition: 'recovered', at: String(now - 60), summary: '节点 tokyo 已恢复', value: 0, deliveries: [] },
-  ] } }));
+  const delivery = (id: bigint, ok: boolean) => ({ id, channelId: id, attempts: ok ? 1 : 3, ok, done: true, ...(ok ? { deliveredAt: BigInt(now) } : { failure: DeliveryFailure.TRANSPORT }) });
+  await page.route(rpcRoute(AdminService.method.listAlertEvents), (route) => fulfillRpc(route, AdminService.method.listAlertEvents, () => ({ events: [
+    { id: 2n, ruleId: 1n, nodeId: 1n, transition: 'firing', at: BigInt(now), summary: '节点 tokyo 离线 39s', value: 39, deliveries: [delivery(11n, true), delivery(12n, false)] },
+    { id: 1n, ruleId: 1n, nodeId: 1n, transition: 'recovered', at: BigInt(now - 60), summary: '节点 tokyo 已恢复', value: 0, deliveries: [] },
+  ] })));
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/admin/events');
   const region = page.getByRole('region', { name: '告警事件' });
@@ -403,7 +392,7 @@ test('手机上的告警事件排成卡片：不横向滚动，投递起在标�
 // 不因字段的下外边距沉下去，也不跟着字段标题浮上来。文字中心与控件中心比，同字号时等价于基线对齐。
 test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ page }) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/admin/appearance');
   const form = page.getByRole('form', { name: '公开页外观' });
@@ -436,7 +425,7 @@ test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ pa
 // 从浏览器入口核对实际收到的响应头，而不是只看服务端单测。
 test('总览轮询的快照压缩，其余管理响应不压缩', async ({ page }) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   const encodings = new Map<string, string>();
   page.on('response', async (response) => {
     const method = new URL(response.url()).pathname.match(/^\/heron\.v1\.AdminService\/(GetSnapshot|ListNodes)$/)?.[1];
@@ -449,17 +438,17 @@ test('总览轮询的快照压缩，其余管理响应不压缩', async ({ page 
 
 test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字，进详情再返回还原；/ 与 ⌘K 打开快速搜索', async ({ page, browserName, hub }) => {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password: 'local-browser-test-password' });
+  await login(page);
   const tag = `url-${browserName}`;
   const names = [`url-a-${browserName}`, `url-b-${browserName}`];
-  const ids: string[] = [];
+  const ids: bigint[] = [];
   for (const name of names) {
-    const { node } = await rpc(page, 'CreateNode', { name });
+    const node = must(await rpc(page, AdminService.method.createNode, { name })).node!;
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }
-  hub.deleteAtEnd('DeleteTag', { name: tag });
-  await rpc(page, 'UpdateNode', { id: ids[0], name: names[0], tags: [tag], trafficResetDay: 1, offlineGraceS: 0 });
+  hub.deleteAtEnd(AdminService.method.deleteTag, { name: tag });
+  must(await rpc(page, AdminService.method.updateNode, { id: ids[0], name: names[0], tags: [tag], trafficResetDay: 1, offlineGraceS: 0 }));
   await page.goto('/admin/nodes');
   const box = page.getByRole('searchbox', { name: '搜索节点' });
   const row = (i: number) => page.getByRole('link', { name: `${names[i]}（#${ids[i]}）`, exact: true });

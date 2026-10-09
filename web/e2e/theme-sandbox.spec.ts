@@ -1,6 +1,7 @@
 import { type Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
 import { readFile } from "node:fs/promises";
+import { AdminService } from "../src/gen/heron/v1/admin_pb";
+import { expect, login as loginSession, must, rpc, test } from "./fixtures";
 
 // 固定测试密码只用于每次临时创建的本机数据库，服务器退出后整个目录删除。
 const password = "local-browser-test-password";
@@ -21,26 +22,18 @@ function zip(files: Record<string, string>): Buffer {
   return Buffer.concat([...parts, central, end]);
 }
 
-async function rpc(page: Page, method: string, body: unknown = {}) {
-  return page.evaluate(async ({ method, body }) => {
-    const response = await fetch('/heron.v1.AdminService/' + method, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(method + ': ' + JSON.stringify(result));
-    return result;
-  }, { method, body });
-}
 async function login(page: Page) {
   await page.goto('/admin/login');
-  await rpc(page, 'Login', { password });
+  await loginSession(page);
 }
 
 test('安装、预览、启用、旧资源及直接文档都保持权限隔离', async ({ page, context, browserName, hub }, testInfo) => {
   await login(page);
-  await rpc(page, 'UpdateSettings', { settings: { publicEnabled: true } });
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: true } }));
   const id = 'browser-' + browserName;
   // 用例中途会关闸、启用这个主题：两者都是整个 hub 共用的状态，收尾时卸载主题、恢复总闸（fixtures.ts），不留给后面的公开页用例。
-  hub.atEnd('恢复公开页总闸', () => hub.rpc('UpdateSettings', { settings: { publicEnabled: true } }));
-  hub.deleteAtEnd('DeleteTheme', { id });
+  hub.atEnd('恢复公开页总闸', async () => must(await hub.rpc(AdminService.method.updateSettings, { settings: { publicEnabled: true } })));
+  hub.deleteAtEnd(AdminService.method.deleteTheme, { id });
   const pkg = zip({
     'theme.json': JSON.stringify({ id, name: 'Browser Theme', version: '1', sdk: 1 }),
     'index.html': '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="./style.css"><div id="result">loading</div><button id="route">节点</button><script type="module" src="./app.js"></script>',
@@ -66,28 +59,30 @@ document.querySelector('#result').textContent=JSON.stringify(result);`,
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: new RegExp('^下载原包 Browser Theme（' + id + '）') }).click();
   const downloaded = await downloadEvent;
-  expect(await readFile((await downloaded.path())!)).toEqual(pkg);
+  expect(await readFile((await downloaded.path()))).toEqual(pkg);
   await page.screenshot({ path: testInfo.outputPath('themes-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 375, height: 760 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await page.screenshot({ path: testInfo.outputPath('themes-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 720 });
-  const { themes } = await rpc(page, 'ListThemes');
-  const installed = themes.find((t: { id: string }) => t.id === id);
-  expect(installed.enabled ?? false).toBe(false);
+  const installed = must(await rpc(page, AdminService.method.listThemes, {})).themes.find((t) => t.id === id);
+  if (!installed) throw new Error(`theme ${id} not listed`);
+  expect(installed.enabled).toBe(false);
+  // 原包经 bytes 字段（JSON 里是 base64）回读，与上传的字节逐一相同。
+  expect(must(await rpc(page, AdminService.method.getThemePackage, { id, digest: installed.digest })).package).toEqual(new Uint8Array(pkg));
   const file = `/_heron/themes/${id}/${installed.digest}/index.html`;
   expect((await context.request.get(file)).status()).toBe(404);
-  const preview = await rpc(page, 'PreviewTheme', { id, digest: installed.digest });
+  const preview = must(await rpc(page, AdminService.method.previewTheme, { id, digest: installed.digest }));
   const sandbox = await context.newPage();
   await sandbox.goto(preview.url);
   const frame = sandbox.frameLocator('iframe');
   await expect(frame.locator('#result')).toContainText('dynamic-ok');
-  const result = JSON.parse(await frame.locator('#result').innerText());
+  const result: unknown = JSON.parse(await frame.locator('#result').innerText());
   expect(result).toMatchObject({ parent: true, cookie: true, storage: true, fetch: true, worker: true, passkey: true, dynamic: 'dynamic-ok', css: 'rgb(12, 34, 56)', site: true, snapshot: true, adminPath: null, errorCode: 'not_found' });
   await frame.locator('#route').click();
   await expect(frame.locator('body')).toHaveAttribute('data-route', '/nodes/1');
   expect(new URL(sandbox.url()).pathname).toBe(preview.url);
-  await rpc(page, 'EnableTheme', { id, digest: installed.digest });
+  must(await rpc(page, AdminService.method.enableTheme, { id, digest: installed.digest }));
   await sandbox.goto('/nodes/2');
   await expect(sandbox.frameLocator('iframe').locator('body')).toHaveAttribute('data-route', '/nodes/2');
   await sandbox.frameLocator('iframe').locator('#route').click();
@@ -102,11 +97,11 @@ document.querySelector('#result').textContent=JSON.stringify(result);`,
   await sandbox.goto(file.replace('index.html', 'view.svg'));
   await expect(sandbox.locator('svg')).toHaveAttribute('isolated', 'yes');
   // 沙箱里伪造的 CreateNode 没有成功：只看它要建的那个名字，不假定 hub 里没有别的用例建的节点。
-  const nodes = await rpc(page, 'ListNodes');
-  expect((nodes.nodes ?? []).map((node: { name: string }) => node.name)).not.toContain('stolen');
-  await rpc(page, 'EnableTheme', {});
+  const { nodes } = must(await rpc(page, AdminService.method.listNodes, {}));
+  expect(nodes.map((node) => node.name)).not.toContain('stolen');
+  must(await rpc(page, AdminService.method.enableTheme, {}));
   expect((await context.request.get(file)).status()).toBe(200);
-  await rpc(page, 'UpdateSettings', { settings: { publicEnabled: false } });
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: false } }));
   expect(await (await context.request.get(file)).text()).toContain('公开页已关闭');
   await sandbox.close();
 });
@@ -126,19 +121,25 @@ test('Passkey 在 HTTPS 注册、重启登录并迁移到新域名', async ({ pa
   await page.goto('/admin/login');
   await page.getByRole('button', { name: /Passkey/ }).click();
   await expect(page).not.toHaveURL(/\/login$/);
-  const info = await rpc(page, 'GetSecurity');
+  const info = must(await rpc(page, AdminService.method.getSecurity, {}));
   expect(info.origin).toBe('https://localhost:18988');
   expect(info.passkeys).toHaveLength(1);
   expect((await context.request.post('/__e2e/restart')).ok()).toBe(true);
   await expect.poll(async () => {
-    try { return (await rpc(page, 'GetSecurity')).origin; } catch { return ''; }
+    // 重启期间请求可能连不上（fetch 在页面里抛错），也可能回非 200；两种都按"还没回来"处理。
+    try {
+      const security = await rpc(page, AdminService.method.getSecurity, {});
+      return security.ok ? security.message.origin : '';
+    } catch {
+      return '';
+    }
   }).toBe('https://localhost:18988');
-  await rpc(page, 'Logout');
+  must(await rpc(page, AdminService.method.logout, {}));
   await page.goto('/admin/login');
   await page.getByRole('button', { name: /Passkey/ }).click();
   await expect(page).not.toHaveURL(/\/login$/);
   await page.goto('https://other.localhost:18988/admin/login');
-  await rpc(page, 'Login', { password });
+  await loginSession(page);
   await page.goto('https://other.localhost:18988/admin/security/credentials');
   await expect(page.getByText('当前访问域名与已绑定域名不同')).toBeVisible();
   await page.getByLabel('管理员密码').fill(password);
@@ -148,7 +149,7 @@ test('Passkey 在 HTTPS 注册、重启登录并迁移到新域名', async ({ pa
   await page.goto('https://other.localhost:18988/admin/login');
   await page.getByRole('button', { name: /Passkey/ }).click();
   await expect(page).not.toHaveURL(/\/login$/);
-  const rebound = await rpc(page, 'GetSecurity');
+  const rebound = must(await rpc(page, AdminService.method.getSecurity, {}));
   expect(rebound.origin).toBe('https://other.localhost:18988');
   expect(rebound.passkeys).toHaveLength(1);
   expect(rebound.passkeys[0].name).toBe('Replacement key');

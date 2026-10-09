@@ -7,7 +7,7 @@ function Fixture({ initial = "", changed = (_value: string) => {} }) {
   const [value, setValue] = useState(initial);
   return <form aria-label="计费"><DateInput label="到期日" caption="到期日" value={value} onChange={value => { setValue(value); changed(value); }} /></form>;
 }
-const segment = (name: string) => screen.getByRole("textbox", { name: `到期日 ${name}` }) as HTMLInputElement;
+const segment = (name: string) => screen.getByRole<HTMLInputElement>("textbox", { name: `到期日 ${name}` });
 const shown = () => ["年", "月", "日"].map(name => segment(name).value);
 
 it("四位年份进入月份，两位月份进入日期，输出标准日期", () => {
@@ -158,7 +158,7 @@ it("时刻按 24 小时制补零输出，越界时刻与必填为空都拦下表
     return <form aria-label="静默"><TimeInput label="每日开始" caption="开始" required value={value} onChange={(v) => { setValue(v); changed(v); }} /></form>;
   }
   render(<Time />);
-  const hour = screen.getByRole("textbox", { name: "每日开始 时" }) as HTMLInputElement;
+  const hour = screen.getByRole<HTMLInputElement>("textbox", { name: "每日开始 时" });
   const minute = screen.getByRole("textbox", { name: "每日开始 分" });
   expect(screen.getByRole("form")).toBeInvalid();
   expect(hour.validationMessage).toBe("请填写开始");

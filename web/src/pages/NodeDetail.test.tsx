@@ -135,7 +135,7 @@ it("切到另一个节点、新节点历史未返回时不显示上一个节点�
   const { router } = renderWithAdmin({ ...defaultImpl, listNodes: listTwoNodes, queryMetrics }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   await screen.findByRole("heading", { name: "db-07" });
   await screen.findByText(/级别 1m，每点 60 秒/);
-  await act(async () => { router.navigate("/nodes/8"); });
+  await act(async () => { await router.navigate("/nodes/8"); });
   expect(await screen.findByRole("heading", { name: "db-08" })).toBeInTheDocument();
   // 8 的历史还没回来：不能把 7 的"级别 1m"标签或图表当成 8 的显示，这段时间没有图表比显示错的更安全。
   expect(screen.queryByText(/级别 1m/)).toBeNull();

@@ -63,7 +63,7 @@ it("带新 identity 的 transition 渲染被挂起丢弃后重试，不沿用上
     return <div data-testid="result">{identity}:{String(r.data)}</div>;
   }
   function Wrapper() {
-    const [props, setP] = useState({ identity: "a", data: 1 as number | undefined, suspend: false });
+    const [props, setP] = useState<{ identity: string; data: number | undefined; suspend: boolean }>({ identity: "a", data: 1, suspend: false });
     setProps = setP;
     return (
       <Suspense fallback={<div data-testid="result">loading</div>}>

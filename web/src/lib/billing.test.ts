@@ -16,8 +16,9 @@ afterEach(() => { vi.useRealTimers(); });
 describe("cycleLabel", () => {
   it("周期表覆盖协议枚举里除未指定之外的每个值", () => {
     for (const { number, name } of BillingCycleSchema.values) {
-      if (number === BillingCycle.UNSPECIFIED) continue;
-      expect(cycleLabel(number), name).not.toMatch(/^(|未知（\d+）)$/);
+      const cycle: BillingCycle = number;
+      if (cycle === BillingCycle.UNSPECIFIED) continue;
+      expect(cycleLabel(cycle), name).not.toMatch(/^(|未知（\d+）)$/);
     }
     expect(BILLING_CYCLES.map((e) => e.label)).toEqual(["月", "季", "半年", "年", "两年", "三年", "五年"]);
   });

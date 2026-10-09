@@ -512,7 +512,7 @@ it("编辑带上配置身份，清除指纹是单独的动作", async () => {
   }, routes, "/probes");
   await openRowAction("https://example.com/（#8）", "编辑");
   const form = screen.getByRole("form", { name: "编辑 https://example.com/（#8）" });
-  expect((within(form).getByLabelText("证书指纹") as HTMLInputElement).value).toMatch(/^sha256\/\//);
+  expect(within(form).getByLabelText<HTMLInputElement>("证书指纹").value).toMatch(/^sha256\/\//);
   fireEvent.click(within(form).getByRole("button", { name: "清除指纹" }));
   fireEvent.submit(form);
   await waitFor(() => expect(saved).toHaveLength(1));
@@ -567,7 +567,7 @@ it("改成不能钉的种类时仍显示指纹，且不会自动清除", async (
   expect(within(form).getByLabelText("证书指纹")).toBeInTheDocument();
   expect(within(form).getByRole("button", { name: "清除指纹" })).toBeInTheDocument();
   expect(within(form).getByText(/不能钉指纹/)).toBeInTheDocument();
-  expect((within(form).getByLabelText("证书指纹") as HTMLInputElement).value).toMatch(/^sha256\/\//);
+  expect(within(form).getByLabelText<HTMLInputElement>("证书指纹").value).toMatch(/^sha256\/\//);
   fireEvent.change(within(form).getByLabelText("目标"), { target: { value: "192.0.2.1" } });
   fireEvent.submit(form);
   await waitFor(() => expect(saved).toHaveLength(1));

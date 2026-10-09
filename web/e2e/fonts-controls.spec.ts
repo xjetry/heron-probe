@@ -1,15 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-async function rpc(page: Page, method: string, body: unknown = {}) {
-  const response = await page.evaluate(async ({ method, body }) => {
-    const response = await fetch(`/heron.v1.AdminService/${method}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    return { status: response.status, body: await response.json() };
-  }, { method, body });
-  expect(response.status, `${method}: ${JSON.stringify(response.body)}`).toBe(200);
-  return response.body;
-}
+import { expect, test } from "@playwright/test";
+import { login } from "./fixtures";
 
 // 字体随前端产物嵌进 hub：要证明的是浏览器真的从 hub 同源取到了 woff2、类型对（hub 回 nosniff，类型错了浏览器会拒用），
 // 而且页面用上了它，不是样式表里写了名字就算。
@@ -17,7 +7,7 @@ test("内嵌字体从 hub 同源加载为 font/woff2，正文与等宽读数都�
   const fonts: { url: string; status: number; type: string }[] = [];
   page.on("response", (r) => { if (new URL(r.url()).pathname.endsWith(".woff2")) fonts.push({ url: r.url(), status: r.status(), type: r.headers()["content-type"] ?? "" }); });
   await page.goto("/admin/login");
-  await rpc(page, "Login", { password: "local-browser-test-password" });
+  await login(page);
   await page.goto("/admin/");
   await expect(page.getByRole("heading", { level: 1, name: "总览" })).toBeVisible();
   const state = await page.evaluate(async () => {
@@ -50,7 +40,7 @@ test("内嵌字体从 hub 同源加载为 font/woff2，正文与等宽读数都�
 
 test("自绘日期控件：未填完的日期不进 URL，月历选日写入筛选；抽屉里 Esc 只关月历", async ({ page }) => {
   await page.goto("/admin/login");
-  await rpc(page, "Login", { password: "local-browser-test-password" });
+  await login(page);
   await page.goto("/admin/events");
   const from = page.getByRole("group", { name: "起始日期" });
   await from.getByRole("textbox", { name: "起始日期 年" }).pressSequentially("2031");

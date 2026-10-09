@@ -1,29 +1,17 @@
-import { type Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
-
-async function rpc(page: Page, method: string, body: unknown = {}, token = "") {
-  return page.evaluate(async ({ method, body, token }) => {
-    const response = await fetch(`/heron.v1.AdminService/${method}`, {
-      method: "POST",
-      credentials: token ? "omit" : "same-origin",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(body),
-    });
-    return { status: response.status, body: await response.json() };
-  }, { method, body, token });
-}
+import type { MessageInitShape } from "@bufbuild/protobuf";
+import { anyUnpack } from "@bufbuild/protobuf/wkt";
+import { AdminService, TokenPermission, UpdateNodeResponseSchema, type ExecuteChangeRequestSchema } from "../src/gen/heron/v1/admin_pb";
+import { expect, login, must, rpc, test } from "./fixtures";
 
 test("限定节点凭据的创建、预览、写入、重试、回执和吊销", async ({ page, browserName, hub }, testInfo) => {
   await page.goto("/admin/login");
-  expect((await rpc(page, "Login", { password: "local-browser-test-password" })).status).toBe(200);
-  const ids: string[] = [];
+  await login(page);
+  const ids: bigint[] = [];
   const name = `scoped-${browserName}`;
-  let tokenId = "";
   for (const suffix of ["allowed", "outside"]) {
-    const created = await rpc(page, "CreateNode", { name: `${name}-${suffix}` });
-    expect(created.status).toBe(200);
-    ids.push(created.body.node.id);
-    hub.deleteNodeAtEnd(created.body.node.id);
+    const { node } = must(await rpc(page, AdminService.method.createNode, { name: `${name}-${suffix}` }));
+    ids.push(node!.id);
+    hub.deleteNodeAtEnd(node!.id);
   }
   await page.goto("/admin/tokens");
   await page.getByRole("button", { name: "新建 API token", exact: true }).click();
@@ -36,40 +24,41 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
   const secret = page.locator("code.secret");
   await expect(secret).toBeVisible();
   const token = (await secret.textContent())!;
-  const tokens = await rpc(page, "ListApiTokens");
-  const created = tokens.body.tokens.find((entry: { name: string }) => entry.name === name);
-  tokenId = created.id;
-  hub.deleteAtEnd("DeleteApiToken", { id: tokenId });
-  expect(created.grant.permissions).toEqual(["TOKEN_PERMISSION_CONFIGURE"]);
-  expect(created.grant.allNodes ?? false).toBe(false);
-  expect(created.grant.nodeIds).toEqual([ids[0]]);
-  const scoped = await rpc(page, "ListNodes", {}, token);
-  expect(scoped.status).toBe(200);
-  expect(scoped.body.nodes.map((node: { id: string }) => node.id)).toEqual([ids[0]]);
+  const created = must(await rpc(page, AdminService.method.listApiTokens, {})).tokens.find((entry) => entry.name === name);
+  if (!created) throw new Error(`API token ${name} not listed`);
+  const tokenId = created.id;
+  hub.deleteAtEnd(AdminService.method.deleteApiToken, { id: tokenId });
+  expect(created.grant?.permissions).toEqual([TokenPermission.CONFIGURE]);
+  expect(created.grant?.allNodes).toBe(false);
+  expect(created.grant?.nodeIds).toEqual([ids[0]]);
+  const scoped = must(await rpc(page, AdminService.method.listNodes, {}, token));
+  expect(scoped.nodes.map((node) => node.id)).toEqual([ids[0]]);
 
-  const change = { requestId: `browser-${browserName}`, updateMask: "note", updateNode: { id: ids[0], note: "browser-verified" } };
-  const preview = await rpc(page, "ExecuteChange", { ...change, preview: true }, token);
-  expect(preview.status).toBe(200);
-  expect(preview.body.expectedVersion).toBeTruthy();
-  expect(preview.body.operation.committedAt ?? "0").toBe("0");
-  expect(preview.body.result).toBeUndefined();
-  const before = await rpc(page, "ListNodes", {}, token);
-  expect(before.body.nodes[0].note ?? "").toBe("");
-  const denied = await rpc(page, "ExecuteChange", { ...change, preview: true, updateNode: { id: ids[1], note: "forbidden" } }, token);
-  expect(denied.body.code).toBe("permission_denied");
-  const execution = { ...change, expectedVersion: preview.body.expectedVersion };
-  const committed = await rpc(page, "ExecuteChange", execution, token);
-  expect(committed.status).toBe(200);
-  expect(committed.body.operation.id).toBeTruthy();
-  expect(Number(committed.body.operation.committedAt)).toBeGreaterThan(0);
-  const after = await rpc(page, "ListNodes", {}, token);
-  expect(after.body.nodes[0].note).toBe("browser-verified");
-  expect(after.body.nodes[0].name).toBe(`${name}-allowed`);
-  const replay = await rpc(page, "ExecuteChange", execution, token);
-  expect(replay.status).toBe(200);
-  expect(replay.body.replayed).toBe(true);
-  expect(replay.body.operation.id).toBe(committed.body.operation.id);
-  expect(replay.body.result).toBeUndefined();
+  // 改动走 oneof 的 updateNode 分支，字段掩码只放开 note。
+  const requestId = `browser-${browserName}`;
+  const change: MessageInitShape<typeof ExecuteChangeRequestSchema> = { requestId, updateMask: { paths: ["note"] }, change: { case: "updateNode", value: { id: ids[0], note: "browser-verified" } } };
+  const preview = must(await rpc(page, AdminService.method.executeChange, { ...change, preview: true }, token));
+  expect(preview.expectedVersion).toBeTruthy();
+  expect(preview.operation?.committedAt).toBe(0n);
+  expect(preview.result).toBeUndefined();
+  const before = must(await rpc(page, AdminService.method.listNodes, {}, token));
+  expect(before.nodes[0].note).toBe("");
+  const denied = await rpc(page, AdminService.method.executeChange, { ...change, preview: true, change: { case: "updateNode", value: { id: ids[1], note: "forbidden" } } }, token);
+  expect(denied).toMatchObject({ ok: false, status: 403, error: { code: "permission_denied" } });
+  const execution = { ...change, expectedVersion: preview.expectedVersion };
+  const committed = must(await rpc(page, AdminService.method.executeChange, execution, token));
+  const operationId = committed.operation?.id ?? "";
+  expect(operationId).toBeTruthy();
+  expect(committed.operation?.committedAt).toBeGreaterThan(0n);
+  // 首次执行带回原业务响应（Any），按类型 URL 解出 UpdateNodeResponse。
+  expect(committed.result && anyUnpack(committed.result, UpdateNodeResponseSchema)?.node?.note).toBe("browser-verified");
+  const after = must(await rpc(page, AdminService.method.listNodes, {}, token));
+  expect(after.nodes[0].note).toBe("browser-verified");
+  expect(after.nodes[0].name).toBe(`${name}-allowed`);
+  const replay = must(await rpc(page, AdminService.method.executeChange, execution, token));
+  expect(replay.replayed).toBe(true);
+  expect(replay.operation?.id).toBe(operationId);
+  expect(replay.result).toBeUndefined();
 
   await page.getByRole("dialog").getByRole("button", { name: "关闭抽屉", exact: true }).click();
   await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).click();
@@ -77,8 +66,8 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
   const operations = page.getByRole("region", { name: "操作记录" });
   await expect(operations.locator("details")).toHaveCount(1);
   await operations.locator("summary").click();
-  await expect(operations.getByText(change.requestId, { exact: true })).toBeVisible();
-  await expect(operations.getByText(committed.body.operation.id, { exact: true })).toBeVisible();
+  await expect(operations.getByText(requestId, { exact: true })).toBeVisible();
+  await expect(operations.getByText(operationId, { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("token-audit-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
@@ -88,6 +77,6 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
   await page.getByRole("menuitem", { name: `确认吊销 ${name}（#${tokenId}）`, exact: true }).click();
   await page.getByRole("button", { name: `更多操作 ${name}（#${tokenId}）`, exact: true }).waitFor({ state: "hidden" });
   await expect(secret).toHaveCount(0);
-  const revoked = await rpc(page, "ListNodes", {}, token);
-  expect(revoked.body.code).toBe("unauthenticated");
+  const revoked = await rpc(page, AdminService.method.listNodes, {}, token);
+  expect(revoked).toMatchObject({ ok: false, status: 401, error: { code: "unauthenticated" } });
 });

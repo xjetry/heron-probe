@@ -73,6 +73,12 @@ it("数据原地更新；系统或 data-theme 改变明暗时，用最新数据�
   }
 });
 
+// 本组件只给序列写颜色字符串；读回时先确认它确实是字符串，再拼成填充色。
+function strokeOf(series: uPlot.Series | undefined): string {
+  if (typeof series?.stroke !== "string") throw new Error(`series stroke is not a color string: ${typeof series?.stroke}`);
+  return series.stroke;
+}
+
 function mountChart(props: Parameters<typeof Chart>[0]) {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -206,7 +212,7 @@ it("填充带按 labels 下标换算成 uPlot 序列下标，取上界序列的�
   const { unmount } = mountChart({ data: [[0], [1], [0], [2]], labels: ["均值", "最小", "最大"], unit: "ms", soft: [false, true, true], bands: [{ lower: 1, upper: 2 }] });
   try {
     const opts = plots.at(-1)!.options;
-    expect(opts.bands).toEqual([{ series: [3, 2], fill: `${opts.series[3].stroke}33` }]);
+    expect(opts.bands).toEqual([{ series: [3, 2], fill: `${strokeOf(opts.series[3])}33` }]);
   } finally {
     unmount();
   }
@@ -256,7 +262,7 @@ it("浅线标记或填充带的取值变化时重建", () => {
     expect(plots[1].options.series[2].width).toBeLessThan(plots[1].options.series[1].width as number);
     rerender(<Chart data={[[0], [1], [2]]} labels={["a", "b"]} unit="ms" soft={[false, true]} bands={[{ lower: 1, upper: 0 }]} />);
     expect(plots).toHaveLength(3);
-    expect(plots[2].options.bands).toEqual([{ series: [1, 2], fill: `${String(plots[2].options.series[1].stroke)}33` }]);
+    expect(plots[2].options.bands).toEqual([{ series: [1, 2], fill: `${strokeOf(plots[2].options.series[1])}33` }]);
   } finally {
     unmount();
   }

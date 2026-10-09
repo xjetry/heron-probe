@@ -82,7 +82,7 @@ describe("RegisterWindow", () => {
 
   it("清空名额保留空白而不是零值", async () => {
     renderWithAdmin({ getRegisterWindow: async () => ({ open: false }) }, [{ path: "/register", Component: RegisterWindow }], "/register");
-    const input = within(await openDrawer()).getByLabelText("可注册节点数") as HTMLInputElement;
+    const input = within(await openDrawer()).getByLabelText<HTMLInputElement>("可注册节点数");
     fireEvent.change(input, { target: { value: "" } });
     expect({ value: input.value, nan: Number.isNaN(input.valueAsNumber) }).toEqual({ value: "", nan: true });
   });

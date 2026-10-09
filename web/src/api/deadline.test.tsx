@@ -39,7 +39,7 @@ const surfaces: { name: string; transport: Transport; method: DescMethodUnary }[
 it("超时错误文案由实际等待预算推出", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
-  const pending = admin.unary(AdminService.method.getSnapshot, undefined, undefined, undefined, {}).catch((err) => err);
+  const pending = admin.unary(AdminService.method.getSnapshot, undefined, undefined, undefined, {}).catch((err: unknown) => err);
   await vi.advanceTimersByTimeAsync(READ_DEADLINE_MS);
   expect(await pending).toMatchObject({ code: Code.DeadlineExceeded, rawMessage: `请求超过 ${READ_DEADLINE_MS / 1000} 秒等待预算` });
 });
@@ -108,7 +108,7 @@ it("主动取消保留 Canceled，成功与取消都清理截止计时器", asyn
   expect(vi.getTimerCount()).toBe(0);
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   const ac = new AbortController();
-  const pending = admin.unary(AdminService.method.getSnapshot, ac.signal, undefined, undefined, {}).catch((e) => e);
+  const pending = admin.unary(AdminService.method.getSnapshot, ac.signal, undefined, undefined, {}).catch((e: unknown) => e);
   ac.abort();
   expect(await pending).toMatchObject({ code: Code.Canceled });
   expect(vi.getTimerCount()).toBe(0);
