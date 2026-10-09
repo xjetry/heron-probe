@@ -2,11 +2,13 @@ import { type Page, type Route } from "@playwright/test";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { PublicService, type PublicNodeSchema } from "../src/gen/heron/v1/public_pb";
-import { BillingCycle } from "../src/gen/heron/v1/types_pb";
+import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
 import { expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
 
-// 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。
-const FORBIDDEN = ["可用率", "在线率", "SLA", "宕机", "不可达", "主机名", "内核", "agent 版本", "IPv4", "IPv6", "事件", "告警", "刷新"];
+// 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。IP 地址不在这里查：公开快照里根本没有地址字段
+// （PublicAddressDetection 只有 state，由 hub 的投影与 internal/hub/api 的测试钉住）；「IPv4」「IPv6」地址族标记是允许的。
+const FORBIDDEN = ["可用率", "在线率", "SLA", "宕机", "不可达", "主机名", "内核", "agent 版本", "事件", "告警", "刷新"];
+const AVAILABLE = { state: AddressDetectionState.AVAILABLE };
 
 // e2e 的 hub 是每次新建的库，公开页总闸默认关闭（关闸时连 SPA 的静态资源都是 404），先登录打开；RPC 再由 route 拦截。
 async function setPublicEnabled(page: Page, enabled: boolean) {
@@ -20,10 +22,10 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   const now = Math.floor(Date.now() / 1000);
   const minute = now - now % 60;
   const nodes: MessageInitShape<typeof PublicNodeSchema>[] = [
-    { id: 1n, name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4 }, metrics: { cpuPct: 72, memUsed: BigInt(3 * 1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), diskUsed: BigInt(8 * 1024 ** 3), diskTotal: BigInt(32 * 1024 ** 3), uptimeS: 720000n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: BigInt(128 * 1024), netTxBps: BigInt(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { periodRx: BigInt(12 * 1024 ** 3), periodTx: BigInt(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-10-01", daysLeft: 25 } },
+    { id: 1n, name: "tokyo-core", country: "JP", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 2), facts: { os: "Debian 13", arch: "amd64", virtualization: "kvm", cpuModel: "EPYC", cpuCores: 4, network: { ipv4: AVAILABLE, ipv6: AVAILABLE } }, metrics: { cpuPct: 72, memUsed: BigInt(3 * 1024 ** 3), memTotal: BigInt(4 * 1024 ** 3), diskUsed: BigInt(8 * 1024 ** 3), diskTotal: BigInt(32 * 1024 ** 3), uptimeS: 720000n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: BigInt(128 * 1024), netTxBps: BigInt(32 * 1024), tcpConns: 20, udpConns: 2, procs: 120 }, traffic: { periodRx: BigInt(12 * 1024 ** 3), periodTx: BigInt(8 * 1024 ** 3) }, billing: { price: "12", currency: "USD", billingCycle: BillingCycle.MONTHLY, expiresOn: "2027-10-01", daysLeft: 25 } },
     { id: 2n, name: "tokyo-home", country: "JP", online: false, tags: ["家宽"], lastSeenAt: BigInt(now - 7200), metrics: { cpuPct: 5 } },
     { id: 3n, name: "hk-edge", country: "HK", online: true, tags: ["机房"], lastSeenAt: BigInt(now - 1), maintenance: true, metrics: { cpuPct: 10, memUsed: BigInt(1024 ** 3), memTotal: BigInt(4 * 1024 ** 3) } },
-    { id: 4n, name: "香港家宽-超长节点名称用于验证窄屏布局与完整可访问名称", country: "HK", online: true, tags: ["家宽"], lastSeenAt: BigInt(now - 1), metrics: { cpuPct: 95, memUsed: BigInt(Math.floor(3.9 * 1024 ** 3)), memTotal: BigInt(4 * 1024 ** 3) } },
+    { id: 4n, name: "香港家宽-超长节点名称用于验证窄屏布局与完整可访问名称", country: "HK", online: true, tags: ["家宽"], lastSeenAt: BigInt(now - 1), facts: { network: { ipv4: AVAILABLE, ipv6: { state: AddressDetectionState.FAILED } } }, metrics: { cpuPct: 95, memUsed: BigInt(Math.floor(3.9 * 1024 ** 3)), memTotal: BigInt(4 * 1024 ** 3) } },
     { id: 5n, name: "等待首次接入", country: "", online: false, tags: [] },
   ];
   await page.route(rpcRoute(PublicService.method.getSite), (route) => fulfillRpc(route, PublicService.method.getSite, () => ({ title: "Heron · 基础设施", theme: "dark", adminPath: "/admin/" })));
@@ -106,6 +108,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(panel.getByRole("heading", { name: "hk-edge" })).toBeVisible();
   await page.getByRole("link", { name: "tokyo-core", exact: true }).click();
   await expect(panel.getByRole("heading", { name: "tokyo-core" })).toBeVisible();
+  await expect(panel.getByRole("group", { name: "公网出口" })).toHaveText("IPv4IPv6");
   await expect(panel.getByRole("img", { name: "最近 1 小时网络速率", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "hk-edge" }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -144,6 +147,11 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(card.getByText("US$12 / 月")).toBeVisible();
   await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");
   await expect(card.locator(".expiry")).toContainText("剩 25 天");
+  // 双栈标记在系统信息行尾，只画有公网出口的族（探测失败的 IPv6 不画）；标题行不因它变挤，短名称不截断。
+  await expect(card.locator(".node-card-meta").getByRole("group", { name: "公网出口" })).toHaveText("IPv4IPv6");
+  expect(await card.getByRole("link", { name: "tokyo-core" }).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  const longCard = page.getByRole("article", { name: nodes[3].name });
+  await expect(longCard.locator(".node-card-meta").getByRole("group", { name: "公网出口" })).toHaveText("IPv4");
   // 离线与从未上报默认展开；访客收起后，轮询带来新数据也不会再展开。
   const folded = page.locator("details.folded-nodes");
   await expect(folded.locator("summary")).toHaveText("离线与从未上报 · 2");
@@ -183,6 +191,7 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(list.locator("tbody tr")).toHaveCount(5);
   const coreRow = list.getByRole("row", { name: "tokyo-core", exact: true });
   await expect(coreRow.getByRole("meter", { name: "CPU 72%" })).toBeVisible();
+  await expect(coreRow.getByRole("group", { name: "公网出口" })).toHaveText("IPv4IPv6");
   await expect(coreRow.locator(".expiry")).toContainText("剩 25 天");
   await expect(list.getByRole("row", { name: "等待首次接入", exact: true }).getByRole("img", { name: "从未上报" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);

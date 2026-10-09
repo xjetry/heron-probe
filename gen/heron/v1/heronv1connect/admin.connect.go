@@ -400,7 +400,7 @@ type AdminServiceClient interface {
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
-	// 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+	// 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
 	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
 }
 
@@ -1429,7 +1429,7 @@ type AdminServiceHandler interface {
 	CreateApiToken(context.Context, *connect.Request[v1.CreateApiTokenRequest]) (*connect.Response[v1.CreateApiTokenResponse], error)
 	// 吊销：下一个用它的请求即返回 Unauthenticated，不需要重启 hub。
 	DeleteApiToken(context.Context, *connect.Request[v1.DeleteApiTokenRequest]) (*connect.Response[v1.DeleteApiTokenResponse], error)
-	// 入口卡片与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
+	// 技能文件与 hub 构建时嵌入的全部 proto 源文件：不在仓库里的调用方由此取得与 hub 同版本的 schema。
 	GetApiReference(context.Context, *connect.Request[v1.GetApiReferenceRequest]) (*connect.Response[v1.GetApiReferenceResponse], error)
 }
 

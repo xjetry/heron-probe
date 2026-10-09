@@ -14,6 +14,7 @@ import { AdminService, TokenPermission, type CreateApiTokenResponse } from "../g
 import { withId } from "../lib/ids";
 import { dateTime, day } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
+import { downloadText } from "../lib/download";
 
 const permissionChoices = [
   [TokenPermission.CONFIGURE, "监控配置"],
@@ -42,17 +43,7 @@ function Operations({ ownerId }: { ownerId: bigint }) {
   </section>;
 }
 
-// 卡片内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
-function download(filename: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  // 下载何时读取 URL 由浏览器决定，不在同一轮释放。
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
+// 技能文件的内容以 hub 下发的为准：与 hub 同版本，面板不另存一份。
 export function ApiTokens() {
   const qc = useQueryClient();
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
@@ -68,7 +59,7 @@ export function ApiTokens() {
     ...mutationOptions,
     onSuccess: refresh,
   });
-  const reference = useMutation(AdminService.method.getApiReference, { ...mutationOptions, onSuccess: (r) => download("SKILL.md", r.guide) });
+  const reference = useMutation(AdminService.method.getApiReference, { ...mutationOptions, onSuccess: (r) => downloadText("SKILL.md", r.guide) });
   const gate = queryGate(list);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   return (
@@ -108,8 +99,12 @@ export function ApiTokens() {
       <section className="card integrations" aria-label="接入方式">
         <h2>接入方式</h2>
         <div className="integration">
-          <p><strong>agent 入口卡片</strong><span className="muted">保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md），并设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN</code>。</span></p>
-          <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载入口卡片</button>
+          <p>
+            <strong>Agent 技能文件（SKILL.md）</strong>
+            <span className="muted">写给 Claude Code 等 AI agent 的接口说明：接口地址与鉴权方式、schema 的取得、时间与分页约定，以及可直接运行的例子，与这个 hub 同版本。保存为 agent 的 skills 目录下的 heron-hub/SKILL.md（Claude Code 为 ~/.claude/skills/heron-hub/SKILL.md）。</span>
+            <span className="muted">token 不写进 SKILL.md，由环境变量提供：在上面新建一个 API token（默认只读，要让 agent 改配置时再勾选写入权限），复制创建后只显示一次的 token，给 agent 设置 <code>HERON_HUB={window.location.origin}</code> 与 <code>HERON_TOKEN=</code>（这个 token）。Claude Code 写进 ~/.claude/settings.json 的 env 段：<code>{`{"env": {"HERON_HUB": "${window.location.origin}", "HERON_TOKEN": "heron_at_…"}}`}</code>；其他 agent 在启动它的 shell 里 export 这两个变量。</span>
+          </p>
+          <button type="button" onClick={() => reference.mutate({})} disabled={reference.isPending}>下载 SKILL.md</button>
         </div>
         <div className="integration">
           <p><strong>油猴脚本</strong><span className="muted">给运维自己用：粘贴进 Tampermonkey 等脚本管理器后，任意站点右下角出现悬浮按钮，在 IDC 页面看着价格与到期一键建节点，建好后直接给出安装命令。脚本经 <code>ExecuteChange</code> 写，token 需勾选「创建节点」。</span></p>

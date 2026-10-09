@@ -11,6 +11,8 @@ import { toBase64 } from "../lib/base64";
 import { bytes, dateTime } from "../lib/format";
 import { FileInput } from "../components/FileInput";
 import { EmptyState } from "../components/EmptyState";
+import { downloadText } from "../lib/download";
+import { buildThemeSkill, THEME_SKILL_FILENAME } from "../lib/themeSkill";
 
 const maxPackageBytes = 8 * 1024 * 1024;
 const versionLabel = (theme: Theme) => `${theme.name}（${theme.id}）${theme.version} [${theme.digest.slice(0, 12)}]`;
@@ -106,6 +108,15 @@ export function Themes() {
   return <section>
     {gate.banner}
     <PageHeader title="主题" />
+    <section className="card integrations" aria-label="开发主题">
+      <div className="integration">
+        <p>
+          <strong>主题开发指南（给 AI agent）</strong>
+          <span className="muted">主题是构建好的静态前端 ZIP，经 hub 提供的 SDK 读取公开数据。这份 skill 格式的指南写明有哪些数据与字段、SDK 与接口地址、沙箱里能做什么、包格式与限制、怎样构建与预览，文中的 hub 地址已填成当前站点。保存为 agent 的 skills 目录下的 heron-theme/SKILL.md（Claude Code 为 ~/.claude/skills/heron-theme/SKILL.md），再让 agent 做一个 Heron 公开页主题；人读也适用。</span>
+        </p>
+        <button type="button" onClick={() => downloadText(THEME_SKILL_FILENAME, buildThemeSkill(window.location.origin))}>下载主题开发指南</button>
+      </div>
+    </section>
     {backup.error != null && errorBanner(backup.error)}
     {backup.data?.themesWithoutPackage.map((id) => <p key={id}>主题 {id} 未备份：请重新上传原包</p>)}
     <p>{enabled ? `当前启用 ${enabled.name}（${enabled.id}）版本 ${enabled.version}。` : "当前使用内置公开页。"} <a href="/" target="_blank" rel="noreferrer">打开公开首页</a></p>

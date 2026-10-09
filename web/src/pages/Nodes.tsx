@@ -10,6 +10,7 @@ import { type OrderMove, useOrder } from "../api/useOrder";
 import { ConfirmDelete } from "../components/ConfirmDelete";
 import { Expiry } from "../components/Expiry";
 import { MixedCheckbox } from "../components/MixedCheckbox";
+import { Select } from "../components/Select";
 import { NodeAddresses } from "../components/NodeAddresses";
 import { NodeCountry } from "../components/NodeCountry";
 import { NodeCreateDrawer } from "../components/NodeCreateDrawer";
@@ -34,6 +35,9 @@ import { NodeEditor } from "./NodeEditor";
 import { BatchNodeTagsEditor } from "./BatchNodeTagsEditor";
 import { trafficParts } from "../lib/traffic";
 import { EmptyState } from "../components/EmptyState";
+
+// 空串表示不按状态筛选（URL 里没有 status）。
+const STATUS_FILTER_OPTIONS: readonly { value: NonNullable<ScopeFilters["status"]> | ""; label: string }[] = [{ value: "", label: "全部" }, ...STATUS_OPTIONS];
 
 export function Nodes() {
   const qc = useQueryClient();
@@ -203,9 +207,7 @@ export function Nodes() {
       <MultiSelect label="标签" searchable options={tagOptions} selected={tagFilter.kind === "tags" ? tagFilter.names : []} onChange={(names) => setTagFilter({ kind: "tags", names })} />
       {/* "无标签"不依赖 ListTags：清单加载中、为空或失败都照常可勾。它的可访问名称与标签项分开命名——用户可能真的建一个叫"无标签"的标签。 */}
       <label className="check"><input type="checkbox" aria-label="只看没有标签的节点" checked={untagged} onChange={() => setTagFilter(untagged ? NO_TAG_FILTER : { kind: "untagged" })} />无标签</label>
-      <select aria-label="状态" value={scope.status ?? ""} onChange={(event) => setScope({ ...scope, status: (event.target.value || null) as ScopeFilters["status"] })}>
-        <option value="">全部状态</option>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
+      <Select label="状态" value={scope.status ?? ""} options={STATUS_FILTER_OPTIONS} onChange={(next) => setScope({ ...scope, status: next || null })} />
       <label className="check"><input type="checkbox" aria-label="只看 30 天内到期" checked={scope.expiring} onChange={() => setScope({ ...scope, expiring: !scope.expiring })} />30 天内到期</label>
       <label className="check"><input type="checkbox" aria-label="只看 agent 版本落后" checked={scope.lagging} onChange={() => setScope({ ...scope, lagging: !scope.lagging })} />agent 版本落后</label>
       {filtered && <button type="button" className="link" onClick={clearFilters}>清除筛选</button>}

@@ -7,6 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const dir = mkdtempSync(join(tmpdir(), 'heron-browser-'));
+// 临时目录在本进程的 exit 事件里删：正常结束、process.exit 与启动阶段抛错都经过它。hub 子进程退出后本进程才
+// process.exit，删的时候已没有人在写库。SIGKILL 不经过任何处理函数，所以 playwright.config.ts 的 webServer
+// 必须配 gracefulShutdown，否则 Playwright 收尾时按默认 SIGKILL 进程组，每跑一次留下一个目录。
+process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
 const db = join(dir, 'hub.db');
 const binary = new URL('../../bin/heron-hub', import.meta.url).pathname;
 const password = 'local-browser-test-password';
@@ -20,7 +24,6 @@ function startHub() {
   const child = spawn(binary, ['serve', '--db', db, '--listen', '127.0.0.1:18987', '--trusted-proxies', '127.0.0.1/32'], { stdio: 'inherit' });
   child.on('exit', code => {
     if (restarting) return;
-    rmSync(dir, { recursive: true, force: true });
     process.exit(closing ? 0 : code || 1);
   });
   return child;

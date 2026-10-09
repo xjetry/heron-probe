@@ -21,7 +21,8 @@ import (
 // （磁盘上的 drop-in）取，单元文件不存在时为空。STUB_STOP_FAILS 让 stop 失败，STUB_STOP_LEAVES_PROCESS 让 stop
 // 返回 0 却留下进程，STUB_DROPIN_ON_STOP 在 stop 时把一个 drop-in 写进 state/dropins-disk。STUB_START_NO_PROCESS
 // 让 start 返回 0 却不起进程。STUB_RELOAD_FAILS 让 daemon-reload 失败，STUB_RELOAD_FAILS_ON_STOP 让它从 stop 之后
-// 开始失败；STUB_IS_ENABLED_FAILS_WITH_RELOAD 让 is-enabled 在 reload 失败时一起失败。
+// 开始失败；STUB_IS_ENABLED_FAILS_WITH_RELOAD 让 is-enabled 在 reload 失败时一起失败。STUB_SYSTEMCTL_FAILS 与
+// STUB_SYSTEMCTL_TERM 同 install.sh 的替身：参数串与前者相同时失败，与后者相同时给安装脚本发 SIGTERM。
 // chown 只记参数：测试以普通用户运行，改不了属主，属主由真机验收回读。chmod 记下参数后转调真的，权限断言看的
 // 是真实的文件模式。curl 是三个脚本共用的 fileCurl；apt-get 记下参数，install 时建出 CA 证书包。
 // systemctl、curl、apt-get 读尽 stdin：脚本以 sh -s 从 stdin 运行，漏掉 </dev/null 的调用会吞掉脚本余下部分，
@@ -37,6 +38,8 @@ if [ -n "${STUB_START_DIES-}" ] && [ "$1" = 3 ]; then rm -rf "$HERON_INSTALL_ROO
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
+[ "$*" != "${STUB_SYSTEMCTL_FAILS-}" ] || { echo "systemctl $*: failed" >&2; exit 1; }
+[ "$*" != "${STUB_SYSTEMCTL_TERM-}" ] || kill -TERM "$PPID"
 case "$*" in
   "show heron-updater-hub -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;
   *heron-updater-hub*) exit 0;;
@@ -94,6 +97,14 @@ fi
 	"chmod": `#!/bin/sh
 echo "chmod $*" >> "$STUB_STATE/calls"
 exec /bin/chmod "$@"
+`,
+	// STUB_CP_FAILS 是一个文件名：复制的目标是它时只写前 3 个字节就失败，模拟备份库文件时磁盘写满。
+	"cp": `#!/bin/sh
+for last; do :; done
+if [ -n "${STUB_CP_FAILS-}" ] && [ "${last##*/}" = "$STUB_CP_FAILS" ]; then
+  head -c 3 "$1" > "$last"; echo "cp: $last: No space left on device" >&2; exit 1
+fi
+exec /bin/cp "$@"
 `,
 	"curl": fileCurl,
 	"apt-get": `#!/bin/sh
@@ -532,6 +543,10 @@ func TestHubDatabaseSwappedAfterThePreStopCheckIsRefused(t *testing.T) {
 	if index(c, "chown heron-hub:heron-hub") >= 0 || index(c, "systemctl start heron-hub") >= 0 {
 		t.Fatalf("nothing may be handed to heron-hub or started: calls %q", c)
 	}
+	// 安全检查停下时旧二进制换回来、不启动：人查看后手动启动或重跑安装器，跑的都是原来的版本。
+	if got := e.file("usr/local/bin/heron-hub"); !strings.Contains(got, "# v1 amd64") || e.exists("usr/local/bin/heron-hub.bak") {
+		t.Fatalf("the previous binary must be back without a .bak, got %q", got)
+	}
 }
 
 // 库文件的属主与权限每次安装都设：root 手工操作留下的 0644、崩溃留下的 WAL 都在重跑后回到服务用户 0600。
@@ -812,6 +827,9 @@ func TestHubDropInWrittenWhileStoppedIsRefusedBeforeStart(t *testing.T) {
 	}
 	if c := e.calls(); index(c, "systemctl start heron-hub") >= 0 {
 		t.Fatalf("heron-hub must not be started: calls %q", c)
+	}
+	if got := e.file("usr/local/bin/heron-hub"); !strings.Contains(got, "# v1 amd64") || e.exists("usr/local/bin/heron-hub.bak") {
+		t.Fatalf("the previous binary must be back without a .bak, got %q", got)
 	}
 }
 

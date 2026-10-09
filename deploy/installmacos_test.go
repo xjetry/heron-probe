@@ -85,10 +85,20 @@ case "$op" in
 esac
 exit 0
 `,
+	// STUB_LAUNCHCTL_FAILS_ONCE 与 STUB_LAUNCHCTL_TERM_ONCE 各是一条完整的参数串，只在第一次匹配时生效：前者让这次
+	// 调用失败（bootout 刚返回就 bootstrap 报 EIO 这类一次性故障），后者给安装脚本发 SIGTERM（SSH 断开）。只生效一次，
+	// 回滚路径里的同一条命令照常成功。包里带 heron-test-broken 标记的 heron-agent 模拟起不来的新二进制：bootstrap
+	// 照常返回 0，进程不在。
 	"launchctl": `#!/bin/sh
 cat > /dev/null
 S=$STUB_STATE
 echo "launchctl $*" >> "$S/calls"
+if [ "$*" = "${STUB_LAUNCHCTL_FAILS_ONCE-}" ] && [ ! -f "$S/failed-once" ]; then
+  : > "$S/failed-once"; echo "Bootstrap failed: 5: Input/output error" >&2; exit 5
+fi
+if [ "$*" = "${STUB_LAUNCHCTL_TERM_ONCE-}" ] && [ ! -f "$S/termed-once" ]; then
+  : > "$S/termed-once"; kill -TERM "$PPID"
+fi
 case "$1" in
   print) [ -f "$S/loaded" ] && exit 0; echo "Could not find service \"${2#*/}\" in domain for system" >&2; exit 113;;
   bootout)
@@ -106,6 +116,7 @@ case "$1" in
     read -r uid gid < "$S/users/_heron-agent"
     [ -z "${STUB_HELPER-}" ] || grep -q ' 999 ' "$S/procs" || echo "$uid 999 /usr/libexec/cfprefsd" >> "$S/procs"
     [ -n "${STUB_START_FAILS-}" ] && exit 0
+    grep -q heron-test-broken "$HERON_INSTALL_ROOT/usr/local/bin/heron-agent" 2>/dev/null && exit 0
     echo "$uid 4242 /usr/local/bin/heron-agent" >> "$S/procs"
     exit 0;;
 esac

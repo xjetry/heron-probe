@@ -161,37 +161,37 @@ themehdr() {
   awk -v want="$2" 'BEGIN { want = tolower(want) } { sub(/\r$/, "") } tolower(substr($0, 1, length(want) + 2)) == want ": " { print substr($0, length(want) + 3) }' "$work/theme-$1.headers"
 }
 
-# 卡片示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
+# 技能文件里的示例取自 hub 刚下发的那份。空列表由例子自己处理，空 hub 与有数据时用同一段。
 # 第二个参数非空时，每个例子的顶层 JSON 必须非空：有数据时例 2 输出 {} 说明取 id 走错了分支。
-run_card_examples() {
+run_skill_examples() {
   label=$1
   nonempty=$2
   jq -r '.guide' "$work/bearer-GetApiReference.json" > "$work/SKILL.md"
-  rm -f "$work"/card-example-*.sh "$work"/card-example-*.sh.out "$work"/card-example-*.sh.err
+  rm -f "$work"/skill-example-*.sh "$work"/skill-example-*.sh.out "$work"/skill-example-*.sh.err
   awk -v dir="$work" '
-    /^```sh example$/ { n++; file = sprintf("%s/card-example-%d.sh", dir, n); inblock = 1; next }
+    /^```sh example$/ { n++; file = sprintf("%s/skill-example-%d.sh", dir, n); inblock = 1; next }
     inblock && /^```$/ { inblock = 0; close(file); next }
     inblock { print > file }
   ' "$work/SKILL.md"
-  examples=$(ls "$work"/card-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
-  # 标记块数独立于抽取逻辑另数一次：抽取漏块或多切时两数不等；卡片被删到只剩寥寥几例时下限挡住。
+  examples=$(ls "$work"/skill-example-*.sh 2> /dev/null | wc -l | tr -d ' ')
+  # 标记块数独立于抽取逻辑另数一次：抽取漏块或多切时两数不等；技能文件被删到只剩寥寥几例时下限挡住。
   marked=$(grep -c '^```sh example$' "$work/SKILL.md" || [ "$?" = 1 ])
-  [ "$examples" = "$marked" ] || { echo "FAIL: extracted $examples card examples but the card marks $marked"; exit 1; }
-  [ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 card examples, found $examples"; exit 1; }
-  for ex in "$work"/card-example-*.sh; do
+  [ "$examples" = "$marked" ] || { echo "FAIL: extracted $examples skill examples but SKILL.md marks $marked"; exit 1; }
+  [ "$examples" -ge 3 ] || { echo "FAIL: expected at least 3 skill examples, found $examples"; exit 1; }
+  for ex in "$work"/skill-example-*.sh; do
     status=0
     HERON_HUB=$base HERON_TOKEN=$api_token sh -eu "$ex" > "$ex.out" 2> "$ex.err" || status=$?
-    [ "$status" = 0 ] || { echo "FAIL: card example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
-    [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: card example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
+    [ "$status" = 0 ] || { echo "FAIL: skill example $ex exited $status"; cat "$ex" "$ex.err"; exit 1; }
+    [ -s "$ex.out" ] && jq -e . "$ex.out" > /dev/null || { echo "FAIL: skill example $ex did not print JSON"; cat "$ex" "$ex.out" "$ex.err"; exit 1; }
     # null 的 length 是 0，不能靠 length 单独把 null 当成有内容；空对象与空数组的 length 也是 0。
     if [ -n "$nonempty" ]; then
-      jq -e 'if . == null then false else length > 0 end' "$ex.out" > /dev/null || { echo "FAIL: card example $ex printed empty JSON"; cat "$ex" "$ex.out"; exit 1; }
+      jq -e 'if . == null then false else length > 0 end' "$ex.out" > /dev/null || { echo "FAIL: skill example $ex printed empty JSON"; cat "$ex" "$ex.out"; exit 1; }
     fi
   done
   if [ -n "$label" ]; then
-    echo "card examples ok ($label): $examples"
+    echo "skill examples ok ($label): $examples"
   else
-    echo "card examples ok: $examples"
+    echo "skill examples ok: $examples"
   fi
 }
 
@@ -220,12 +220,12 @@ jq -e '. == {title: "e2e 状态", theme: "dark", accentColor: "#ff5500", customC
 [ "$(rpc UpdateSettings '{"settings": {"theme": "auto", "customCss": "a</style>"}}')" = 400 ] || { echo "FAIL: CSS containing </ was accepted"; cat "$work/UpdateSettings.json"; exit 1; }
 grep -q 'settings.custom_css must not contain' "$work/UpdateSettings.json" || { echo "FAIL: error must name the field"; cat "$work/UpdateSettings.json"; exit 1; }
 [ "$(pubget site-after-reject GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-reject.json" || { echo "FAIL: a rejected update changed the site"; cat "$work/pub-site-after-reject.json"; exit 1; }
-# hub 上还没有节点：卡片例子必须在空库上也能跑完。
+# hub 上还没有节点：技能文件的例子必须在空库上也能跑完。
 [ "$(rpc CreateApiToken '{"name":"e2e-empty"}')" = 200 ] || { echo "FAIL: CreateApiToken (empty hub)"; cat "$work/CreateApiToken.json"; exit 1; }
 api_token=$(jq -r '.token' "$work/CreateApiToken.json")
 api_token_id=$(jq -r '.apiToken.id' "$work/CreateApiToken.json")
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference on empty hub"; cat "$work/bearer-GetApiReference.json"; exit 1; }
-run_card_examples "empty hub" ""
+run_skill_examples "empty hub" ""
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken (empty hub)"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" -H 'Content-Type: text/plain' --data '{}' "$base/heron.v1.AdminService/CreateNode")" = 415 ] || { echo "FAIL: text/plain POST was not 415"; exit 1; }
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -b "$work/jar" "$base/heron.v1.AdminService/CreateNode?connect=v1&encoding=json&message=%7B%7D")" = 405 ] || { echo "FAIL: GET was not 405"; exit 1; }
@@ -380,7 +380,7 @@ adjust_body=$(jq -nc --arg nodeId "$node1" '{nodeId: $nodeId, periodRx: "1073741
 # 首个周期里总量等于周期量，校正后两者同为 1 GiB；上行改成 0 后总量也随差值归零。
 jq -e '.traffic.periodRx == "1073741824" and .traffic.totalRx == "1073741824" and (.traffic.periodTx // "0") == "0" and (.traffic.totalTx // "0") == "0"' "$work/AdjustTraffic.json" > /dev/null || { echo "FAIL: AdjustTraffic result"; cat "$work/AdjustTraffic.json"; exit 1; }
 [ "$(rpc AdjustTraffic '{"nodeId": "999999", "periodRx": "1"}')" = 404 ] || { echo "FAIL: AdjustTraffic on an unknown node must be 404"; exit 1; }
-# node1 标为公开：入口卡片"公开数据"的例子只列公开节点，重启后那一轮 run_card_examples 要求它输出非空。
+# node1 标为公开：技能文件"公开数据"的例子只列公开节点，重启后那一轮 run_skill_examples 要求它输出非空。
 update_body=$(jq -nc --arg id "$node1" --arg name "e2e-amd64" '{id: $id, name: $name, public: true, note: "", trafficResetDay: 15, offlineGraceS: 0}')
 [ "$(rpc UpdateNode "$update_body")" = 200 ] || { echo "FAIL: UpdateNode reset day"; cat "$work/UpdateNode.json"; exit 1; }
 jq -e '.node.trafficResetDay == 15 and .node.public == true' "$work/UpdateNode.json" > /dev/null || { echo "FAIL: reset day or public flag not echoed"; cat "$work/UpdateNode.json"; exit 1; }
@@ -390,9 +390,11 @@ i=0
 until [ "$(pubget snapshot GetSnapshot '{}')" = 200 ] && jq -e --arg id "$node1" '[(.nodes // [])[].id] == [$id]' "$work/pub-snapshot.json" > /dev/null; do
   i=$((i + 1)); [ "$i" -lt 10 ] || { echo "FAIL: public snapshot does not list exactly node1"; cat "$work/pub-snapshot.json"; exit 1; }; sleep 0.5
 done
-# 公开的主机信息只有这五项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。指标一定在：node1 早已上报，
-# live 里的最近一次指标只在删节点时清掉；公开指标里没有 bootId。
-jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
+# 公开的主机信息只有这六项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。双栈出口出现时每个地址族只有 state，
+# 出口地址与探测时间不出现；当前源码的 agent 一定报它，compat-e2e 下载的已发布 agent（E2E_AGENT_VERSION 非空）可能早于
+# 这项探测，缺席是合法的。指标一定在：node1 早已上报，live 里的最近一次指标只在删节点时清掉；公开指标里没有 bootId。
+if [ -z "${E2E_AGENT_VERSION:-}" ]; then must_network=true; else must_network=false; fi
+jq -e --arg os "$EXPECT_OS" --argjson must_network "$must_network" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores", "network"]) == [] and (if has("network") then (.network | type == "object" and ([.[] | keys[]] - ["state"]) == []) else ($must_network | not) end)) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
 [ "$(hdr snapshot Cache-Control)" = "max-age=1" ] || { echo "FAIL: GetSnapshot Cache-Control"; cat "$work/pub-snapshot.headers"; exit 1; }
 # 缓存头只给 GET：POST 的响应不进浏览器缓存，不带这个头。
 [ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/heron.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }
@@ -623,14 +625,14 @@ done
 # 与重启前保存的那份逐字节相同，也就钉住了外观跨重启保留（同一个二进制的 protojson 输出稳定，上面"a rejected update changed the site"那一处同样依赖这一点）。
 [ "$(pubget site-after-dir GetSite '{}')" = 200 ] && cmp -s "$work/pub-site.json" "$work/pub-site-after-dir.json" || { echo "FAIL: --public-dir shadowed PublicService or the saved site settings did not survive the restart"; cat "$work/pub-site-after-dir.json"; exit 1; }
 [ "$(rpc Login "$login_body")" = 200 ] || { echo "FAIL: login after restart"; exit 1; }
-# token 跨重启存活，只读、不能写；卡片取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
+# token 跨重启存活，只读、不能写；技能文件取自 hub 实际下发的那份，其中的例子逐个在真实数据上跑。
 [ "$(bearer ListNodes '{}')" = 200 ] || { echo "FAIL: API token lost across restart"; cat "$work/bearer-ListNodes.json"; exit 1; }
 jq -e '(.nodes | length) == 2' "$work/bearer-ListNodes.json" > /dev/null || { echo "FAIL: ListNodes via token"; cat "$work/bearer-ListNodes.json"; exit 1; }
 [ "$(bearer CreateNode '{"name":"via-token"}')" = 403 ] || { echo "FAIL: API token was allowed to write"; cat "$work/bearer-CreateNode.json"; exit 1; }
 jq -e '.code == "permission_denied"' "$work/bearer-CreateNode.json" > /dev/null || { echo "FAIL: write via token not permission_denied"; exit 1; }
 [ "$(bearer GetApiReference '{}')" = 200 ] || { echo "FAIL: GetApiReference via token"; exit 1; }
 jq -e 'any(.files[]; .path == "heron/v1/admin.proto") and (.guide | contains("HERON_TOKEN"))' "$work/bearer-GetApiReference.json" > /dev/null || { echo "FAIL: GetApiReference content"; exit 1; }
-run_card_examples "" nonempty
+run_skill_examples "" nonempty
 [ "$(rpc DeleteApiToken "$(jq -nc --arg id "$api_token_id" '{id: $id}')")" = 200 ] || { echo "FAIL: DeleteApiToken"; exit 1; }
 [ "$(bearer ListNodes '{}')" = 401 ] || { echo "FAIL: revoked API token still accepted"; exit 1; }
 # 改密只清会话、不动 token；运行中由另一进程吊销，下一个请求即 401。

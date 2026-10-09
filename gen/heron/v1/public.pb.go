@@ -493,7 +493,7 @@ func (x *PublicBilling) GetDaysLeft() int32 {
 	return 0
 }
 
-// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、双栈出口与诊断不公开，
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、诊断与执行环境不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 type PublicFacts struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -502,7 +502,9 @@ type PublicFacts struct {
 	Virtualization string                 `protobuf:"bytes,5,opt,name=virtualization,proto3" json:"virtualization,omitempty"`
 	CpuModel       string                 `protobuf:"bytes,6,opt,name=cpu_model,json=cpuModel,proto3" json:"cpu_model,omitempty"`
 	// 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
-	CpuCores      uint32 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	CpuCores uint32 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	// 双栈出口：每个地址族只公开探测状态，地址与探测时间不公开。缺失表示 agent 不报双栈出口（版本早于这项探测）。
+	Network       *PublicNetworkInfo `protobuf:"bytes,10,opt,name=network,proto3" json:"network,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -572,6 +574,115 @@ func (x *PublicFacts) GetCpuCores() uint32 {
 	return 0
 }
 
+func (x *PublicFacts) GetNetwork() *PublicNetworkInfo {
+	if x != nil {
+		return x.Network
+	}
+	return nil
+}
+
+// NetworkInfo 的公开部分，字段号相同。某个地址族缺失表示它还没探测过：agent 启动后首轮探测完成前报的是空的 network。
+type PublicNetworkInfo struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Ipv4          *PublicAddressDetection `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
+	Ipv6          *PublicAddressDetection `protobuf:"bytes,2,opt,name=ipv6,proto3" json:"ipv6,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublicNetworkInfo) Reset() {
+	*x = PublicNetworkInfo{}
+	mi := &file_heron_v1_public_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublicNetworkInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublicNetworkInfo) ProtoMessage() {}
+
+func (x *PublicNetworkInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_public_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublicNetworkInfo.ProtoReflect.Descriptor instead.
+func (*PublicNetworkInfo) Descriptor() ([]byte, []int) {
+	return file_heron_v1_public_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PublicNetworkInfo) GetIpv4() *PublicAddressDetection {
+	if x != nil {
+		return x.Ipv4
+	}
+	return nil
+}
+
+func (x *PublicNetworkInfo) GetIpv6() *PublicAddressDetection {
+	if x != nil {
+		return x.Ipv6
+	}
+	return nil
+}
+
+// AddressDetection 的公开部分，字段号相同。出口地址与探测时间不公开，号与名保留。
+type PublicAddressDetection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// AVAILABLE：agent 经该地址族连上外部探测服务并拿到了公网地址，即这台机器有该族的公网出口。
+	// UNSUPPORTED：本机该族只有回环、链路本地地址（私网地址算可用，可经 NAT 出网），或连接时系统报网络不可达、
+	// 不支持该地址族。FAILED：这一轮探测没成功（超时、DNS 失败、服务异常），不能据此判断有没有出口。
+	// agent 每 5 分钟探测一次。
+	State         AddressDetectionState `protobuf:"varint,1,opt,name=state,proto3,enum=heron.v1.AddressDetectionState" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublicAddressDetection) Reset() {
+	*x = PublicAddressDetection{}
+	mi := &file_heron_v1_public_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublicAddressDetection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublicAddressDetection) ProtoMessage() {}
+
+func (x *PublicAddressDetection) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_public_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublicAddressDetection.ProtoReflect.Descriptor instead.
+func (*PublicAddressDetection) Descriptor() ([]byte, []int) {
+	return file_heron_v1_public_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *PublicAddressDetection) GetState() AddressDetectionState {
+	if x != nil {
+		return x.State
+	}
+	return AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED
+}
+
 // 与 Metrics 同字段号、同语义，但不公开启动标识与网卡集合标识。每个读数都是 optional：
 // 缺失表示无读数，与读数为 0 是两个不同的事实。
 type PublicMetrics struct {
@@ -610,7 +721,7 @@ type PublicMetrics struct {
 
 func (x *PublicMetrics) Reset() {
 	*x = PublicMetrics{}
-	mi := &file_heron_v1_public_proto_msgTypes[7]
+	mi := &file_heron_v1_public_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +733,7 @@ func (x *PublicMetrics) String() string {
 func (*PublicMetrics) ProtoMessage() {}
 
 func (x *PublicMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_public_proto_msgTypes[7]
+	mi := &file_heron_v1_public_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +746,7 @@ func (x *PublicMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublicMetrics.ProtoReflect.Descriptor instead.
 func (*PublicMetrics) Descriptor() ([]byte, []int) {
-	return file_heron_v1_public_proto_rawDescGZIP(), []int{7}
+	return file_heron_v1_public_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PublicMetrics) GetCpuPct() float64 {
@@ -849,15 +960,22 @@ const file_heron_v1_public_proto_rawDesc = "" +
 	"\tdays_left\x18\x06 \x01(\x05H\x00R\bdaysLeft\x88\x01\x01B\f\n" +
 	"\n" +
 	"_days_leftJ\x04\b\x05\x10\x06R\n" +
-	"auto_renew\"\x8f\x02\n" +
+	"auto_renew\"\xb7\x02\n" +
 	"\vPublicFacts\x12\x0e\n" +
 	"\x02os\x18\x02 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12&\n" +
 	"\x0evirtualization\x18\x05 \x01(\tR\x0evirtualization\x12\x1b\n" +
 	"\tcpu_model\x18\x06 \x01(\tR\bcpuModel\x12\x1b\n" +
-	"\tcpu_cores\x18\a \x01(\rR\bcpuCoresJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
-	"J\x04\b\n" +
-	"\x10\vJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\anetworkR\vdiagnosticsR\texecution\"\xac\t\n" +
+	"\tcpu_cores\x18\a \x01(\rR\bcpuCores\x125\n" +
+	"\anetwork\x18\n" +
+	" \x01(\v2\x1b.heron.v1.PublicNetworkInfoR\anetworkJ\x04\b\x01\x10\x02J\x04\b\x03\x10\x04J\x04\b\b\x10\tJ\x04\b\t\x10\n" +
+	"J\x04\b\v\x10\fJ\x04\b\f\x10\rR\bhostnameR\x06kernelR\ragent_versionR\x0eicmp_availableR\vdiagnosticsR\texecution\"\x7f\n" +
+	"\x11PublicNetworkInfo\x124\n" +
+	"\x04ipv4\x18\x01 \x01(\v2 .heron.v1.PublicAddressDetectionR\x04ipv4\x124\n" +
+	"\x04ipv6\x18\x02 \x01(\v2 .heron.v1.PublicAddressDetectionR\x04ipv6\"p\n" +
+	"\x16PublicAddressDetection\x125\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x1f.heron.v1.AddressDetectionStateR\x05stateJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\aaddressR\n" +
+	"checked_at\"\xac\t\n" +
 	"\rPublicMetrics\x12\x1c\n" +
 	"\acpu_pct\x18\x02 \x01(\x01H\x00R\x06cpuPct\x88\x01\x01\x12\x19\n" +
 	"\x05load1\x18\x03 \x01(\x01H\x01R\x05load1\x88\x01\x01\x12\x19\n" +
@@ -939,7 +1057,7 @@ func file_heron_v1_public_proto_rawDescGZIP() []byte {
 	return file_heron_v1_public_proto_rawDescData
 }
 
-var file_heron_v1_public_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_heron_v1_public_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_heron_v1_public_proto_goTypes = []any{
 	(*GetSiteRequest)(nil),                   // 0: heron.v1.GetSiteRequest
 	(*PublicSite)(nil),                       // 1: heron.v1.PublicSite
@@ -948,42 +1066,49 @@ var file_heron_v1_public_proto_goTypes = []any{
 	(*PublicNode)(nil),                       // 4: heron.v1.PublicNode
 	(*PublicBilling)(nil),                    // 5: heron.v1.PublicBilling
 	(*PublicFacts)(nil),                      // 6: heron.v1.PublicFacts
-	(*PublicMetrics)(nil),                    // 7: heron.v1.PublicMetrics
-	(*Traffic)(nil),                          // 8: heron.v1.Traffic
-	(BillingCycle)(0),                        // 9: heron.v1.BillingCycle
-	(*QueryMetricsRequest)(nil),              // 10: heron.v1.QueryMetricsRequest
-	(*QueryProbesRequest)(nil),               // 11: heron.v1.QueryProbesRequest
-	(*ListProbeComparisonNodesRequest)(nil),  // 12: heron.v1.ListProbeComparisonNodesRequest
-	(*QueryProbeComparisonRequest)(nil),      // 13: heron.v1.QueryProbeComparisonRequest
-	(*QueryMetricsResponse)(nil),             // 14: heron.v1.QueryMetricsResponse
-	(*QueryProbesResponse)(nil),              // 15: heron.v1.QueryProbesResponse
-	(*ListProbeComparisonNodesResponse)(nil), // 16: heron.v1.ListProbeComparisonNodesResponse
-	(*QueryProbeComparisonResponse)(nil),     // 17: heron.v1.QueryProbeComparisonResponse
+	(*PublicNetworkInfo)(nil),                // 7: heron.v1.PublicNetworkInfo
+	(*PublicAddressDetection)(nil),           // 8: heron.v1.PublicAddressDetection
+	(*PublicMetrics)(nil),                    // 9: heron.v1.PublicMetrics
+	(*Traffic)(nil),                          // 10: heron.v1.Traffic
+	(BillingCycle)(0),                        // 11: heron.v1.BillingCycle
+	(AddressDetectionState)(0),               // 12: heron.v1.AddressDetectionState
+	(*QueryMetricsRequest)(nil),              // 13: heron.v1.QueryMetricsRequest
+	(*QueryProbesRequest)(nil),               // 14: heron.v1.QueryProbesRequest
+	(*ListProbeComparisonNodesRequest)(nil),  // 15: heron.v1.ListProbeComparisonNodesRequest
+	(*QueryProbeComparisonRequest)(nil),      // 16: heron.v1.QueryProbeComparisonRequest
+	(*QueryMetricsResponse)(nil),             // 17: heron.v1.QueryMetricsResponse
+	(*QueryProbesResponse)(nil),              // 18: heron.v1.QueryProbesResponse
+	(*ListProbeComparisonNodesResponse)(nil), // 19: heron.v1.ListProbeComparisonNodesResponse
+	(*QueryProbeComparisonResponse)(nil),     // 20: heron.v1.QueryProbeComparisonResponse
 }
 var file_heron_v1_public_proto_depIdxs = []int32{
 	4,  // 0: heron.v1.PublicSnapshot.nodes:type_name -> heron.v1.PublicNode
 	6,  // 1: heron.v1.PublicNode.facts:type_name -> heron.v1.PublicFacts
-	7,  // 2: heron.v1.PublicNode.metrics:type_name -> heron.v1.PublicMetrics
-	8,  // 3: heron.v1.PublicNode.traffic:type_name -> heron.v1.Traffic
+	9,  // 2: heron.v1.PublicNode.metrics:type_name -> heron.v1.PublicMetrics
+	10, // 3: heron.v1.PublicNode.traffic:type_name -> heron.v1.Traffic
 	5,  // 4: heron.v1.PublicNode.billing:type_name -> heron.v1.PublicBilling
-	9,  // 5: heron.v1.PublicBilling.billing_cycle:type_name -> heron.v1.BillingCycle
-	0,  // 6: heron.v1.PublicService.GetSite:input_type -> heron.v1.GetSiteRequest
-	2,  // 7: heron.v1.PublicService.GetSnapshot:input_type -> heron.v1.PublicServiceGetSnapshotRequest
-	10, // 8: heron.v1.PublicService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
-	11, // 9: heron.v1.PublicService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
-	12, // 10: heron.v1.PublicService.ListProbeComparisonNodes:input_type -> heron.v1.ListProbeComparisonNodesRequest
-	13, // 11: heron.v1.PublicService.QueryProbeComparison:input_type -> heron.v1.QueryProbeComparisonRequest
-	1,  // 12: heron.v1.PublicService.GetSite:output_type -> heron.v1.PublicSite
-	3,  // 13: heron.v1.PublicService.GetSnapshot:output_type -> heron.v1.PublicSnapshot
-	14, // 14: heron.v1.PublicService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
-	15, // 15: heron.v1.PublicService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
-	16, // 16: heron.v1.PublicService.ListProbeComparisonNodes:output_type -> heron.v1.ListProbeComparisonNodesResponse
-	17, // 17: heron.v1.PublicService.QueryProbeComparison:output_type -> heron.v1.QueryProbeComparisonResponse
-	12, // [12:18] is the sub-list for method output_type
-	6,  // [6:12] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	11, // 5: heron.v1.PublicBilling.billing_cycle:type_name -> heron.v1.BillingCycle
+	7,  // 6: heron.v1.PublicFacts.network:type_name -> heron.v1.PublicNetworkInfo
+	8,  // 7: heron.v1.PublicNetworkInfo.ipv4:type_name -> heron.v1.PublicAddressDetection
+	8,  // 8: heron.v1.PublicNetworkInfo.ipv6:type_name -> heron.v1.PublicAddressDetection
+	12, // 9: heron.v1.PublicAddressDetection.state:type_name -> heron.v1.AddressDetectionState
+	0,  // 10: heron.v1.PublicService.GetSite:input_type -> heron.v1.GetSiteRequest
+	2,  // 11: heron.v1.PublicService.GetSnapshot:input_type -> heron.v1.PublicServiceGetSnapshotRequest
+	13, // 12: heron.v1.PublicService.QueryMetrics:input_type -> heron.v1.QueryMetricsRequest
+	14, // 13: heron.v1.PublicService.QueryProbes:input_type -> heron.v1.QueryProbesRequest
+	15, // 14: heron.v1.PublicService.ListProbeComparisonNodes:input_type -> heron.v1.ListProbeComparisonNodesRequest
+	16, // 15: heron.v1.PublicService.QueryProbeComparison:input_type -> heron.v1.QueryProbeComparisonRequest
+	1,  // 16: heron.v1.PublicService.GetSite:output_type -> heron.v1.PublicSite
+	3,  // 17: heron.v1.PublicService.GetSnapshot:output_type -> heron.v1.PublicSnapshot
+	17, // 18: heron.v1.PublicService.QueryMetrics:output_type -> heron.v1.QueryMetricsResponse
+	18, // 19: heron.v1.PublicService.QueryProbes:output_type -> heron.v1.QueryProbesResponse
+	19, // 20: heron.v1.PublicService.ListProbeComparisonNodes:output_type -> heron.v1.ListProbeComparisonNodesResponse
+	20, // 21: heron.v1.PublicService.QueryProbeComparison:output_type -> heron.v1.QueryProbeComparisonResponse
+	16, // [16:22] is the sub-list for method output_type
+	10, // [10:16] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_public_proto_init() }
@@ -996,14 +1121,14 @@ func file_heron_v1_public_proto_init() {
 	file_heron_v1_types_proto_init()
 	file_heron_v1_public_proto_msgTypes[4].OneofWrappers = []any{}
 	file_heron_v1_public_proto_msgTypes[5].OneofWrappers = []any{}
-	file_heron_v1_public_proto_msgTypes[7].OneofWrappers = []any{}
+	file_heron_v1_public_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_public_proto_rawDesc), len(file_heron_v1_public_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

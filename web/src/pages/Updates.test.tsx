@@ -269,3 +269,51 @@ it("没有节点时节点更新只有空态卡，不画只有表头的表", asyn
   render({ listNodes: async () => ({ nodes: [] }) });
   await expectEmptyState("还没有节点。", { region: "节点更新" });
 });
+
+// 绑定 v0.3.0：离线的 a 可更新，b 已到目标，c 可更新，d 不支持，e 从未上报，f 正在更新。
+const rankedNodes = [{ id: 1n, name: "a" }, { id: 2n, name: "b" }, { id: 3n, name: "c" }, { id: 4n, name: "d" }, { id: 5n, name: "e" }, { id: 6n, name: "f" }];
+const rankedTargets = [
+  { nodeId: 0n, status: { supported: true, version: "v0.3.0" } },
+  { nodeId: 1n, status: { supported: true, version: "v0.2.0" } },
+  { nodeId: 2n, status: { supported: true, version: "v0.3.0" } },
+  { nodeId: 3n, status: { supported: true, version: "v0.2.0" } },
+  { nodeId: 4n, status: { supported: false, version: "v0.2.0", reason: "OpenRC is unsupported" } },
+  { nodeId: 6n, status: { supported: true, version: "v0.2.0", task: { id: "t", version: "v0.3.0", state: "dispatched" } } },
+];
+const rankedSnapshot = {
+  now: 1000n,
+  nodes: [
+    { id: 1n, online: false, lastSeenAt: 100n }, { id: 2n, online: true, lastSeenAt: 999n }, { id: 3n, online: true, lastSeenAt: 999n },
+    { id: 4n, online: true, lastSeenAt: 999n }, { id: 5n, online: false }, { id: 6n, online: true, lastSeenAt: 999n },
+  ],
+};
+const tableOrder = () => within(screen.getByRole("region", { name: "节点更新" })).getAllByRole("row").slice(1).map((r) => r.querySelector('td[data-label="节点"]')!.firstChild!.textContent);
+
+it("节点按组排序：可更新与正在更新在前，再是已是目标版本，再是其余，离线与从未上报最后；组内按节点列表顺序，组间不画分隔", async () => {
+  const ids: bigint[] = [];
+  render({
+    getUpdates: async () => ({ targets: rankedTargets, latestVersion: "", boundAgentVersion: "v0.3.0" }),
+    listNodes: async () => ({ nodes: rankedNodes }),
+    getSnapshot: async () => rankedSnapshot,
+    startUpdate: async (req) => { ids.push(req.nodeId); return {}; },
+  });
+  await waitFor(() => expect(tableOrder()).toEqual(["c", "f", "b", "d", "a", "e"]));
+  expect(screen.getByRole("region", { name: "节点更新" }).querySelectorAll("tbody")).toHaveLength(1);
+  // 全选与提交按表格顺序：可更新的 c 在前，离线但可更新（任务会排队等上线）的 a 在后。
+  fireEvent.click(selectAll());
+  fireEvent.click(screen.getByRole("button", { name: "更新选中节点（2）" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
+  await screen.findByText(/a：更新任务已提交/);
+  expect(ids).toEqual([3n, 1n]);
+});
+
+it("快照不可用时不知道谁离线：只按更新状态分组，页面照常可用", async () => {
+  render({
+    getUpdates: async () => ({ targets: rankedTargets, latestVersion: "", boundAgentVersion: "v0.3.0" }),
+    listNodes: async () => ({ nodes: rankedNodes }),
+    getSnapshot: async () => { throw new ConnectError("snapshot down", Code.Unavailable); },
+  });
+  await waitFor(() => expect(tableOrder()).toEqual(["a", "c", "f", "b", "d", "e"]));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(row("a（#1）")).toBeEnabled();
+});

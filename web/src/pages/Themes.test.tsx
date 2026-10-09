@@ -259,3 +259,25 @@ it("没有主题时只有空态卡，不画只有表头的表", async () => {
   render({ listThemes: async () => ({ themes: [] }) });
   await expectEmptyState("还没有主题。", { region: "主题管理" });
 });
+
+it("下载主题开发指南：skill 格式，文中的 hub 地址换成当前站点，不留占位符", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const blobs: Blob[] = [];
+  vi.spyOn(URL, "createObjectURL").mockImplementation((b) => { blobs.push(b as Blob); return "blob:theme"; });
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  const clicked: HTMLAnchorElement[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
+  render();
+  const card = within(await screen.findByRole("region", { name: "开发主题" }));
+  expect(card.getByText(/~\/\.claude\/skills\/heron-theme\/SKILL\.md/)).toBeInTheDocument();
+  fireEvent.click(card.getByRole("button", { name: "下载主题开发指南" }));
+  expect(clicked).toHaveLength(1);
+  expect(clicked[0].download).toBe("heron-theme-SKILL.md");
+  const text = await blobs[0].text();
+  expect(text).toMatch(/^---\nname: heron-theme\ndescription: .+\n---\n/);
+  expect(text).not.toContain("__HERON_");
+  expect(text).toContain(`HUB=${window.location.origin}`);
+  expect(text).toContain(`${window.location.origin}/admin/`);
+  expect(text).toContain("from '/_heron/theme-sdk.js'");
+  vi.useRealTimers();
+});

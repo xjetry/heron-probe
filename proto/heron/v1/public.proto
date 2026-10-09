@@ -128,17 +128,36 @@ message PublicBilling {
   optional int32 days_left = 6;
 }
 
-// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、双栈出口与诊断不公开，
+// Facts 的公开部分，字段号与 Facts 相同。主机名、内核版本、agent 版本、ICMP 可用性、诊断与执行环境不公开，
 // 它们的号与名保留：要公开必须先删掉 reserved，而不是随手加一个字段。
 message PublicFacts {
-  reserved 1, 3, 8, 9, 10, 11, 12;
-  reserved "hostname", "kernel", "agent_version", "icmp_available", "network", "diagnostics", "execution";
+  reserved 1, 3, 8, 9, 11, 12;
+  reserved "hostname", "kernel", "agent_version", "icmp_available", "diagnostics", "execution";
   string os = 2;
   string arch = 4;
   string virtualization = 5;
   string cpu_model = 6;
   // 与 Facts.cpu_cores 同号同义：agent 所在执行环境的有效核数。
   uint32 cpu_cores = 7;
+  // 双栈出口：每个地址族只公开探测状态，地址与探测时间不公开。缺失表示 agent 不报双栈出口（版本早于这项探测）。
+  PublicNetworkInfo network = 10;
+}
+
+// NetworkInfo 的公开部分，字段号相同。某个地址族缺失表示它还没探测过：agent 启动后首轮探测完成前报的是空的 network。
+message PublicNetworkInfo {
+  PublicAddressDetection ipv4 = 1;
+  PublicAddressDetection ipv6 = 2;
+}
+
+// AddressDetection 的公开部分，字段号相同。出口地址与探测时间不公开，号与名保留。
+message PublicAddressDetection {
+  reserved 2, 3;
+  reserved "address", "checked_at";
+  // AVAILABLE：agent 经该地址族连上外部探测服务并拿到了公网地址，即这台机器有该族的公网出口。
+  // UNSUPPORTED：本机该族只有回环、链路本地地址（私网地址算可用，可经 NAT 出网），或连接时系统报网络不可达、
+  // 不支持该地址族。FAILED：这一轮探测没成功（超时、DNS 失败、服务异常），不能据此判断有没有出口。
+  // agent 每 5 分钟探测一次。
+  AddressDetectionState state = 1;
 }
 
 // 与 Metrics 同字段号、同语义，但不公开启动标识与网卡集合标识。每个读数都是 optional：

@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Bar, Missing, ratio } from "../components/Bar";
+import { AddressFamilies } from "../components/AddressFamilies";
 import { CountryBadge } from "../components/CountryBadge";
 import { Expiry } from "../components/Expiry";
 import { Sparkline } from "../components/Sparkline";
@@ -52,6 +53,7 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
       <header>
         <h2>{node.name}</h2>
         {node.country && <CountryBadge code={node.country} />}
+        <AddressFamilies network={f?.network} />
         <StatusBadge status={status} detail={node.lastSeenAt !== undefined ? `最近上报 ${ago(node.lastSeenAt, now)}` : undefined} />
       </header>
       {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}

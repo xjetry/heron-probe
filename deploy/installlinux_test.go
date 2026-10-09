@@ -31,9 +31,13 @@ case "$flag" in
   -gn) awk -F: -v g="$gid" '$3 == g { print $1; found = 1; exit } END { exit !found }' "$HERON_INSTALL_ROOT/etc/group";;
 esac
 `,
+	// STUB_SYSTEMCTL_FAILS 与 STUB_SYSTEMCTL_TERM 各是一条完整的参数串：参数与前者相同时这次调用失败；与后者相同时
+	// 给安装脚本（父进程）发 SIGTERM，模拟 SSH 断开，调用本身照常完成。
 	"systemctl": `#!/bin/sh
 cat > /dev/null
 echo "systemctl $*" >> "$STUB_STATE/calls"
+[ "$*" != "${STUB_SYSTEMCTL_FAILS-}" ] || { echo "systemctl $*: failed" >&2; exit 1; }
+[ "$*" != "${STUB_SYSTEMCTL_TERM-}" ] || kill -TERM "$PPID"
 case "$*" in
   "show heron-updater-agent -p ActiveState --value") echo "${STUB_UPDATER_STATE:-active}"; exit 0;;
   *heron-updater-agent*) exit 0;;

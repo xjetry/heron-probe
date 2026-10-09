@@ -154,3 +154,43 @@ test('Passkey 在 HTTPS 注册、重启登录并迁移到新域名', async ({ pa
   expect(rebound.passkeys).toHaveLength(1);
   expect(rebound.passkeys[0].name).toBe('Replacement key');
 });
+
+// 面板下载的主题开发指南里的最小主题，原样打包（只把 id 换成本用例专用的），在 hub 的预览里必须能跑：
+// 读到站点标题、列出公开节点、收到当前路由。指南的示例改坏了，这里先红。
+test('主题开发指南里的最小主题原样可用', async ({ page, context, browserName, hub }) => {
+  const guide = await readFile(new URL('../src/assets/heron-theme-skill.md', import.meta.url), 'utf8');
+  const block = (file: string, lang: string) => {
+    const match = guide.match(new RegExp('`' + file.replace('.', '\\.') + '`\\n\\n```' + lang + '\\n([\\s\\S]*?)\\n```'));
+    if (!match) throw new Error(`指南里没有 ${file} 的 ${lang} 代码块`);
+    return match[1];
+  };
+  const id = 'skill-' + browserName;
+  const manifest: unknown = JSON.parse(block('theme.json', 'json'));
+  expect(manifest).toEqual({ id: 'my-theme', name: 'My theme', version: '1.0.0', sdk: 1 });
+  if (typeof manifest !== 'object' || manifest === null) throw new Error('指南里的 theme.json 不是对象');
+  await login(page);
+  must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: true } }));
+  hub.atEnd('恢复公开页总闸', async () => must(await hub.rpc(AdminService.method.updateSettings, { settings: { publicEnabled: true } })));
+  hub.deleteAtEnd(AdminService.method.deleteTheme, { id });
+  const name = `skill-node-${browserName}`;
+  const node = must(await rpc(page, AdminService.method.createNode, { name })).node!.id;
+  hub.deleteNodeAtEnd(node);
+  must(await rpc(page, AdminService.method.updateNode, { id: node, name, public: true, trafficResetDay: 1, offlineGraceS: 0 }));
+  const pkg = zip({ 'theme.json': JSON.stringify({ ...manifest, id }), 'index.html': block('index.html', 'html') });
+  await page.goto('/admin/themes');
+  await page.getByLabel('主题包（zip，至多 8 MiB）').setInputFiles({ name: 'theme.zip', mimeType: 'application/zip', buffer: pkg });
+  await page.getByRole('button', { name: '上传', exact: true }).click();
+  await expect(page.getByText(/已安装 My theme/)).toBeVisible();
+  const installed = must(await rpc(page, AdminService.method.listThemes, {})).themes.find((t) => t.id === id);
+  if (!installed) throw new Error(`theme ${id} not listed`);
+  const preview = must(await rpc(page, AdminService.method.previewTheme, { id, digest: installed.digest }));
+  const sandbox = await context.newPage();
+  const logs: string[] = [];
+  sandbox.on('console', (message) => logs.push(message.text()));
+  await sandbox.goto(preview.url);
+  const frame = sandbox.frameLocator('iframe');
+  await expect(frame.locator('h1#title')).not.toBeEmpty();
+  await expect(frame.locator('#nodes li', { hasText: name })).toHaveText(`${name} 离线`);
+  await expect.poll(() => logs).toContain('当前路由 /');
+  await sandbox.close();
+});
