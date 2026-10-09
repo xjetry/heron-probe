@@ -61,6 +61,16 @@
 .compact-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .compact-table td:first-child { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
+/* 列表视图（NodeList.tsx → components/ReadingsTable.tsx）：外框与表头和上面的紧凑表一致；列内排版与手机卡片布局在
+   styles.css 的 .readings-table。这里的单元格规则保持比 styles.css 手机断点里的 table.readings-table td 低的优先级，
+   手机上由那条规则去掉行高、内边距与底边框。 */
+.readings-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.readings-table th { height: 32px; text-align: left; padding: 0 10px; color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.readings-table td { height: 36px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.readings-table tbody tr:last-child td { border-bottom: 0; }
+.readings-table tbody tr:hover { background: var(--card-hover); }
+.readings-table td[data-label="节点"] .country-badge { margin-left: 6px; }
+
 /* 状态墙（StatusWall.tsx）+ 详情面板（DetailPanel.tsx）：左 2/3 右 1/3，面板随滚动固定。 */
 .wall-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
 /* 地区组按内容宽度横向流式排布：节点少的组并排放，不再一组独占一行、右侧大片空白；组内方块定宽，多的组在整行宽度内折行。 */

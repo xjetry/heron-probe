@@ -277,7 +277,7 @@ it("没有公开节点时说明，不画汇总与筛选行", async () => {
   expect(screen.queryByRole("group", { name: "筛选" })).toBeNull();
 });
 
-it("视图切换：没选过时默认卡片带排序；状态墙带着色依据", async () => {
+it("视图切换：没选过时默认卡片带排序；状态墙带着色依据；列表带排序", async () => {
   render();
   await screen.findByText("2 / 4 在线");
   const views = within(screen.getByRole("group", { name: "视图" }));
@@ -289,6 +289,13 @@ it("视图切换：没选过时默认卡片带排序；状态墙带着色依据"
   expect(views.getByRole("button", { name: "状态墙" })).toHaveAttribute("aria-pressed", "true");
   expect(selectTrigger("着色依据")).toHaveAccessibleName("着色依据 状态");
   expect(querySelectTrigger("排序")).toBeNull();
+  fireEvent.click(views.getByRole("button", { name: "列表" }));
+  expect(views.getByRole("button", { name: "列表" })).toHaveAttribute("aria-pressed", "true");
+  expect(selectTrigger("排序")).toHaveAccessibleName("排序 默认");
+  expect(querySelectTrigger("着色依据")).toBeNull();
+  expect(querySelectTrigger("分组")).toBeNull();
+  expect(within(screen.getByRole("region", { name: "节点列表" })).getAllByRole("row").slice(1).map((r) => r.getAttribute("aria-label"))).toEqual(["web-1", "db-1", "lab-1", "bare-1"]);
+  expect(shown()).toEqual([]);
 });
 
 const groupHeads = () => Array.from(document.querySelectorAll(".wall-group > summary")).map((s) => s.textContent);

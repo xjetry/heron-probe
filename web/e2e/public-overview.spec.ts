@@ -17,7 +17,7 @@ async function setPublicEnabled(page: Page, enabled: boolean) {
   }, enabled);
 }
 
-test("公开总览：状态墙、详情、卡片、手机列表与数据边界", async ({ page }, testInfo) => {
+test("公开总览：状态墙、详情、卡片、列表视图、手机布局与数据边界", async ({ page }, testInfo) => {
   await setPublicEnabled(page, true);
   const now = Math.floor(Date.now() / 1000);
   const minute = now - now % 60;
@@ -178,11 +178,38 @@ test("公开总览：状态墙、详情、卡片、手机列表与数据边界",
   const text = await page.evaluate(() => document.body.innerText);
   for (const word of FORBIDDEN) expect(text, word).not.toContain(word);
 
+  // 列表视图：与管理端总览同一组列另加到期；全部节点一张表，离线与从未上报不折叠；同样不出现禁止字段。
+  await views.getByRole("button", { name: "列表" }).click();
+  const list = page.getByRole("region", { name: "节点列表" });
+  await expect(list.getByRole("columnheader")).toHaveText(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "到期", "最近上报"]);
+  await expect(list.locator("tbody tr")).toHaveCount(5);
+  const coreRow = list.getByRole("row", { name: "tokyo-core", exact: true });
+  await expect(coreRow.getByRole("meter", { name: "CPU 72%" })).toBeVisible();
+  await expect(coreRow.locator(".expiry")).toContainText("剩 25 天");
+  await expect(list.getByRole("row", { name: "等待首次接入", exact: true }).getByRole("img", { name: "从未上报" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
+  await page.screenshot({ path: testInfo.outputPath("list-light.png"), fullPage: true });
+  const listText = await page.evaluate(() => document.body.innerText);
+  for (const word of FORBIDDEN) expect(listText, word).not.toContain(word);
+  // 视图记在浏览器里，刷新沿用列表；名称链到节点页。
+  await page.reload();
+  await expect(list.locator("tbody tr")).toHaveCount(5);
+  await expect(coreRow.getByRole("link", { name: "tokyo-core" })).toHaveAttribute("href", "/nodes/1");
+  await views.getByRole("button", { name: "卡片" }).click();
+
   // 手机：卡片视图没有横向溢出；离线表的名称折行显示全名，不截断。
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   for (const cell of await folded.locator("tbody td:first-child").all()) expect(await cell.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("cards-mobile.png"), fullPage: true });
+  // 手机：列表每行折成一张卡（状态点、名称、最近上报；三项用量；网速），负载、本周期与到期不显示，没有横向溢出。
+  await views.getByRole("button", { name: "列表" }).click();
+  await expect(coreRow.locator('td[data-label="CPU"]')).toBeVisible();
+  for (const label of ["负载", "本周期", "到期"]) await expect(coreRow.locator(`td[data-label="${label}"]`)).toBeHidden();
+  const [dot, cpu] = [await coreRow.locator('td[data-label="状态"]').boundingBox(), await coreRow.locator('td[data-label="CPU"]').boundingBox()];
+  expect(cpu!.y).toBeGreaterThan(dot!.y);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: testInfo.outputPath("list-mobile.png"), fullPage: true });
   // 手机：墙是单列列表，点行直接进节点页，没有横向溢出。
   await views.getByRole("button", { name: "状态墙" }).click();
   await expect(panel).toHaveCount(0);

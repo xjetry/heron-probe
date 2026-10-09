@@ -2,17 +2,14 @@ import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { errorBanner, queryGateAll } from "../api/queryGate";
-import { Bar, Missing, ratio } from "../components/Bar";
 import { PageHeader } from "../components/PageHeader";
-import { AdminService, type Node, type NodeStatus as LiveNode } from "../gen/heron/v1/admin_pb";
+import { ReadingsTable } from "../components/ReadingsTable";
+import { AdminService } from "../gen/heron/v1/admin_pb";
 import { liveById, liveStatus } from "../lib/adminStatus";
 import { attentionCards } from "../lib/attention";
-import { ago, bytes, percent } from "../lib/format";
 import { withId } from "../lib/ids";
 import { filterNodes } from "../lib/nodeSearch";
 import { POLL_MS } from "../lib/poll";
-import { trafficText } from "../lib/traffic";
-import { STATUS_LABEL } from "../lib/status";
 import { EmptyState } from "../components/EmptyState";
 
 // ListNodes 提供维护状态、到期与 agent 版本，GetSnapshot 提供在线裁决与读数；
@@ -50,36 +47,15 @@ export function Overview() {
       {listed.nodes.length === 0 && <EmptyState title="还没有节点。">去 <Link to="/nodes">节点</Link> 页创建，或开一个 <Link to="/register">注册窗口</Link>。</EmptyState>}
       {listed.nodes.length > 0 && rows.length === 0 && <EmptyState status title="没有匹配的节点。" />}
       {rows.length > 0 && (
-        <div className="table-scroll" role="region" aria-label="节点实时读数" tabIndex={0}>
-          <table className="nodes overview-table">
-            <thead><tr><th>状态</th><th>节点</th><th>CPU</th><th>内存</th><th>磁盘</th><th>负载</th><th>网络</th><th>本周期</th><th>最近上报</th></tr></thead>
-            <tbody>{rows.map((node) => <NodeRow key={String(node.id)} node={node} live={live.get(node.id)} now={now} />)}</tbody>
-          </table>
-        </div>
+        <ReadingsTable label="节点实时读数" className="nodes" items={rows} now={now} row={(node) => {
+          const l = live.get(node.id);
+          return {
+            key: String(node.id), label: node.name, status: liveStatus(node, l),
+            name: <Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link>,
+            metrics: l?.metrics, traffic: l?.traffic, lastSeenAt: l?.lastSeenAt,
+          };
+        }} />
       )}
     </section>
-  );
-}
-
-function Meter({ label, value }: { label: string; value: number | undefined }) {
-  if (value === undefined) return <Missing />;
-  return <><Bar thin value={value} label={`${label} ${percent(value)}`} /><span className="num">{percent(value)}</span></>;
-}
-
-function NodeRow({ node, live, now }: { node: Node; live: LiveNode | undefined; now: number }) {
-  const status = liveStatus(node, live);
-  const m = live?.metrics;
-  return (
-    <tr aria-label={node.name} data-status={status ?? "unknown"}>
-      <td data-label="状态"><span className="status-dot" data-status={status} role="img" aria-label={status ? STATUS_LABEL[status] : "状态未知"} /></td>
-      <td data-label="节点"><Link to={`/nodes/${node.id}`} aria-label={withId(node.name, node.id)}>{node.name}</Link></td>
-      <td data-label="CPU"><Meter label="CPU" value={m?.cpuPct} /></td>
-      <td data-label="内存"><Meter label="内存" value={m?.memUsed !== undefined && m.memTotal ? ratio(m.memUsed, m.memTotal) : undefined} /></td>
-      <td data-label="磁盘"><Meter label="磁盘" value={m?.diskUsed !== undefined && m.diskTotal ? ratio(m.diskUsed, m.diskTotal) : undefined} /></td>
-      <td data-label="负载" className="num">{m?.load1 !== undefined && m.load5 !== undefined && m.load15 !== undefined ? `${m.load1.toFixed(2)} / ${m.load5.toFixed(2)} / ${m.load15.toFixed(2)}` : <Missing />}</td>
-      <td data-label="网络" className="num">{m?.netRxBps !== undefined && m.netTxBps !== undefined ? `↓ ${bytes(m.netRxBps)}/s ↑ ${bytes(m.netTxBps)}/s` : <Missing />}</td>
-      <td data-label="本周期" className="num">{live?.traffic ? trafficText(live.traffic) : <Missing />}</td>
-      <td data-label="最近上报" className="muted">{live?.lastSeenAt !== undefined ? ago(live.lastSeenAt, now) : STATUS_LABEL.never}</td>
-    </tr>
   );
 }

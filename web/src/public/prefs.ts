@@ -1,10 +1,10 @@
 import type { TagMatch } from "../lib/tags";
 import { GROUP_BYS, type GroupBy } from "./filters";
 
-export type View = "wall" | "cards";
+export type View = "wall" | "cards" | "list";
 export const PUBLIC_VIEW_KEY = "heron-public-view";
 export const PUBLIC_WALL_GROUP_KEY = "heron-public-wall-group";
-const VIEWS: readonly View[] = ["wall", "cards"];
+const VIEWS: readonly View[] = ["wall", "cards", "list"];
 
 // 地区与标签筛选各自的选择方式（public/Facet.tsx）。
 export type Facet = "region" | "tag";

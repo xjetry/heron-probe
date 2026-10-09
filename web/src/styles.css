@@ -102,6 +102,34 @@ form.row { flex-wrap: wrap; }
 .tag-list { list-style: none; padding: 0; display: grid; gap: .35rem; }
 table.nodes { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 table.nodes th, table.nodes td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+/* 实时读数表（components/ReadingsTable.tsx：管理端总览、公开页列表视图）。表格外框与表头由各自的样式表给出，这里只管
+   列内排版与手机布局。 */
+.readings-table td { white-space: nowrap; }
+.readings-table .bar.thin { width: 48px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+/* 手机上每行是一张卡：首行状态点、名称、最近上报；下面两行缩进到名称下方，依次是三项用量（带标签）与网速，其余列
+   （负载、本周期与调用方追加的列）不显示。区域按 data-label 指名放置，不依赖单元格顺序与 auto 列宽——auto 列会被最宽的
+   用量格撑开，把名称挤到右侧。各端样式表若给表格单元格加了更具体的外框、内边距或固定行高，要在这个断点下自己去掉。 */
+@media (max-width: 900px) {
+  table.readings-table, .readings-table tbody { display: block; background: none; border: 0; }
+  .readings-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .readings-table tr {
+    display: grid; grid-template-columns: 8px repeat(3, minmax(0, 1fr)); gap: 8px 12px; align-items: center;
+    grid-template-areas: "dot name name seen" ". cpu mem disk" ". net net net";
+    margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);
+  }
+  table.readings-table td { height: auto; padding: 0; border: 0; white-space: normal; min-width: 0; }
+  .readings-table td[data-label="状态"] { grid-area: dot; display: flex; }
+  .readings-table td[data-label="节点"] { grid-area: name; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .readings-table td[data-label="最近上报"] { grid-area: seen; justify-self: end; font-size: 12px; white-space: nowrap; }
+  .readings-table td[data-label="CPU"] { grid-area: cpu; }
+  .readings-table td[data-label="内存"] { grid-area: mem; }
+  .readings-table td[data-label="磁盘"] { grid-area: disk; }
+  .readings-table td:is([data-label="CPU"], [data-label="内存"], [data-label="磁盘"]) { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .readings-table td:is([data-label="CPU"], [data-label="内存"], [data-label="磁盘"])::before { content: attr(data-label); color: var(--muted); flex: none; }
+  .readings-table td .bar.thin { flex: 1; width: auto; min-width: 0; margin: 0; }
+  .readings-table td[data-label="网络"] { grid-area: net; font-size: 12px; }
+  .readings-table td:not([data-label="状态"], [data-label="节点"], [data-label="最近上报"], [data-label="CPU"], [data-label="内存"], [data-label="磁盘"], [data-label="网络"]) { display: none; }
+}
 /* 管理表的自由文本不能决定整张表的宽度；移动端保留每项数据与标签，按节点收拢为卡片。 */
 table.node-management { table-layout: fixed; }
 table.node-management th, table.node-management td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; padding: .5rem; }

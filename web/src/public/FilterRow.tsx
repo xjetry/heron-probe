@@ -5,11 +5,11 @@ import { Select } from "../components/Select";
 import type { TagMatch } from "../lib/tags";
 import { SEARCH_KEYSHORTCUTS, useSearchShortcut } from "../lib/useSearchShortcut";
 import { FacetPanel, FacetTrigger } from "./Facet";
-import { CARD_SORTS, COLOR_BYS, GROUP_BYS, type CardSort, type ColorBy, type FacetOption, type GroupBy, type PublicFilters } from "./filters";
+import { NODE_SORTS, COLOR_BYS, GROUP_BYS, type NodeSort, type ColorBy, type FacetOption, type GroupBy, type PublicFilters } from "./filters";
 import type { Facet, FacetMode, View } from "./prefs";
 
 // 筛选行（设计 §3.1）：搜索、地区与标签两个筛选入口、只看在线、视图切换；状态墙多一个分组依据（有标签时）与着色依据，
-// 卡片多一个排序。地区与标签的选项由调用方从当前快照算出并带计数。
+// 卡片与列表多一个排序（两者共用同一个排序选择）。地区与标签的选项由调用方从当前快照算出并带计数。
 export function FilterRow({ filters, onFilters, regions, tags, modes, onMode, onTagMatch, view, onView, groupBy, onGroupBy, colorBy, onColorBy, sort, onSort }: {
   filters: PublicFilters; onFilters: (next: PublicFilters) => void;
   regions: readonly FacetOption[]; tags: readonly FacetOption[];
@@ -17,7 +17,7 @@ export function FilterRow({ filters, onFilters, regions, tags, modes, onMode, on
   view: View; onView: (view: View) => void;
   groupBy: GroupBy; onGroupBy: (by: GroupBy) => void;
   colorBy: ColorBy; onColorBy: (by: ColorBy) => void;
-  sort: CardSort; onSort: (sort: CardSort) => void;
+  sort: NodeSort; onSort: (sort: NodeSort) => void;
 }) {
   const search = useRef<HTMLInputElement>(null);
   useSearchShortcut(useCallback(() => search.current?.focus(), []));
@@ -58,10 +58,11 @@ export function FilterRow({ filters, onFilters, regions, tags, modes, onMode, on
       <div className="view-switch" role="group" aria-label="视图">
         <button type="button" aria-pressed={view === "wall"} onClick={() => onView("wall")}>状态墙</button>
         <button type="button" aria-pressed={view === "cards"} onClick={() => onView("cards")}>卡片</button>
+        <button type="button" aria-pressed={view === "list"} onClick={() => onView("list")}>列表</button>
       </div>
       {view === "wall" && tags.length > 0 && <Select label="分组" value={groupBy} options={GROUP_BYS} onChange={onGroupBy} />}
       {view === "wall" && <Select label="着色依据" value={colorBy} options={COLOR_BYS} onChange={onColorBy} />}
-      {view === "cards" && <Select label="排序" value={sort} options={CARD_SORTS} onChange={onSort} />}
+      {view !== "wall" && <Select label="排序" value={sort} options={NODE_SORTS} onChange={onSort} />}
     </div>
   );
 }

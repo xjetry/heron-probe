@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import { PublicNodeSchema, type PublicNode } from "../gen/heron/v1/public_pb";
-import { CARD_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortCards, summarize, tagOptions, tileLevel, type CardSort, type ColorBy, type PublicFilters } from "./filters";
+import { NODE_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortNodes, summarize, tagOptions, tileLevel, type NodeSort, type ColorBy, type PublicFilters } from "./filters";
 
 const node = (init: Parameters<typeof create<typeof PublicNodeSchema>>[1]): PublicNode => create(PublicNodeSchema, init);
 const nodes = [
@@ -34,19 +34,19 @@ it.each<[PublicFilters, string[]]>([
   expect(names(filterPublicNodes(nodes, filters))).toEqual(expected);
 });
 
-it.each<[CardSort, string[]]>([
+it.each<[NodeSort, string[]]>([
   ["default", ["tokyo-1", "tokyo-2", "hk-1", "fresh", "hk-2"]],
   ["expiry", ["hk-2", "tokyo-2", "tokyo-1", "hk-1", "fresh"]],
   ["cpu", ["tokyo-1", "hk-2", "hk-1", "tokyo-2", "fresh"]],
   ["traffic", ["tokyo-1", "hk-1", "tokyo-2", "fresh", "hk-2"]],
-])("卡片排序 %s 不修改输入，到期升序、读数降序且缺失最后", (sort, expected) => {
-  expect(names(sortCards(Object.freeze([...nodes]), sort))).toEqual(expected);
+])("排序 %s 不修改输入，到期升序、读数降序且缺失最后", (sort, expected) => {
+  expect(names(sortNodes(Object.freeze([...nodes]), sort))).toEqual(expected);
 });
 
 it("流量按完整 bigint 排序，不因超过安全整数丢失大小关系", () => {
   const smaller = node({ name: "small", traffic: { periodRx: 2n ** 53n, quotaUsedBytes: 2n ** 53n } });
   const larger = node({ name: "large", traffic: { periodRx: 2n ** 53n, periodTx: 1n, quotaUsedBytes: 2n ** 53n + 1n } });
-  expect(names(sortCards([smaller, larger], "traffic"))).toEqual(["large", "small"]);
+  expect(names(sortNodes([smaller, larger], "traffic"))).toEqual(["large", "small"]);
 });
 
 it.each<[PublicNode, ColorBy, string | undefined]>([
@@ -157,7 +157,7 @@ it("空快照汇总全为零", () => {
 });
 
 it("排序与着色选项使用约定的值、标签及顺序", () => {
-  expect([CARD_SORTS, COLOR_BYS]).toEqual([
+  expect([NODE_SORTS, COLOR_BYS]).toEqual([
     [{ value: "default", label: "默认" }, { value: "expiry", label: "到期" }, { value: "cpu", label: "CPU" }, { value: "traffic", label: "流量" }],
     [{ value: "status", label: "状态" }, { value: "cpu", label: "CPU" }, { value: "memory", label: "内存" }, { value: "expiry", label: "到期" }],
   ]);

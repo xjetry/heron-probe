@@ -5,9 +5,10 @@ import { PublicService } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { sameTag, type TagMatch } from "../lib/tags";
 import { FilterRow } from "./FilterRow";
-import { filterPublicNodes, NO_FILTERS, regionOptions, sortCards, tagOptions, type CardSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
+import { filterPublicNodes, NO_FILTERS, regionOptions, sortNodes, tagOptions, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
+import { NodeList } from "./NodeList";
 import { StatusWall } from "./StatusWall";
 import { readFacetMode, readPublicView, readTagMatch, readWallGroupBy, writeFacetMode, writePublicView, writeTagMatch, writeWallGroupBy, type Facet, type FacetMode, type View } from "./prefs";
 
@@ -22,7 +23,7 @@ export function PublicOverview() {
   const [modes, setModes] = useState<Record<Facet, FacetMode>>(() => ({ region: readFacetMode("region"), tag: readFacetMode("tag") }));
   const chooseMode = (facet: Facet, mode: FacetMode) => { setModes((current) => ({ ...current, [facet]: mode })); writeFacetMode(facet, mode); };
   const [colorBy, setColorBy] = useState<ColorBy>("status");
-  const [sort, setSort] = useState<CardSort>("default");
+  const [sort, setSort] = useState<NodeSort>("default");
   const [selectedId, setSelectedId] = useState<bigint | null>(null);
   const gate = queryGate(snap);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
@@ -49,7 +50,8 @@ export function PublicOverview() {
           <FilterRow filters={effective} onFilters={setFilters} regions={regions} tags={tags} modes={modes} onMode={chooseMode} onTagMatch={chooseTagMatch} view={view} onView={chooseView} groupBy={wallGroupBy} onGroupBy={chooseGroupBy} colorBy={colorBy} onColorBy={setColorBy} sort={sort} onSort={setSort} />
           {nodes.length === 0 && <p className="muted">没有符合筛选条件的节点。</p>}
           {nodes.length > 0 && view === "wall" && <StatusWall nodes={nodes} tags={gate.data.tags} now={now} groupBy={wallGroupBy} colorBy={colorBy} selectedId={selectedId} onSelect={setSelectedId} />}
-          {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortCards(nodes, sort)} now={now} />}
+          {nodes.length > 0 && view === "cards" && <CardGrid nodes={sortNodes(nodes, sort)} now={now} />}
+          {nodes.length > 0 && view === "list" && <NodeList nodes={sortNodes(nodes, sort)} now={now} />}
         </>
       )}
     </section>

@@ -8,6 +8,9 @@ it("没选过时是卡片；写入后按记住的视图读出", () => {
   writePublicView("wall");
   expect(localStorage.getItem(PUBLIC_VIEW_KEY)).toBe("wall");
   expect(readPublicView()).toBe("wall");
+  writePublicView("list");
+  expect(localStorage.getItem(PUBLIC_VIEW_KEY)).toBe("list");
+  expect(readPublicView()).toBe("list");
   writePublicView("cards");
   expect(localStorage.getItem(PUBLIC_VIEW_KEY)).toBe("cards");
   expect(readPublicView()).toBe("cards");

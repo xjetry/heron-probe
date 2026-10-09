@@ -27,8 +27,8 @@ export function filterPublicNodes(nodes: readonly PublicNode[], f: PublicFilters
     && (!f.onlineOnly || nodeStatus(n) === "online"));
 }
 
-export type CardSort = "default" | "expiry" | "cpu" | "traffic";
-export const CARD_SORTS: readonly { value: CardSort; label: string }[] = [
+export type NodeSort = "default" | "expiry" | "cpu" | "traffic";
+export const NODE_SORTS: readonly { value: NodeSort; label: string }[] = [
   { value: "default", label: "默认" }, { value: "expiry", label: "到期" }, { value: "cpu", label: "CPU" }, { value: "traffic", label: "流量" },
 ];
 
@@ -43,11 +43,11 @@ function byDesc(key: (n: PublicNode) => number | bigint | undefined) {
   };
 }
 
-export function sortCards(nodes: readonly PublicNode[], sort: CardSort): PublicNode[] {
+export function sortNodes(nodes: readonly PublicNode[], sort: NodeSort): PublicNode[] {
   switch (sort) {
     case "expiry": return sortByExpiry(nodes);
     case "cpu": return [...nodes].sort(byDesc((n) => n.metrics?.cpuPct));
-    // 按卡片上显示的那个数排序：本周期用量按节点自己的配额口径计（与 trafficText 同源）。
+    // 按卡片与列表上显示的那个数排序：本周期用量按节点自己的配额口径计（与 trafficText 同源）。
     case "traffic": return [...nodes].sort(byDesc((n) => n.traffic?.quotaUsedBytes));
     default: return [...nodes];
   }
