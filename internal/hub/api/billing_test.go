@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -256,7 +255,9 @@ func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
 	h.update(t, req)
 	loc := time.FixedZone("UTC+8", 8*3600)
 	clk := &steppingClock{next: time.Date(2026, 1, 1, 23, 59, 59, 0, loc)}
-	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, Location: loc}, h.store, h.live, h.book, h.reg, clk, slog.Default())
+	deps := h.publicDeps()
+	deps.Clock = clk
+	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, Location: loc}, deps)
 	path, handler := heronv1connect.NewPublicServiceHandler(pub)
 	mux := http.NewServeMux()
 	mux.Handle(path, handler)
@@ -474,12 +475,17 @@ func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 }
 
 func TestConstructorsRequireLocation(t *testing.T) {
+	h := newHarness(t, "")
+	cfg := h.svc.cfg
+	cfg.Location = nil
+	pubCfg := h.pub.cfg
+	pubCfg.Location = nil
 	for _, c := range []struct {
 		want string
 		call func()
 	}{
-		{"api.Config.Location must be set", func() { New(Config{TTL: time.Second}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil) }},
-		{"api.PublicConfig.Location must be set", func() { NewPublic(PublicConfig{}, nil, nil, nil, nil, nil, nil) }},
+		{"api.Config.Location must be set", func() { New(cfg, h.deps()) }},
+		{"api.PublicConfig.Location must be set", func() { NewPublic(pubCfg, h.publicDeps()) }},
 	} {
 		func() {
 			defer func() {

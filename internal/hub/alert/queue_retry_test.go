@@ -26,11 +26,11 @@ func TestQueueRetriesNonterminalExitWithoutExternalOverflow(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, rejectResult)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{Sleep: func(ctx context.Context, d time.Duration) error {
 		sleeps = append(sleeps, d)
 		_, err := db.Exec("DROP TRIGGER reject_result")
 		return err
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -51,14 +51,14 @@ func TestQueueRefillReadFailureRetainsSignal(t *testing.T) {
 	deliverySQL(t, db, "ALTER TABLE alert_delivery RENAME TO held_deliveries")
 	slept := make(chan struct{})
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{Sleep: func(ctx context.Context, d time.Duration) error {
 		sleeps = append(sleeps, d)
 		_, err := db.Exec("ALTER TABLE held_deliveries RENAME TO alert_delivery")
 		if len(sleeps) == 1 {
 			close(slept)
 		}
 		return err
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	// 溢出窗口已取空，库中两条待投递仍是真源；首次补货读失败不能消耗续投信号。
 	q.overflow = true
 	stop := startQueue(t, q)
@@ -86,7 +86,7 @@ func TestQueueFailureBackoffCapsAndResetsAfterCompletion(t *testing.T) {
 	ready := make(chan struct{})
 	var sleeps []time.Duration
 	var mu sync.Mutex
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(ctx context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{Sleep: func(ctx context.Context, d time.Duration) error {
 		mu.Lock()
 		sleeps = append(sleeps, d)
 		n := len(sleeps)
@@ -112,7 +112,7 @@ func TestQueueFailureBackoffCapsAndResetsAfterCompletion(t *testing.T) {
 			return err
 		}
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(first)
 	stop := startQueue(t, q)
 	select {

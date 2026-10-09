@@ -144,7 +144,7 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	}
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC,
 		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}},
-		st, l, book, reg, clk, slog.Default())
+		PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	pubPath, pubHandler := pub.Handler()
 	counter := &countingServer{inner: pubHandler}
 	_ = pubPath

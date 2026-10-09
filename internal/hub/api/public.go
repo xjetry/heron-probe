@@ -73,13 +73,42 @@ type Public struct {
 	maxAge map[string]uint32
 }
 
-func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Book, probes *probe.Registry, clk clock.Clock, log *slog.Logger) *Public {
+// PublicDeps 是 Public 的协作者，全部必需：NewPublic 逐字段核对非 nil。
+type PublicDeps struct {
+	Store   *store.Store
+	Live    *live.Live
+	Traffic *traffic.Book
+	Probes  *probe.Registry
+	Clock   clock.Clock
+	Log     *slog.Logger
+}
+
+// NewPublic 对配置与依赖的缺陷 panic，口径与理由见 New。
+func NewPublic(cfg PublicConfig, deps PublicDeps) *Public {
 	if cfg.Location == nil {
 		panic("api.PublicConfig.Location must be set")
 	}
+	if deps.Store == nil {
+		panic("api.PublicDeps.Store must be set")
+	}
+	if deps.Live == nil {
+		panic("api.PublicDeps.Live must be set")
+	}
+	if deps.Traffic == nil {
+		panic("api.PublicDeps.Traffic must be set")
+	}
+	if deps.Probes == nil {
+		panic("api.PublicDeps.Probes must be set")
+	}
+	if deps.Clock == nil {
+		panic("api.PublicDeps.Clock must be set")
+	}
+	if deps.Log == nil {
+		panic("api.PublicDeps.Log must be set")
+	}
 	return &Public{
-		cfg: cfg, store: st, live: l, traffic: book, probes: probes, clk: clk, log: log,
-		history: history{store: st, log: log, gate: newHistoryGate()},
+		cfg: cfg, store: deps.Store, live: deps.Live, traffic: deps.Traffic, probes: deps.Probes, clk: deps.Clock, log: deps.Log,
+		history: history{store: deps.Store, log: deps.Log, gate: newHistoryGate()},
 		facts:   newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor()),
 		metrics: newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor()),
 		billing: newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor()),

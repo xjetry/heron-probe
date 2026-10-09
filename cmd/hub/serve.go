@@ -195,7 +195,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	book := traffic.New(st, clk, loc, log)
 	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
 	alerts.SetTraffic(book)
-	notifier := alert.NewQueue(st, alerts.Channels, client, "", clk, nil, log)
+	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: log})
 	alerts.SetSender(notifier)
 	a := auth.New(st, reg, notifier, clk, loc, log)
 	if err := a.ConfigureWebAuthn(*adminOrigin); err != nil {
@@ -215,7 +215,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 			_, err := update.Accept(releasesig.Trusted(), "agent", arch, version, a)
 			return err
 		}, clk)
-	svc, err := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager, Releases: relay,
+	svc := ingest.New(ingest.Config{TTL: ttl, TrustedProxies: trusted, Updates: updateManager, Releases: relay,
 		// 证书观测的 not_after 变化即评估一次证书到期规则，续期不必等到日界（§9.2）；
 		// ingest 已从写协程另起协程调用，这里直接取 writeMu 扫描。评估失败只记日志：
 		// 观测已落库，下一次日界或变化会再评估。
@@ -223,10 +223,7 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 			if err := alerts.SweepExpiry(context.Background()); err != nil {
 				log.Error("cert expiry sweep after a changed observation failed", "err", err)
 			}
-		}}, l, st, a, book, reg, clk, log)
-	if err != nil {
-		return err
-	}
+		}}, ingest.Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: log})
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), reg.Load(ctx), updateManager.Load(ctx)); err != nil {
 		return err
@@ -240,8 +237,10 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 	}
 	backups := backup.New(st, notifier, clk, log)
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
-	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend}, st, a, l, svc, book, reg, alerts, notifier, clk, log)
-	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc}, st, l, book, reg, clk, log)
+	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: trusted, HubVersion: version, Location: loc, Retention: retention, PublicDir: *publicDir != "", Geo: geoBackend},
+		api.Deps{Store: st, Auth: a, Live: l, Nodes: svc, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
+	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: trusted, Location: loc},
+		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: log})
 
 	themes := web.ThemeHandler(st, public, admin.ThemePreviewAccess, log)
 	if *publicDir == "" {

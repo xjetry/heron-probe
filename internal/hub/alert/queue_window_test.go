@@ -70,7 +70,7 @@ func TestFullWaitingWindowDoesNotHoldOtherChannels(t *testing.T) {
 			tgEvents := recordBatches(t, f, c, 3)
 			hookEvent := recordBatches(t, f, queueChannel(t, f, srv.URL), 1)[0]
 			gate := make(chan struct{})
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, gatedSleep(f, gate), f.log)
+			q := NewQueue(QueueConfig{TelegramBase: base, Sleep: gatedSleep(f, gate)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			q.limit = 2
 			start := f.clk.Now()
 			waitingNow := 1
@@ -121,7 +121,7 @@ func TestFullWaitingWindowDoesNotHoldOtherChannels(t *testing.T) {
 func TestEnqueueEvictionOrder(t *testing.T) {
 	f := newFixture(t)
 	var logs bytes.Buffer
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: slog.New(slog.NewJSONHandler(&logs, nil))})
 	q.limit = 5
 	put := func(b int64, w waitEntry) { q.waiting[b], q.active[b] = w, 1 }
 	put(1, waitEntry{at: time.Hour, kind: waitUnrecorded})
@@ -155,7 +155,7 @@ func TestEnqueueEvictionOrder(t *testing.T) {
 // 窗口已满、ready 为空时不补货：装不进任何一项，只会空转读库。补货的信号留着，窗口腾出位置后再补。
 func TestNextDoesNotRefillFullWindow(t *testing.T) {
 	f := newFixture(t)
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.limit = 2
 	later := f.clk.Mono() + time.Minute
 	q.waiting[1], q.active[1] = waitEntry{at: later, kind: waitRate}, 1
@@ -178,7 +178,7 @@ func TestRateLimitedBatchesAreNotReadBeforeTheirSlot(t *testing.T) {
 	c := telegramChannel(t, f, 1)
 	events := recordBatches(t, f, c, 5)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	var reads atomic.Int32
 	read := q.readBatch
 	q.readBatch = func(ctx context.Context, batch int64) (store.DeliveryBatch, error) {
@@ -208,7 +208,7 @@ func TestEnqueueWakesIdleWorkerAfterImmediateSleep(t *testing.T) {
 	defer srv.Close()
 	c := queueChannel(t, f, srv.URL)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	stop := startQueue(t, q)
 	defer stop()
 	for i := range 50 {
@@ -235,10 +235,10 @@ func TestEnqueueWakesIdleWorkerAfterImmediateSleep(t *testing.T) {
 func TestIdleReturnsAtOnceAfterEnqueueSinceNext(t *testing.T) {
 	f := newFixture(t)
 	var slept []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(_ context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{Sleep: func(_ context.Context, d time.Duration) error {
 		slept = append(slept, d)
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	// 一个一小时后才到期的等待批次让 next 给出有期限的空闲：idle 若不看 woken，就会经 q.sleep 睡向那一刻。批次号取
 	// 库里这个用例不会分配到的值，入队的新批次才不会被当成它去重。
 	q.waiting[999], q.active[999] = waitEntry{at: f.clk.Mono() + time.Hour, kind: waitRate}, 1
@@ -268,7 +268,7 @@ func TestDeletedChannelReleasesWaitingBatches(t *testing.T) {
 	events := recordBatches(t, f, c, 2)
 	var mu sync.Mutex
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), base, f.clk, func(_ context.Context, d time.Duration) error {
+	q := NewQueue(QueueConfig{TelegramBase: base, Sleep: func(_ context.Context, d time.Duration) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(sleeps) == 0 {
@@ -278,7 +278,7 @@ func TestDeletedChannelReleasesWaitingBatches(t *testing.T) {
 		sleeps = append(sleeps, d)
 		f.clk.Advance(d)
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(events[0])
 	q.Enqueue(events[1])
 	stop := startQueue(t, q)
@@ -319,7 +319,7 @@ func TestWindowCountsBatchInFlight(t *testing.T) {
 	c := queueChannel(t, f, srv.URL)
 	a, b := queueEvent(t, f, c), queueEvent(t, f, c)
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.limit = 1
 	q.Enqueue(a)
 	stop := startQueue(t, q)

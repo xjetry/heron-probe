@@ -65,9 +65,13 @@ const (
 )
 
 type Config struct {
+	// Updates 为 nil 时没有节点在线更新：绑定版本下发空串（boundAgent），更新目标列表里的节点只带"未报告支持"的
+	// 占位状态，启动与取消节点更新返回 FailedPrecondition。缺省是不提供，不是放宽。
 	Updates *updates.Manager
+	// Backups 是 §6.7 的分层备份管理器；New 将其视为装配错误并 panic 当它为 nil。
 	Backups *backup.Manager
 	// Heartbeat 是 §9.6 的心跳循环，GetHeartbeatStatus 从它读进程内状态；New 将其视为装配错误并 panic 当它为 nil。
+	// 接口字段的 typed nil 约束见 Deps。
 	Heartbeat HeartbeatStatusProvider
 	// TTL 必须为正；零值会放宽宽限期下限，New 将其视为装配错误并 panic。
 	TTL time.Duration
@@ -86,7 +90,7 @@ type Config struct {
 	PublicDir bool
 	// Geo 是 serve 选定并交给国家查询器的同一个后端对象，New 要求非 nil。面板回显的后端与本地库路径取自它
 	// （Settings.geo_backend、geo_mmdb_path），不另由启动参数推导，回显因此不会与查询器实际用的后端分叉；仅回显，
-	// 不落入运行设置。
+	// 不落入运行设置。接口字段的 typed nil 约束见 Deps。
 	Geo geo.Backend
 }
 
@@ -144,7 +148,29 @@ func (s *Service) boundAgent() string {
 	return s.cfg.Updates.BoundAgent()
 }
 
-func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeState, book *traffic.Book, probes *probe.Registry, alerts *alert.Engine, notifier *alert.Queue, clk clock.Clock, log *slog.Logger) *Service {
+// Deps 是 Service 的协作者，全部必需：New 逐字段核对非 nil。接口类型的字段（Nodes）只能识别"没有给出"：
+// 装进接口的 nil 指针（typed nil）不等于 nil，会通过核对、到第一次调用才空指针，装配方不得这样传。
+type Deps struct {
+	Store    *store.Store
+	Auth     *auth.Auth
+	Live     *live.Live
+	Nodes    NodeState
+	Traffic  *traffic.Book
+	Probes   *probe.Registry
+	Alerts   *alert.Engine
+	Notifier *alert.Queue
+	Clock    clock.Clock
+	Log      *slog.Logger
+}
+
+// New 对配置与依赖的一切缺陷 panic，信息带包名与字段名；hub 其余组件的构造函数（NewPublic、ingest.New、
+// alert.NewQueue）沿用同一口径并指向这里。理由：装配只发生在 serve 与测试夹具里，用户输入（flag、环境变量）已由
+// serve 的 options 解析校验过，读库、监听、Load 这些运行期可能失败的步骤不在构造函数里；到这里还不合法的配置或
+// 缺失的依赖只能是装配代码写错了，不是运行期可以恢复的状态。返回 error 只会让每个调用点多一段永远走不到的分支，
+// 而 panic 让写错的装配在第一次启动或第一个测试里就停下。
+//
+// 先核对 Config 再核对 Deps，各自按字段声明顺序，报出第一处缺陷。
+func New(cfg Config, deps Deps) *Service {
 	if cfg.TTL <= 0 {
 		panic("api.Config.TTL must be positive")
 	}
@@ -163,9 +189,40 @@ func New(cfg Config, st *store.Store, a *auth.Auth, l *live.Live, nodes NodeStat
 	if cfg.Geo == nil {
 		panic("api.Config.Geo must be set")
 	}
+	if deps.Store == nil {
+		panic("api.Deps.Store must be set")
+	}
+	if deps.Auth == nil {
+		panic("api.Deps.Auth must be set")
+	}
+	if deps.Live == nil {
+		panic("api.Deps.Live must be set")
+	}
+	if deps.Nodes == nil {
+		panic("api.Deps.Nodes must be set")
+	}
+	if deps.Traffic == nil {
+		panic("api.Deps.Traffic must be set")
+	}
+	if deps.Probes == nil {
+		panic("api.Deps.Probes must be set")
+	}
+	if deps.Alerts == nil {
+		panic("api.Deps.Alerts must be set")
+	}
+	if deps.Notifier == nil {
+		panic("api.Deps.Notifier must be set")
+	}
+	if deps.Clock == nil {
+		panic("api.Deps.Clock must be set")
+	}
+	if deps.Log == nil {
+		panic("api.Deps.Log must be set")
+	}
 	return &Service{
-		cfg: cfg, store: st, auth: a, live: l, nodes: nodes, traffic: book, probes: probes, alerts: alerts, notifier: notifier, clk: clk, log: log,
-		history:   history{store: st, log: log, gate: newHistoryGate()},
+		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,
+		alerts: deps.Alerts, notifier: deps.Notifier, clk: deps.Clock, log: deps.Log,
+		history:   history{store: deps.Store, log: deps.Log, gate: newHistoryGate()},
 		heartbeat: cfg.Heartbeat,
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),

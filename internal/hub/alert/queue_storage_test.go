@@ -44,7 +44,7 @@ func TestAttemptWriteFailureSendsNothing(t *testing.T) {
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_attempt BEFORE UPDATE ON alert_delivery BEGIN SELECT RAISE(ABORT, 'attempt write blocked'); END")
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev) // attempt 从窗口取批次所属的渠道。
 	_, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 	if err == nil || !strings.Contains(err.Error(), "attempt write blocked") {
@@ -81,7 +81,7 @@ func TestExhaustedUnrecordedDeliveryBecomesTerminal(t *testing.T) {
 			if last != nil {
 				must(t, f.st.UpdateBatch(t.Context(), ev.Deliveries[0].BatchID, *last))
 			}
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+			q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			q.Enqueue(ev) // attempt 从窗口取批次所属的渠道。
 			out, err := q.attempt(t.Context(), ev.Deliveries[0].BatchID)
 			must(t, err)
@@ -113,7 +113,7 @@ func TestMalformedStatusIsRetriedAsTransport(t *testing.T) {
 	endpoint, requests := rawStatusServer(t, "HTTP/1.1 099 Odd")
 	ev := queueEvent(t, f, queueChannel(t, f, endpoint))
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	d := awaitDeliveries(t, f, ev.ID, allDone)[0]
@@ -159,14 +159,14 @@ func TestResultWriteFailuresCannotExceedSendBudget(t *testing.T) {
 	db := deliveryDB(t, f)
 	deliverySQL(t, db, "CREATE TRIGGER fail_result BEFORE UPDATE ON alert_delivery WHEN NEW.done = 1 OR NEW.ok = 1 BEGIN SELECT RAISE(ABORT, 'result write blocked'); END")
 	sleeps := 0
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(ctx context.Context, _ time.Duration) error {
+	q := NewQueue(QueueConfig{Sleep: func(ctx context.Context, _ time.Duration) error {
 		sleeps++
 		if sleeps > (QueueCap+1)*(store.MaxDeliveryAttempts+1) {
 			cancel()
 			return ctx.Err()
 		}
 		return nil
-	}, f.log)
+	}}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	must(t, q.Requeue(t.Context()))
 	timer := time.AfterFunc(testwait.Bound, cancel)
 	defer timer.Stop()

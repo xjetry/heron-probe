@@ -46,10 +46,10 @@ func TestQueuePrunedDeliveryDoesNotDelayFreshEvent(t *testing.T) {
 				}
 				return f.e.Channels()
 			}
-			q := NewQueue(f.st, channels, outbound.NewClient(NotifyTimeout), "", f.clk, func(context.Context, time.Duration) error {
+			q := NewQueue(QueueConfig{Sleep: func(context.Context, time.Duration) error {
 				sleeps.Add(1)
 				return nil
-			}, f.log)
+			}}, QueueDeps{Store: f.st, Channels: channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			q.Enqueue(old)
 			q.Enqueue(fresh)
 			if stage == "read" {

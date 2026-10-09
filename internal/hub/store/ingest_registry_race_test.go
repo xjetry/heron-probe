@@ -54,10 +54,8 @@ func TestIngestForgetWaitsForRegistryOutsideIngestLocks(t *testing.T) {
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, log)
 	tasks := &notifiedTasks{Registry: reg, entered: make(chan struct{})}
-	svc, err := ingest.New(ingest.Config{TTL: 30 * time.Second}, l, st, a, book, tasks, clk, log)
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := ingest.New(ingest.Config{TTL: 30 * time.Second},
+		ingest.Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: tasks, Clock: clk, Log: log})
 	if err := errors.Join(a.Load(ctx), book.Load(ctx), reg.Load(ctx), svc.Load(ctx)); err != nil {
 		t.Fatal(err)
 	}

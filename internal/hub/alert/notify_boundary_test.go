@@ -42,7 +42,7 @@ func TestOutboundErrorsDoNotExposeCredentials(t *testing.T) {
 			c, err := f.e.SaveChannel(t.Context(), store.NotifyChannel{Name: "telegram", Kind: store.ChannelTelegram, Config: string(config)})
 			must(t, err)
 			var sleeps []time.Duration
-			q := NewQueue(f.st, f.e.Channels, client, base, f.clk, advancing(f, &sleeps), f.log)
+			q := NewQueue(QueueConfig{TelegramBase: base, Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: client, Clock: f.clk, Log: f.log})
 			ev := queueEvent(t, f, c)
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
@@ -76,7 +76,7 @@ func TestResponseSummaryIsValidUTF8AndRuneBounded(t *testing.T) {
 			defer srv.Close()
 			c := queueChannel(t, f, srv.URL)
 			ev := queueEvent(t, f, c)
-			q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+			q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			q.Enqueue(ev)
 			stop := startQueue(t, q)
 			ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -110,7 +110,7 @@ func TestQueueAccepts2xxWithInterruptedBodyOnce(t *testing.T) {
 	defer srv.Close()
 	ev := queueEvent(t, f, queueChannel(t, f, srv.URL))
 	var sleeps []time.Duration
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, advancing(f, &sleeps), f.log)
+	q := NewQueue(QueueConfig{Sleep: advancing(f, &sleeps)}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(ev)
 	stop := startQueue(t, q)
 	ds := awaitDeliveries(t, f, ev.ID, allDone)
@@ -127,7 +127,7 @@ func TestQueueDoesNotSendQueuedTerminalDelivery(t *testing.T) {
 	defer srv.Close()
 	c := queueChannel(t, f, srv.URL)
 	first, last := queueEvent(t, f, c), queueEvent(t, f, c)
-	q := NewQueue(f.st, f.e.Channels, outbound.NewClient(NotifyTimeout), "", f.clk, nil, f.log)
+	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 	q.Enqueue(first)
 	if _, err := f.st.BeginBatchAttempt(t.Context(), first.Deliveries[0].BatchID, []int64{first.Deliveries[0].ID}); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestEnqueueCompletesWithBusyWorkerAndConcurrentProducers(t *testing.T) {
 	})
 	c := queueChannel(t, f, "http://127.0.0.1/busy")
 	ev := queueEvent(t, f, c)
-	q := NewQueue(f.st, f.e.Channels, client, "", f.clk, nil, f.log)
+	q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: client, Clock: f.clk, Log: f.log})
 	q.limit = 2
 	q.Enqueue(ev)
 	stopWorker := startQueue(t, q)

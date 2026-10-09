@@ -64,14 +64,19 @@ const (
 )
 
 type Config struct {
+	// TTL 必须在 [agentwire.MinTTL, agentwire.MaxTTL] 内。用户给出的值由 serve 的 --offline-after 解析校验，那里是
+	// 唯一的用户输入校验处；New 只核对范围并对越界 panic。
 	TTL            time.Duration
 	TrustedProxies []netip.Prefix
-	Updates        interface {
+	// Updates 为 nil 时不处理节点在线更新：上报不观测更新状态、不下发更新任务，删除节点也无更新状态可清。
+	// 字段是接口：装进接口的 nil 指针（typed nil）不等于 nil，会被当作已给出、到第一次调用才空指针，装配方要么给出
+	// 可用的对象，要么不给。
+	Updates interface {
 		Observe(int64, *heronv1.UpdateStatus) *heronv1.UpdateTask
 		Forget(int64)
 	}
 	// Releases 为 hub 来源的节点中转官方产物（spec §4.10）。nil 时 GetRelease 返回 Unavailable：
-	// 缺省是不提供中转，不是放宽。
+	// 缺省是不提供中转，不是放宽。typed nil 的约束同 Updates。
 	Releases interface {
 		Get(ctx context.Context, node int64, taskID, arch string) (update.Artifacts, error)
 	}
@@ -79,6 +84,17 @@ type Config struct {
 	// 装配方用它触发一次证书到期评估，续期不必等到日界才恢复（§9.2）。回调从写协程另起的
 	// 协程里调用，允许它写库；同值重复上报不触发。可为 nil（不评估）。
 	CertObserved func()
+}
+
+// Deps 是 Service 的协作者，全部必需：New 逐字段核对非 nil。Tasks 是接口，typed nil 的约束同 Config.Updates。
+type Deps struct {
+	Live    *live.Live
+	Store   *store.Store
+	Auth    *auth.Auth
+	Traffic *traffic.Book
+	Tasks   TaskSource
+	Clock   clock.Clock
+	Log     *slog.Logger
 }
 
 type storeWriter interface {
@@ -122,18 +138,38 @@ type Service struct {
 	pending   []metric.Batch
 }
 
-func New(cfg Config, l *live.Live, st *store.Store, a *auth.Auth, book *traffic.Book, tasks TaskSource, clk clock.Clock, log *slog.Logger) (*Service, error) {
-	if cfg.TTL < agentwire.MinTTL {
-		return nil, fmt.Errorf("TTL %v is below the minimum %v", cfg.TTL, agentwire.MinTTL)
+// New 对配置与依赖的缺陷 panic，口径与理由见 api.New。
+func New(cfg Config, deps Deps) *Service {
+	if cfg.TTL < agentwire.MinTTL || cfg.TTL > agentwire.MaxTTL {
+		panic(fmt.Sprintf("ingest.Config.TTL %v is outside [%v, %v]", cfg.TTL, agentwire.MinTTL, agentwire.MaxTTL))
 	}
-	if cfg.TTL > agentwire.MaxTTL {
-		return nil, fmt.Errorf("TTL %v is above the maximum %v", cfg.TTL, agentwire.MaxTTL)
+	if deps.Live == nil {
+		panic("ingest.Deps.Live must be set")
+	}
+	if deps.Store == nil {
+		panic("ingest.Deps.Store must be set")
+	}
+	if deps.Auth == nil {
+		panic("ingest.Deps.Auth must be set")
+	}
+	if deps.Traffic == nil {
+		panic("ingest.Deps.Traffic must be set")
+	}
+	if deps.Tasks == nil {
+		panic("ingest.Deps.Tasks must be set")
+	}
+	if deps.Clock == nil {
+		panic("ingest.Deps.Clock must be set")
+	}
+	if deps.Log == nil {
+		panic("ingest.Deps.Log must be set")
 	}
 	// 上报的补充周期是下发间隔的一半：允许正常间隔内的一次重试。间隔由 TTL 决定，服务存续期间不变；
 	// 限速与下发都经 interval 算，下发间隔改了，限速跟着改。
-	return &Service{cfg: cfg, live: l, traffic: book, tasks: tasks, store: st, writer: st, auth: a, clk: clk, log: log,
+	return &Service{cfg: cfg, live: deps.Live, traffic: deps.Traffic, tasks: deps.Tasks, store: deps.Store, writer: deps.Store, auth: deps.Auth,
+		clk: deps.Clock, log: deps.Log,
 		limit: ratelimit.New[int64](burst, agentwire.ReportInterval(cfg.TTL)/2), registerLimit: ratelimit.New[netip.Addr](registerBurst, registerRefillPer),
-		factsHash: map[int64]uint64{}}, nil
+		factsHash: map[int64]uint64{}}
 }
 
 func (s *Service) Load(ctx context.Context) error {

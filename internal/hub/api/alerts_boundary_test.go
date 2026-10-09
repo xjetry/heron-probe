@@ -72,6 +72,7 @@ func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
 }
 
 func TestNewRejectsNonpositiveTTL(t *testing.T) {
+	h := newHarness(t, "")
 	for _, ttl := range []time.Duration{0, -time.Second} {
 		t.Run(ttl.String(), func(t *testing.T) {
 			defer func() {
@@ -79,7 +80,9 @@ func TestNewRejectsNonpositiveTTL(t *testing.T) {
 					t.Fatalf("panic=%v", r)
 				}
 			}()
-			New(Config{TTL: ttl}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			cfg := h.svc.cfg
+			cfg.TTL = ttl
+			New(cfg, h.deps())
 		})
 	}
 }

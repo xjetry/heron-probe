@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 	"github.com/xjetry/heron-probe/internal/hubclient"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 	"google.golang.org/protobuf/proto"
 )
@@ -42,6 +44,11 @@ type hub struct {
 	live   *live.Live
 	book   *traffic.Book
 	reg    *probe.Registry
+}
+
+// deps 是夹具装配 Service 时用的那套协作者。
+func (h *hub) deps() Deps {
+	return Deps{Live: h.live, Store: h.store, Auth: h.auth, Traffic: h.book, Tasks: h.reg, Clock: h.clk, Log: slog.Default()}
 }
 
 func newHub(t *testing.T) *hub { return newHubAt(t, filepath.Join(t.TempDir(), "t.db")) }
@@ -65,10 +72,7 @@ func newHubWith(t *testing.T, path string, cfg Config) *hub {
 	a := auth.New(st, reg, nil, clk, time.UTC, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	svc, err := New(cfg, l, st, a, book, reg, clk, slog.Default())
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := New(cfg, Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: slog.Default()})
 	ctx := context.Background()
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), book.Load(ctx), reg.Load(ctx)); err != nil {
 		t.Fatal(err)
@@ -101,19 +105,23 @@ func report(tok string, m *heronv1.Metrics) *connect.Request[heronv1.ReportReque
 	return req
 }
 
+// 越界的 TTL 是装配错误：用户给出的值已由 serve 的 --offline-after 校验过，New 只核对范围。
 func TestNewEnforcesTTLBounds(t *testing.T) {
+	h := newHub(t)
 	for _, ttl := range []time.Duration{-time.Second, 0, 10*time.Second - time.Nanosecond, 10 * time.Second, 30 * time.Second, 180 * time.Second, 181 * time.Second} {
-		svc, err := New(Config{TTL: ttl}, nil, nil, nil, nil, nil, clock.NewFake(time.Now()), slog.Default())
-		if ttl < 10*time.Second {
-			if err == nil || svc != nil {
-				t.Fatalf("TTL %v accepted below minimum", ttl)
+		var panicked any
+		var svc *Service
+		func() {
+			defer func() { panicked = recover() }()
+			svc = New(Config{TTL: ttl}, h.deps())
+		}()
+		if ttl < 10*time.Second || ttl > 180*time.Second {
+			want := fmt.Sprintf("ingest.Config.TTL %v is outside [10s, 3m0s]", ttl)
+			if panicked != want {
+				t.Fatalf("TTL %v: panic = %v, want %s", ttl, panicked, want)
 			}
-		} else if ttl > 180*time.Second {
-			if err == nil || svc != nil || err.Error() != "TTL 3m1s is above the maximum 3m0s" {
-				t.Fatalf("TTL %v accepted above maximum or wrong error: %v %v", ttl, svc, err)
-			}
-		} else if err != nil || svc == nil || svc.Interval() != ttl/3 {
-			t.Fatalf("TTL %v rejected or wrong interval: %v %v", ttl, svc, err)
+		} else if panicked != nil || svc.Interval() != ttl/3 {
+			t.Fatalf("TTL %v rejected or wrong interval: panic=%v", ttl, panicked)
 		}
 	}
 }
@@ -1195,4 +1203,9 @@ func TestFlushBoundsPendingBothFamilies(t *testing.T) {
 	if drops != 1 {
 		t.Errorf("drop log count=%d want=1", drops)
 	}
+}
+
+func TestNewRequiresEveryDep(t *testing.T) {
+	h := newHub(t)
+	testdeps.RequireEveryField(t, "ingest.Deps", h.deps(), func(d Deps) { New(Config{TTL: 30 * time.Second}, d) })
 }
