@@ -199,8 +199,10 @@ fieldset.bare { border: 0; margin: 0; padding: 0; min-width: 0; }
 .expiry[data-level="attention"] { color: var(--status-attention); }
 .expiry[data-level="critical"] { color: var(--status-offline); }
 
-/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用：两个字母的小方标，不随所在标题放大。 */
-.country-badge {
+/* 国家 / 地区徽章（components/CountryBadge.tsx），面板与公开页共用：两个字母的小方标，不随所在标题放大。
+   公开页的双栈标记（components/AddressFamilies.tsx）跟在它后面，用同一种外观。 */
+.address-families { display: inline-flex; gap: 4px; vertical-align: middle; }
+.country-badge, .address-family {
   display: inline-block;
   padding: 0 4px;
   border: 1px solid var(--line);

@@ -131,7 +131,7 @@ docker run -d --name heron --restart unless-stopped --stop-timeout 30 --network 
 
 经过 CDN 时还要核对上游一跳。若节点来源显示 Docker 内网地址，先检查 hub 信任的网段是否与反代实际 TCP 地址一致；若显示 CDN 地址，则需要在反代验证 CDN 来源后解析真实客户端地址，再转发给 hub。Caddy 可用 `trusted_proxies` 限定 Cloudflare 官方网段、`trusted_proxies_strict` 和 `client_ip_headers CF-Connecting-IP` 解析来源，并在 hub 的 `reverse_proxy` 中用 `header_up X-Forwarded-For {client_ip}` 传递已核实的地址。不要无条件信任客户端自带的 `CF-Connecting-IP` 或 `X-Forwarded-For`。国家查询只处理公网来源；地址要等下一次分钟写入后更新，查询完成后刷新管理节点列表。
 
-节点双栈出口由新版 agent 在启动后立即、此后每 5 分钟分别经 IPv4 请求 `https://api-ipv4.ip.sb/ip`、经 IPv6 请求 `https://api-ipv6.ip.sb/ip`，不走环境代理、不跟随重定向，单次超时 10 秒，不阻塞指标采集。每族独立显示可用地址、不支持、探测失败或等待上报；只有没有可用该族接口地址，或系统明确报告无路由/地址族不支持，才标记不支持。DNS、TLS、超时和回显错误属于探测失败，失败清空旧地址。私网 IPv4 与 IPv6 ULA 仍会尝试探测，支持 NAT 出口。旧 agent 没有双栈结果，需要升级后才会出现。双栈结果只向管理员展示，是 agent 自报信息，不替代上报来源，不用于身份校验或国家查询。
+节点双栈出口由新版 agent 在启动后立即、此后每 5 分钟分别经 IPv4 请求 `https://api-ipv4.ip.sb/ip`、经 IPv6 请求 `https://api-ipv6.ip.sb/ip`，不走环境代理、不跟随重定向，单次超时 10 秒，不阻塞指标采集。每族独立显示可用地址、不支持、探测失败或等待上报；只有没有可用该族接口地址，或系统明确报告无路由/地址族不支持，才标记不支持。DNS、TLS、超时和回显错误属于探测失败，失败清空旧地址。私网 IPv4 与 IPv6 ULA 仍会尝试探测，支持 NAT 出口。旧 agent 没有双栈结果，需要升级后才会出现。地址只向管理员展示；公开页只为探测确认有公网出口的地址族画「IPv4」「IPv6」小标（卡片在系统信息行尾，列表、详情面板与节点页在国家徽章后），公开接口也只给每族的探测状态，不给地址。双栈结果是 agent 自报信息，不替代上报来源，不用于身份校验或国家查询。
 
 ### 账户安全
 

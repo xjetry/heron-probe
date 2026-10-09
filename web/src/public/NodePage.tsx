@@ -2,6 +2,7 @@ import { useQuery } from "@connectrpc/connect-query";
 import { Link, useParams } from "react-router";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { NowGrid } from "../components/NowGrid";
+import { AddressFamilies } from "../components/AddressFamilies";
 import { CountryBadge } from "../components/CountryBadge";
 import { MetricCharts, ProbeTaskCharts, RangePicker, useHistory, type HistoryMethods } from "../components/History";
 import { StatusBadge } from "../components/StatusBadge";
@@ -41,6 +42,7 @@ function NodeContent({ node, now, error }: { node: PublicNode; now: number; erro
         <div className="node-head-title">
           <h1>{node.name}</h1>
           {node.country && <CountryBadge code={node.country} />}
+          <AddressFamilies network={f?.network} />
           <StatusBadge status={nodeStatus(node)} detail={node.lastSeenAt !== undefined ? `最近上报 ${ago(node.lastSeenAt, now)}` : undefined} />
         </div>
         {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}

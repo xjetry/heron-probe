@@ -390,9 +390,11 @@ i=0
 until [ "$(pubget snapshot GetSnapshot '{}')" = 200 ] && jq -e --arg id "$node1" '[(.nodes // [])[].id] == [$id]' "$work/pub-snapshot.json" > /dev/null; do
   i=$((i + 1)); [ "$i" -lt 10 ] || { echo "FAIL: public snapshot does not list exactly node1"; cat "$work/pub-snapshot.json"; exit 1; }; sleep 0.5
 done
-# 公开的主机信息只有这五项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。指标一定在：node1 早已上报，
-# live 里的最近一次指标只在删节点时清掉；公开指标里没有 bootId。
-jq -e --arg os "$EXPECT_OS" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores"]) == []) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
+# 公开的主机信息只有这六项：主机名、内核、agent 版本、ICMP 可用性不出现在线上。双栈出口出现时每个地址族只有 state，
+# 出口地址与探测时间不出现；当前源码的 agent 一定报它，compat-e2e 下载的已发布 agent（E2E_AGENT_VERSION 非空）可能早于
+# 这项探测，缺席是合法的。指标一定在：node1 早已上报，live 里的最近一次指标只在删节点时清掉；公开指标里没有 bootId。
+if [ -z "${E2E_AGENT_VERSION:-}" ]; then must_network=true; else must_network=false; fi
+jq -e --arg os "$EXPECT_OS" --argjson must_network "$must_network" '.reportIntervalMs == 4000 and (.nodes[0].facts | (.os | contains($os)) and .arch == "amd64" and (keys - ["os", "arch", "virtualization", "cpuModel", "cpuCores", "network"]) == [] and (if has("network") then (.network | type == "object" and ([.[] | keys[]] - ["state"]) == []) else ($must_network | not) end)) and (.nodes[0].metrics | type == "object" and .memTotal != null and (has("bootId") | not))' "$work/pub-snapshot.json" > /dev/null || { echo "FAIL: public snapshot shape"; cat "$work/pub-snapshot.json"; exit 1; }
 [ "$(hdr snapshot Cache-Control)" = "max-age=1" ] || { echo "FAIL: GetSnapshot Cache-Control"; cat "$work/pub-snapshot.headers"; exit 1; }
 # 缓存头只给 GET：POST 的响应不进浏览器缓存，不带这个头。
 [ "$(curl -sS -o /dev/null -D "$work/pub-post.headers" -w '%{http_code}' -H 'Content-Type: application/json' --data '{}' "$base/heron.v1.PublicService/GetSnapshot")" = 200 ] || { echo "FAIL: POST GetSnapshot"; exit 1; }

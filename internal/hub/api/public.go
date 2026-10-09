@@ -73,18 +73,31 @@ type Public struct {
 	maxAge map[string]uint32
 }
 
+// publicProjections 是公开端的全部投影。public.proto 里带 reserved 的消息都必须是这里某个投影（含逐层的子投影）的目标：
+// buf.yaml 据此对 public.proto 豁免 RESERVED_MESSAGE_NO_DELETE，由 TestPublicReservedOnlyMarksUnpublishedSourceFields 核对。
+type publicProjectionSet struct{ facts, metrics, billing projection }
+
+func (s publicProjectionSet) all() []projection { return []projection{s.facts, s.metrics, s.billing} }
+
+func publicProjections() publicProjectionSet {
+	return publicProjectionSet{
+		facts:   newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor()),
+		metrics: newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor()),
+		billing: newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor()),
+	}
+}
+
 func NewPublic(cfg PublicConfig, st *store.Store, l *live.Live, book *traffic.Book, probes *probe.Registry, clk clock.Clock, log *slog.Logger) *Public {
 	if cfg.Location == nil {
 		panic("api.PublicConfig.Location must be set")
 	}
+	projections := publicProjections()
 	return &Public{
 		cfg: cfg, store: st, live: l, traffic: book, probes: probes, clk: clk, log: log,
 		history: history{store: st, log: log, gate: newHistoryGate()},
-		facts:   newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor()),
-		metrics: newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor()),
-		billing: newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor()),
-		limit:   ratelimit.New[netip.Addr](publicBurst, publicRefill),
-		maxAge:  cachePolicy(probeServices()),
+		facts:   projections.facts, metrics: projections.metrics, billing: projections.billing,
+		limit:  ratelimit.New[netip.Addr](publicBurst, publicRefill),
+		maxAge: cachePolicy(probeServices()),
 	}
 }
 

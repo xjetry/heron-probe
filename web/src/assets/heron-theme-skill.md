@@ -128,10 +128,12 @@ import { getSite, getSnapshot, queryMetrics, queryProbes, listProbeComparisonNod
 | `country` | 国家 / 地区代码（如 `JP`）；空表示未知 |
 | `tags` | 标签数组 |
 | `publicRemark` | 站长写给访客的一行备注 |
-| `facts` | 主机信息，**可缺失**（从未上报）：`os`、`arch`、`virtualization`、`cpuModel`、`cpuCores` |
+| `facts` | 主机信息，**可缺失**（从未上报）：`os`、`arch`、`virtualization`、`cpuModel`、`cpuCores`，以及双栈出口 `network`（见下） |
 | `metrics` | 最近一次读数，**可缺失**（从未上报；离线节点保留最后一次读数），见下表 |
 | `traffic` | hub 累计的流量，见下表 |
 | `billing` | 计费与到期，**可缺失**（站长没填）：`price`（十进制文本）、`currency`（ISO 4217）、`billingCycle`（`BILLING_CYCLE_MONTHLY` / `QUARTERLY` / `SEMIANNUAL` / `YEARLY` / `BIENNIAL` / `TRIENNIAL` / `QUINQUENNIAL`）、`expiresOn`（`YYYY-MM-DD`）、`daysLeft`（到期剩余天数，负数为已过期；可缺失） |
+
+`facts.network` 只给每个地址族的探测状态，不给地址：`network.ipv4.state` 与 `network.ipv6.state` 取 `ADDRESS_DETECTION_STATE_AVAILABLE`（有该族公网出口）、`ADDRESS_DETECTION_STATE_UNSUPPORTED`（本机没有该族可用的接口地址或路由）、`ADDRESS_DETECTION_STATE_FAILED`（这一轮探测没成功，不能据此判断有没有出口）。`network` 缺失表示 agent 版本不报这一项；某个族缺失表示还没探测过。内置页只为 `AVAILABLE` 的族画「IPv4」「IPv6」小标。
 
 内置公开页的四态判定（建议主题沿用，计数才与内置页一致）：`maintenance` 为真 → 维护中；否则没有 `lastSeenAt` → 从未上报；否则 `online` 为真 → 在线，为假 → 离线。
 
