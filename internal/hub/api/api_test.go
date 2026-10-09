@@ -35,6 +35,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/ingest"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/nodeops"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
@@ -154,7 +155,8 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	hb := &stubHeartbeat{}
 	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
-	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: in, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
+	ops := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: in, Log: slog.Default()})
+	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: ops, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc},
 		PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	mux := http.NewServeMux()
@@ -171,7 +173,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 
 // deps 是夹具装配 Service 时用的那套协作者；用例改其中一项再交给 New，其余与夹具相同。
 func (h *harness) deps() Deps {
-	return Deps{Store: h.store, Auth: h.auth, Live: h.live, Nodes: h.ingest, Traffic: h.book, Probes: h.reg, Alerts: h.alerts,
+	return Deps{Store: h.store, Auth: h.auth, Live: h.live, Nodes: h.svc.nodes, Traffic: h.book, Probes: h.reg, Alerts: h.alerts,
 		Notifier: h.svc.notifier, Clock: h.clk, Log: slog.Default()}
 }
 

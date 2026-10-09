@@ -49,11 +49,7 @@ func (s *Service) BatchUpdateNodeTags(ctx context.Context, req *connect.Request[
 			}
 		}
 	}
-	s.nodeMu.Lock()
-	_, err = s.alerts.UpdateScope(func() (store.NodeUpdateResult, error) {
-		return s.probes.BatchUpdateNodeTags(ctx, ids, add, remove)
-	})
-	s.nodeMu.Unlock()
+	err = s.nodes.BatchUpdateTags(ctx, ids, add, remove)
 	if errors.Is(err, store.ErrTagLimit) {
 		return nil, invalid("tags: %s", err)
 	}

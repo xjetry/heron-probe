@@ -21,6 +21,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/ingest"
 	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/nodeops"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
@@ -81,7 +82,8 @@ func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Han
 		t.Fatal(err)
 	}
 	admin := api.New(api.Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: heartbeat.New(heartbeatSource{st: st, live: l}, client, "test", clk, slog.Default()), TTL: 30 * time.Second, ReportInterval: 10 * time.Second, Location: time.UTC, Retention: store.DefaultRetention, Geo: geo.NewHTTP(client)},
-		api.Deps{Store: st, Auth: a, Live: l, Nodes: svc, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
+		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: slog.Default()}),
+			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: 10 * time.Second, Location: time.UTC},
 		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	return newHandler(routes{

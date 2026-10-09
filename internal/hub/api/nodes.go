@@ -201,7 +201,7 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 	if err != nil {
 		return nil, err
 	}
-	id, tok, err := s.auth.CreateNode(ctx, name, billing)
+	id, tok, err := s.nodes.Create(ctx, name, billing)
 	if errors.Is(err, store.ErrNodeLimit) {
 		return nil, connect.NewError(connect.CodeResourceExhausted, err)
 	}
@@ -209,13 +209,7 @@ func (s *Service) CreateNode(ctx context.Context, req *connect.Request[heronv1.C
 		s.log.Error("creating node failed", "err", err)
 		return nil, internalError("creating node failed")
 	}
-	// 带着计费建节点与 UpdateNode 改计费同理由立刻扫描一次（§9.2）：新建即过期或在提醒窗口内的节点不等到零点才触发。
-	// 节点已提交，扫描失败只记日志，日界扫描会补上。新节点此前没有状态，也不存在被裁剪的作用域，不经 UpdateScope。
-	if billing != (store.Billing{}) {
-		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
-			s.log.Error("expiry sweep after node create failed", "node", id, "err", err)
-		}
-	}
+	// Create 返回时带计费的新节点已扫描过一次，回读到的到期日与 days_left 是扫描之后的值。
 	n, err := s.store.GetNode(ctx, id)
 	if err != nil {
 		s.log.Error("reading created node failed", "err", err)
@@ -274,47 +268,15 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 		return nil, err
 	}
 	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
-	s.nodeMu.Lock()
-	trafficChanged := false
-	billingChanged, err := s.alerts.UpdateScope(func() (store.NodeUpdateResult, error) {
-		result, err := s.probes.UpdateNode(ctx, req.Msg.GetId(), edit)
-		trafficChanged = result.TrafficChanged
-		return result, err
-	})
-	if err == nil {
-		// 只有库提交成功才改内存；nodeMu 跨越两次写入并与删除共用，失败或并发请求都不能使两者分叉。
-		s.traffic.SetResetDay(req.Msg.GetId(), day)
-		if trafficChanged {
-			if _, commitErr := s.traffic.Commit(context.WithoutCancel(ctx), req.Msg.GetId()); commitErr != nil {
-				s.log.Error("traffic commit after node update failed", "node", req.Msg.GetId(), "err", commitErr)
-				trafficChanged = false
-			}
-		}
-	}
-	s.nodeMu.Unlock()
+	err = s.nodes.Update(ctx, req.Msg.GetId(), edit)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
 	if err != nil {
 		return nil, s.operationError(err, "tags", "updating node failed")
 	}
-	// 计费字段变了就立刻按新值扫描一次（§9.2）：续费之后不等到零点才恢复。修改已提交，扫描失败只记日志，下一次扫描
-	// 会再评估。扫描放在 nodeMu 之外：它要等 writeMu（离线巡检、探测评估、日界扫描都可能正持有），再做一整轮续期
-	// 写回与状态写，持 nodeMu 等它只会挡住其它节点的编辑与删除，与 DeleteNode 把清理放在锁外同一个理由。持锁调用
-	// 也不会成环：alert 包不 import api，且引擎经 SetSender 注入的实现（当前是 alert.Queue）也不在 api 里，
-	// 任何持 writeMu 的路径都取不到 nodeMu。
-	if billingChanged {
-		if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
-			s.log.Error("expiry sweep after node update failed", "node", req.Msg.GetId(), "err", err)
-		}
-	}
-	if trafficChanged {
-		if err := s.alerts.EvaluateTrafficNode(context.WithoutCancel(ctx), req.Msg.GetId()); err != nil {
-			s.log.Error("traffic evaluation after node update failed", "node", req.Msg.GetId(), "err", err)
-		}
-	}
-	// 扫描之后才回读，响应里的到期日与 days_left 已是推后之后的值。放锁之后节点可能已被并发的 DeleteNode 删掉，
-	// 这时按不存在应答。
+	// Update 返回时计费与流量引起的扫描都已做完，回读到的到期日与 days_left 已是推后之后的值。Update 放锁之后节点
+	// 可能已被并发的删除删掉，这时按不存在应答。
 	n, err := s.store.GetNode(ctx, req.Msg.GetId())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
@@ -326,12 +288,9 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	return connect.NewResponse(&heronv1.UpdateNodeResponse{Node: nodeProto(n, s.today())}), nil
 }
 
-// DeleteNode 先由 auth 删除库记录和 token，再由状态持有者等待在途上报并清理。
-// 返回成功必须同时意味着持久化删除完成与进程内状态清除。
+// DeleteNode 返回成功同时意味着持久化删除完成与进程内状态清除（见 nodeops.Service.Delete）。
 func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[heronv1.DeleteNodeRequest]) (*connect.Response[heronv1.DeleteNodeResponse], error) {
-	s.nodeMu.Lock()
-	err := s.auth.DeleteNode(ctx, req.Msg.GetId())
-	s.nodeMu.Unlock()
+	err := s.nodes.Delete(ctx, req.Msg.GetId())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}
@@ -339,17 +298,12 @@ func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[heronv1.D
 		s.log.Error("deleting node failed", "err", err)
 		return nil, internalError("deleting node failed")
 	}
-	// 删除已提交，UpdateNode 在库层得到不存在后不会再调 SetResetDay，锁外 Forget 不会与编辑交错重建流量状态。
-	// 持 nodeMu 等待在途上报与评估只会阻塞其它节点的编辑，因此清理放在锁外。
-	s.nodes.Forget(req.Msg.GetId())
-	// auth.DeleteNode 已提交且释放鉴权锁；同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
-	s.alerts.Forget(req.Msg.GetId())
 	s.log.Info("node deleted", "node", req.Msg.GetId())
 	return connect.NewResponse(&heronv1.DeleteNodeResponse{}), nil
 }
 
 func (s *Service) RotateNodeToken(ctx context.Context, req *connect.Request[heronv1.RotateNodeTokenRequest]) (*connect.Response[heronv1.RotateNodeTokenResponse], error) {
-	tok, err := s.auth.RotateToken(ctx, req.Msg.GetId())
+	tok, err := s.nodes.RotateToken(ctx, req.Msg.GetId())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
 	}

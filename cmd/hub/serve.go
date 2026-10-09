@@ -26,6 +26,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/ingest"
 	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/nodeops"
 	"github.com/xjetry/heron-probe/internal/hub/outbound"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
@@ -318,7 +319,8 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	backups := backup.New(st, notifier, clk, log)
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
 	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, Retention: opts.retention, PublicDir: opts.publicDir != "", Geo: geoBackend},
-		api.Deps{Store: st, Auth: a, Live: l, Nodes: svc, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
+		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log}),
+			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, Location: loc},
 		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: log})
 

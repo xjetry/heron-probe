@@ -29,6 +29,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/geo"
 	"github.com/xjetry/heron-probe/internal/hub/heartbeat"
 	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/nodeops"
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/theme"
@@ -94,27 +95,19 @@ type Config struct {
 	Geo geo.Backend
 }
 
-// NodeState 是节点在进程内的状态持有者；删除节点后由它清理。用接口而不直接依赖
-// ingest：清理由状态持有者承载，管理服务不依赖上报服务的内部结构。
-type NodeState interface {
-	Forget(nodeID int64)
-}
-
 // HeartbeatStatusProvider 是 §9.6 心跳循环持有的进程内状态。api 只读它：目标地址与开关都在设置里，状态不含凭据。
 type HeartbeatStatusProvider interface {
 	Status() heartbeat.Status
 }
 
 type Service struct {
-	// 内存里的重置日与库里的 traffic_reset_day 必须一致，Forget 之后不得再为该节点建内存状态；
-	// 节点的库写入与内存更新在同一临界区内完成，不同请求按此锁串行。
-	nodeMu sync.Mutex
-
-	cfg      Config
-	store    *store.Store
-	auth     *auth.Auth
-	live     *live.Live
-	nodes    NodeState
+	cfg   Config
+	store *store.Store
+	auth  *auth.Auth
+	live  *live.Live
+	// nodes 编排节点的建、改、删、轮换 token 与批量改标签；跨协作者的串行与提交后的清理都在它里面，节点 handler 只做
+	// 校验、调用与错误映射。
+	nodes    *nodeops.Service
 	traffic  *traffic.Book
 	probes   *probe.Registry
 	alerts   *alert.Engine
@@ -148,13 +141,13 @@ func (s *Service) boundAgent() string {
 	return s.cfg.Updates.BoundAgent()
 }
 
-// Deps 是 Service 的协作者，全部必需：New 逐字段核对非 nil。接口类型的字段（Nodes）只能识别"没有给出"：
-// 装进接口的 nil 指针（typed nil）不等于 nil，会通过核对、到第一次调用才空指针，装配方不得这样传。
+// Deps 是 Service 的协作者，全部必需：New 逐字段核对非 nil。New 对接口类型的字段（Config.Heartbeat、Config.Geo）
+// 只能识别"没有给出"：装进接口的 nil 指针（typed nil）不等于 nil，会通过核对、到第一次调用才空指针，装配方不得这样传。
 type Deps struct {
 	Store    *store.Store
 	Auth     *auth.Auth
 	Live     *live.Live
-	Nodes    NodeState
+	Nodes    *nodeops.Service
 	Traffic  *traffic.Book
 	Probes   *probe.Registry
 	Alerts   *alert.Engine
