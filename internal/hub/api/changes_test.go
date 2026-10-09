@@ -33,7 +33,7 @@ func grantedClient(t *testing.T, h *harness, grant *heronv1.TokenGrant) (heronv1
 		t.Fatal(err)
 	}
 	token := r.Msg.Token
-	client := heronv1connect.NewAdminServiceClient(http.DefaultClient, h.srv.URL, connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL, connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 			req.Header().Set("Authorization", "Bearer "+token)
 			return next(ctx, req)
@@ -616,7 +616,7 @@ func rawJSONChange(t *testing.T, h *harness, token string) func(map[string]any) 
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := h.srv.Client().Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

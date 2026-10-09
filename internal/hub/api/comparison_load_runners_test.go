@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	heronv1connect "github.com/xjetry/heron-probe/gen/heron/v1/heronv1connect"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 )
 
 // ---- 子进程参数（环境变量）----
@@ -148,7 +150,7 @@ func runHammerChild(t *testing.T) {
 	chunkNodes, _ := strconv.Atoi(os.Getenv(envNodes))
 	shape := os.Getenv(envShape)
 	k, _ := strconv.Atoi(os.Getenv(envK))
-	c := newSourcedClient(addr, src)
+	c := newSourcedClient(&http.Client{Transport: testdeps.OwnedTransport(t)}, addr, src)
 	out, err := os.Create(samplesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -214,8 +216,9 @@ func runHammerChild(t *testing.T) {
 func runReaderChild(t *testing.T) {
 	addr, src, samplesPath, start, seconds := childEnv(t)
 	tasks, _ := strconv.Atoi(os.Getenv(envTasks))
-	m := newSourcedClient(addr, src)
-	p := newSourcedClient(addr, src+"-p")
+	hc := &http.Client{Transport: testdeps.OwnedTransport(t)}
+	m := newSourcedClient(hc, addr, src)
+	p := newSourcedClient(hc, addr, src+"-p")
 	out, err := os.Create(samplesPath)
 	if err != nil {
 		t.Fatal(err)

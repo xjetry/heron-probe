@@ -42,7 +42,7 @@ func adminCall(t *testing.T, h *harness, method, body string, header http.Header
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.srv.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

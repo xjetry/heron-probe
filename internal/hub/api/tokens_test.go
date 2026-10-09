@@ -34,7 +34,7 @@ func rawCall(t *testing.T, h *harness, method string, body string, headers map[s
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.srv.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

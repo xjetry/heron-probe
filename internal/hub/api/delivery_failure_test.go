@@ -53,7 +53,7 @@ func rawBody(t *testing.T, h *harness, method, body string, headers map[string][
 			req.Header.Add(k, v)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.srv.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

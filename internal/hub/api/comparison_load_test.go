@@ -153,7 +153,7 @@ func TestProbeComparisonCostAcceptance(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	nodes, busy, tasks, calls, _ := loadSizes()
-	plain := newSourcedClient(srv.URL, readerSource)
+	plain := newSourcedClient(srv.Client(), srv.URL, readerSource)
 
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
@@ -533,8 +533,9 @@ type sourcedClient struct {
 	source string
 }
 
-func newSourcedClient(url, source string) *sourcedClient {
-	return &sourcedClient{inner: heronv1connect.NewPublicServiceClient(http.DefaultClient, url), source: source}
+// hc 由调用方给，Transport 归调用方所有：同一进程里的几个来源共用调用方的一个连接池。
+func newSourcedClient(hc *http.Client, url, source string) *sourcedClient {
+	return &sourcedClient{inner: heronv1connect.NewPublicServiceClient(hc, url), source: source}
 }
 
 func (s *sourcedClient) do[T any](ctx context.Context, req *connect.Request[T]) *connect.Request[T] {

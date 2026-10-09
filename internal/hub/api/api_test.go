@@ -40,6 +40,7 @@ import (
 	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
+	"github.com/xjetry/heron-probe/internal/testdeps"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -83,10 +84,20 @@ func (s *stubHeartbeat) set(st heartbeat.Status) {
 	s.mu.Unlock()
 }
 
+func TestTestClientsOwnTheirTransport(t *testing.T) {
+	t.Parallel()
+	testdeps.RequireOwnedTransports(t, ".")
+}
+
 // 本包的用例默认并行（t.Parallel）。一个用例能并行的前提，缺一条就不加并写明原因：
 //   - 不与别的用例共享假时钟、Store 或 harness：各自经 newHarness 等夹具在自己的 t.TempDir 里装配；
-//   - 不用 t.Setenv，不改进程级设置（GOMAXPROCS、slog 默认 logger、http.DefaultTransport）；
+//   - 不用 t.Setenv，不改进程级设置（GOMAXPROCS、slog 默认 logger）；
 //   - 不读写包级可变状态；
+//   - 发出的每个 HTTP 请求都走夹具拥有的 Transport，不走进程共享的 http.DefaultTransport：标准库
+//     httptest.Server.Close 会对 http.DefaultTransport 调 CloseIdleConnections，并行时别的用例收尾就会关掉本用例
+//     正要复用的连接（机制见 testdeps 的 OwnedTransport）。harness 的 h.http 与 h.admin 用 srv.Client().Transport，
+//     不带 cookie 的裸请求用 h.srv.Client()；TestTestClientsOwnTheirTransport 经 testdeps.RequireOwnedTransports
+//     在源码上守着这一条；
 //   - 断言里的耗时阈值（上界或比值）远大于负载能造成的停顿：负载下一次调度停顿可达几十毫秒，阈值在这个量级的
 //     不并行；阈值在百毫秒以上且比被量操作的正常耗时大两个数量级的，或只用来区分"等满了某个超时"与"没等"的
 //     （如 drainTimeout，缺陷路径至少要等满它），可以并行。
@@ -175,7 +186,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	hc := &http.Client{Jar: jar}
+	hc := &http.Client{Jar: jar, Transport: srv.Client().Transport}
 	return &harness{dbPath: dbPath, srv: srv, http: hc, admin: heronv1connect.NewAdminServiceClient(hc, srv.URL),
 		agent: heronv1connect.NewAgentServiceClient(srv.Client(), srv.URL), clk: clk, store: st, auth: a, live: l, ingest: in, book: book, reg: reg, alerts: alerts, svc: svc, pub: pub, heartbeat: hb}
 }
@@ -290,7 +301,7 @@ func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 				continue
 			}
 			count++
-			resp, err := http.Post(h.srv.URL+path, "application/json", strings.NewReader("{}"))
+			resp, err := h.srv.Client().Post(h.srv.URL+path, "application/json", strings.NewReader("{}"))
 			if err != nil {
 				t.Fatal(err)
 			}
