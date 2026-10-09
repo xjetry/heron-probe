@@ -92,6 +92,7 @@ func projectionFixtures(t *testing.T) protoreflect.FileDescriptor {
 }
 
 func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
+	t.Parallel()
 	fd := projectionFixtures(t)
 	desc := func(name string) protoreflect.MessageDescriptor { return fd.Messages().ByName(protoreflect.Name(name)) }
 	const hideB = `projfix.Pair.b is not public, so projfix.%s must reserve both its number 2 and its name "b"`
@@ -130,6 +131,7 @@ func TestNewProjectionRejectsMisalignedFields(t *testing.T) {
 // PublicFacts.network 由 Facts.network 逐层投影：每个地址族只剩状态，地址与探测时间不出现；缺失的 network 与
 // 缺失的地址族（首轮探测之前）各自保留缺失。
 func TestPublicFactsProjectOnlyTheAddressFamilyStates(t *testing.T) {
+	t.Parallel()
 	p := newProjection((&heronv1.PublicFacts{}).ProtoReflect().Type(), (&heronv1.Facts{}).ProtoReflect().Descriptor())
 	got := p.apply(&heronv1.Facts{Hostname: "secret-host", Os: "Debian 12", Network: &heronv1.NetworkInfo{
 		Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "8.8.4.4", CheckedAt: 123},
@@ -156,6 +158,7 @@ func TestPublicFactsProjectOnlyTheAddressFamilyStates(t *testing.T) {
 
 // 只复制源里存在的字段：optional 缺失仍是缺失，显式的 0 仍是 0；目标没有的字段（boot_id）不出现。
 func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
+	t.Parallel()
 	p := newProjection((&heronv1.PublicMetrics{}).ProtoReflect().Type(), (&heronv1.Metrics{}).ProtoReflect().Descriptor())
 	got := p.apply(&heronv1.Metrics{BootId: testBootID, MemUsed: proto.Uint64(0), Load1: proto.Float64(0.5),
 		DiskReadBps: proto.Uint64(0), CpuStealPct: proto.Float64(2.5), CpuIowaitPct: proto.Float64(0)}).(*heronv1.PublicMetrics)
@@ -169,6 +172,7 @@ func TestProjectionKeepsPresenceAndDropsUndeclaredFields(t *testing.T) {
 // PublicBilling 由 Billing 投影：周期按编号原样复制，自动续期不出现，days_left 的缺失与 0 各自保留。期望值从 JSON 读入、
 // days_left 经反射取：两个消息对不齐时本测试照常编译，红在构造投影的 panic 上。
 func TestPublicBillingProjectsFromBilling(t *testing.T) {
+	t.Parallel()
 	p := newProjection((&heronv1.PublicBilling{}).ProtoReflect().Type(), (&heronv1.Billing{}).ProtoReflect().Descriptor())
 	got := p.apply(&heronv1.Billing{Price: "12.50", Currency: "USD", BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_YEARLY,
 		ExpiresOn: "2026-10-01", AutoRenew: true, DaysLeft: proto.Int32(0)})
@@ -189,6 +193,7 @@ func TestPublicBillingProjectsFromBilling(t *testing.T) {
 // 带 reserved 的消息都必须是公开投影（含子投影）的目标——newProjection 已核对它的 reserved 与源的未公开字段一一对应，
 // 删掉 reserved 后重新启用的号只能是同名同型的源字段。要退役字段号的非投影消息不能放进这个文件。
 func TestPublicReservedOnlyMarksUnpublishedSourceFields(t *testing.T) {
+	t.Parallel()
 	targets := map[protoreflect.FullName]bool{}
 	var walkProjection func(p projection)
 	walkProjection = func(p projection) {

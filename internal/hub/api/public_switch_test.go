@@ -14,6 +14,7 @@ import (
 )
 
 func TestPublicSwitchSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	if got := currentSettings(t, h); got.PublicEnabled == nil || !got.GetPublicEnabled() {
@@ -32,6 +33,7 @@ func TestPublicSwitchSettings(t *testing.T) {
 }
 
 func TestPublicSwitchOmittedSettings(t *testing.T) {
+	t.Parallel()
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
 			h := newHarness(t, "")
@@ -59,6 +61,7 @@ func TestPublicSwitchOmittedSettings(t *testing.T) {
 
 // 总闸自成一组：只带 public_enabled 的请求照常生效，外观与国家查询原样保留；一组都没给出的请求被拒，总闸不变。
 func TestPublicSwitchAloneIsAGroup(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -80,6 +83,7 @@ func TestPublicSwitchAloneIsAGroup(t *testing.T) {
 }
 
 func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "public")
@@ -135,6 +139,7 @@ func TestPublicSwitchAllMethodsAndNodePreservation(t *testing.T) {
 }
 
 func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	first := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
@@ -155,6 +160,7 @@ func TestPublicSwitchSnapshotCacheWindow(t *testing.T) {
 }
 
 func TestPublicSwitchStillRateLimits(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)})
@@ -174,6 +180,7 @@ func TestPublicSwitchStillRateLimits(t *testing.T) {
 }
 
 func TestPublicSwitchDoesNotReadDatabase(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	saveSettings(t, h, &heronv1.Settings{PublicEnabled: proto.Bool(false)})

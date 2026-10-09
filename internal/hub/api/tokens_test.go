@@ -72,6 +72,7 @@ func createToken(t *testing.T, h *harness, name string) (int64, string) {
 }
 
 func TestAPITokenReachesExactlyTheReadMethods(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "matrix")
@@ -100,6 +101,7 @@ func TestAPITokenReachesExactlyTheReadMethods(t *testing.T) {
 }
 
 func TestBearerAndCookiePathsNeverFallBack(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "cross")
@@ -131,6 +133,7 @@ func TestBearerAndCookiePathsNeverFallBack(t *testing.T) {
 }
 
 func TestCredentialsDoNotCrossServices(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, apiTok := createToken(t, h, "x")
@@ -144,6 +147,7 @@ func TestCredentialsDoNotCrossServices(t *testing.T) {
 }
 
 func TestRevocationTakesEffectOnTheNextRequest(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, tok := createToken(t, h, "gone")
@@ -167,6 +171,7 @@ func TestRevocationTakesEffectOnTheNextRequest(t *testing.T) {
 }
 
 func TestAPITokenManagementValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -194,6 +199,7 @@ func TestAPITokenManagementValidation(t *testing.T) {
 }
 
 func TestListApiTokensShowsLastUse(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "seen")

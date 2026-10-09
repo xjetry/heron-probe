@@ -13,6 +13,7 @@ import (
 // ListAlertRules 的状态带 flapping：从未恢复过的普通 pending（离线未满节点宽限）为 false；恢复后 10 分钟内再次离线、
 // 已满节点宽限却因抖动抑制停在 pending 时为 true；进入 firing 后回到 false。
 func TestListAlertRulesMarksFlappingPending(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")

@@ -36,6 +36,7 @@ func (h *harness) update(t *testing.T, req *heronv1.UpdateNodeRequest) *heronv1.
 }
 
 func TestBillingCyclesMapEveryValue(t *testing.T) {
+	t.Parallel()
 	values := heronv1.BillingCycle(0).Descriptor().Values()
 	var stored []store.BillingCycle
 	for i := 0; i < values.Len(); i++ {
@@ -56,6 +57,7 @@ func TestBillingCyclesMapEveryValue(t *testing.T) {
 }
 
 func TestFiveYearBillingRoundTripsAndRenews(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "five-year")
@@ -76,6 +78,7 @@ func TestFiveYearBillingRoundTripsAndRenews(t *testing.T) {
 
 // 每种不合格的取值都被拒绝，错误以请求路径写明字段、约束与收到的值，库里的计费不变。
 func TestUpdateNodeRejectsMalformedBilling(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -118,6 +121,7 @@ func TestUpdateNodeRejectsMalformedBilling(t *testing.T) {
 // 边界上的合法取值照常保存；币种可以单独填。days_left 由 hub 算出，请求里的值不读；空的 billing 与不带 billing
 // 都是五项全清，回显里 billing 缺失。
 func TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -153,6 +157,7 @@ func TestUpdateNodeAcceptsBoundaryBillingAndIgnoresDaysLeft(t *testing.T) {
 // days_left 取 hub 时区的今天：UTC 16:30 在东八区已是次日，比按 UTC 算少一天。管理端、公开端，以及公开快照的
 // now 与 days_left 都是同一个口径。
 func TestDaysLeftUsesTheHubZone(t *testing.T) {
+	t.Parallel()
 	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600), store.DefaultRetention)
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -175,6 +180,7 @@ func TestDaysLeftUsesTheHubZone(t *testing.T) {
 // 公开快照带价格、币种、周期、到期日与 days_left，不带自动续期；没有到期日的节点 days_left 缺失，什么都没填的
 // 节点 billing 缺失。
 func TestPublicSnapshotCarriesBillingWithoutAutoRenew(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -214,6 +220,7 @@ func TestPublicSnapshotCarriesBillingWithoutAutoRenew(t *testing.T) {
 
 // 库里读不懂的到期日只可能来自绕过 UpdateNode 的写库。它照原样下发，days_left 缺失而不是 0：0 会显示成"今天到期"。
 func TestUnreadableExpiresOnHasNoDaysLeft(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -247,6 +254,7 @@ func (c *steppingClock) Mono() time.Duration { return 0 }
 // 公开快照的 now 与 days_left 出自同一次读钟：第三方主题拿 now 核对 days_left，不会差一天。快照经真实的 Connect
 // 处理器取得，公开服务用每读一次就前进一天的钟构造。
 func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
+	t.Parallel()
 	h := newZonedHarness(t, "", time.FixedZone("UTC+8", 8*3600), store.DefaultRetention)
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -279,6 +287,7 @@ func TestPublicSnapshotReadsTheClockOnce(t *testing.T) {
 // 计费字段变了才扫描：只改名称时已过期的自动续期不推后；计费一变，响应里就是推后之后的日期。表单带着推后之前的
 // 旧到期日提交也算变了（与库里推后的日期比），扫描随即再推后一次。
 func TestUpdateNodeSweepsExpiryWhenBillingChanges(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -307,6 +316,7 @@ func TestUpdateNodeSweepsExpiryWhenBillingChanges(t *testing.T) {
 
 // 到期告警跟着 UpdateNode 同步转换：响应返回时事件已经落库，续费之后不等到零点。
 func TestUpdateNodeFiresAndRecoversExpiryAlerts(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -335,6 +345,7 @@ func expiryRuleProto() *heronv1.AlertRule {
 
 // 建节点可带计费：与 UpdateNode 同一个校验、同一种落库；响应节点带回显与 hub 算好的 days_left。
 func TestCreateNodeWithBilling(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	create := func(req *heronv1.CreateNodeRequest) *heronv1.Node {
@@ -362,6 +373,7 @@ func TestCreateNodeWithBilling(t *testing.T) {
 
 // 建节点的计费与 UpdateNode 同一处裁决：不合格的取值报同样的错误，节点不建。
 func TestCreateNodeRejectsMalformedBilling(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, c := range []struct {
@@ -387,6 +399,7 @@ func TestCreateNodeRejectsMalformedBilling(t *testing.T) {
 // 带着计费建节点立刻扫描一次到期：提醒窗口内的新节点不等到零点才触发；开着自动续期且已过期的新节点在响应里就是
 // 推后之后的日期，与 UpdateNode 改计费后的行为一致。
 func TestCreateNodeSweepsExpiry(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	saveRule(t, h, expiryRuleProto())
@@ -414,6 +427,7 @@ func TestCreateNodeSweepsExpiry(t *testing.T) {
 
 // 到期规则经协议保存并回显提前天数；提前天数越界或带着探测字段时，错误以请求路径写明字段与约束。
 func TestSaveAlertRuleExpiryKind(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	saved := saveRule(t, h, expiryRuleProto())
@@ -447,6 +461,7 @@ func TestSaveAlertRuleExpiryKind(t *testing.T) {
 // 离线规则带任一探测字段或提前天数、探测规则带提前天数，都被拒绝，什么也不保存。离线规则带探测字段原来会被存储层
 // 静默清零，调用方发了什么、存下的却是零值，无从察觉。
 func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	offline := func(change func(*heronv1.AlertRule)) *heronv1.AlertRule { r := offlineRule(); change(r); return r }
@@ -475,6 +490,7 @@ func TestSaveAlertRuleRejectsFieldsOfOtherKinds(t *testing.T) {
 }
 
 func TestConstructorsRequireLocation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	cfg := h.svc.cfg
 	cfg.Location = nil

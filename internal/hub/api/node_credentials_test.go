@@ -18,6 +18,7 @@ func (h *harness) claimNode(t *testing.T, key string) string {
 }
 
 func TestNodeCredentialPurposes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	created, err := h.admin.CreateNode(t.Context(), connect.NewRequest(&heronv1.CreateNodeRequest{Name: "precreated"}))

@@ -10,6 +10,7 @@ import (
 // 证书到期规则经协议保存并回显任务与提前天数；任务必须是 https:// 的 HTTP 任务，由 store 在事务内裁决，
 // 错误以请求路径写明字段与约束；探测专用与资源专用字段照常被种类字段表拒绝。
 func TestSaveAlertRuleCertExpiryKind(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	httpTask := func(target string) uint64 {
@@ -79,6 +80,7 @@ func TestSaveAlertRuleCertExpiryKind(t *testing.T) {
 // scheme 写成大写的 https 目标同样是 https 任务（hub 与 agent 都按解析出的 scheme 判断，probelimit.IsHTTPSTarget）：
 // 可以挂证书到期规则；被规则引用之后照常可以编辑，不会被当成"改成了非 https"拒绝。
 func TestCertExpiryRuleAcceptsUppercaseHTTPSScheme(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	task := probeTask("HTTPS://example.com/upper")

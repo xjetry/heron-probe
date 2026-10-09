@@ -13,6 +13,7 @@ import (
 )
 
 func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()

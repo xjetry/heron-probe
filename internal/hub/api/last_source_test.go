@@ -13,6 +13,7 @@ import (
 
 // ListNodes 回显来源地址，API token 可读；同一个节点公开之后，公开快照的原文里没有这个地址。
 func TestListNodesEchoesLastSourceButPublicSnapshotDoesNot(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "reader")

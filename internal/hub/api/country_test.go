@@ -16,6 +16,7 @@ import (
 
 // 库层的三种来源与协议枚举的全部取值一一对应。
 func TestCountrySourcesMapEveryValue(t *testing.T) {
+	t.Parallel()
 	values := heronv1.CountrySource(0).Descriptor().Values()
 	var got []heronv1.CountrySource
 	for _, s := range []store.CountrySource{store.CountryNone, store.CountryManual, store.CountryLookup} {
@@ -56,6 +57,7 @@ func listedNode(t *testing.T, h *harness) *heronv1.Node {
 // 面板看到显示值、来源、查得值与它所属的地址、手动值；pin 优先，查得值在手动指定时照常回显，清空 pin 回落到它。
 // 公开快照只带显示值：原文里没有地址，也没有来源、查得值与手动值字段。
 func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -95,6 +97,7 @@ func TestNodeCountryPinWinsAndClearingFallsBack(t *testing.T) {
 
 // 没有国家时来源为未指定（none），公开快照的 country 为空串（JSON 里省略）。
 func TestNodeWithoutCountry(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -109,6 +112,7 @@ func TestNodeWithoutCountry(t *testing.T) {
 
 // 手动值只接受两个大写字母或空串；被拒的更新什么都不写。
 func TestUpdateNodeValidatesCountryPin(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -130,6 +134,7 @@ func TestUpdateNodeValidatesCountryPin(t *testing.T) {
 // 国家查询的两项：从未保存过为开与默认服务地址；提交了就保存并回显；只改外观的请求不带它们时不改。保存的开关取与
 // 默认相反的关、地址取非默认值，"不改"才与"回落到默认"分得开。
 func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	if got := currentSettings(t, h); got.GeoEnabled == nil || !got.GetGeoEnabled() || got.GetGeoUrl() != "https://ipinfo.io/{ip}/country" {
@@ -155,6 +160,7 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 }
 
 func TestUpdateSettingsValidatesGeoURL(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, withSettings(func(s *heronv1.Settings) {

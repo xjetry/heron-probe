@@ -12,6 +12,7 @@ import (
 )
 
 func TestBackupRequiredAndStatusCode(t *testing.T) {
+	t.Parallel()
 	t.Run("required", func(t *testing.T) {
 		h := newHarness(t, "")
 		defer func() {
@@ -32,6 +33,7 @@ func TestBackupRequiredAndStatusCode(t *testing.T) {
 }
 
 func TestBackupStatusReadAccessAndState(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 	if _, err := client.GetBackupStatus(t.Context(), connect.NewRequest(&heronv1.GetBackupStatusRequest{})); connect.CodeOf(err) != connect.CodeUnauthenticated {

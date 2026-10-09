@@ -13,6 +13,7 @@ import (
 )
 
 func TestDynamicSelectorAPIRefreshesAgentAndAlertScopes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, token := h.createNode(t, "a")
@@ -76,6 +77,7 @@ func TestDynamicSelectorAPIRefreshesAgentAndAlertScopes(t *testing.T) {
 }
 
 func TestResourceRuleAPIFromAgentSampleToRecovery(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, token := h.createNode(t, "n")

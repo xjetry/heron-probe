@@ -36,6 +36,7 @@ func offlineRotate(t *testing.T, h *harness, id int64) string {
 }
 
 func TestChangeErrorMapsCredentialChangedToAborted(t *testing.T) {
+	t.Parallel()
 	if code := connect.CodeOf(changeError(store.ErrCredentialChanged)); code != connect.CodeAborted {
 		t.Fatalf("changeError(ErrCredentialChanged) = %v, want Aborted", code)
 	}
@@ -44,6 +45,7 @@ func TestChangeErrorMapsCredentialChangedToAborted(t *testing.T) {
 // 凭据已被另一个进程换过、hub 的映射尚未重载：直连 RotateNodeToken 与 ExecuteChange 的轮换都回答 Aborted（资源已变，
 // 请重试），库里留着另一个进程换发的凭据；映射重载之后同一请求成功。
 func TestRotateNodeTokenAbortsWhenAnotherProcessRotated(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -84,6 +86,7 @@ func TestRotateNodeTokenAbortsWhenAnotherProcessRotated(t *testing.T) {
 
 // 安装凭据被另一个进程换过：拿旧凭据注册与查无此凭据一样被拒（对外不区分），库里仍是新凭据；映射重载之后新凭据可用。
 func TestRegisterWithCredentialRotatedByAnotherProcessIsDenied(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()

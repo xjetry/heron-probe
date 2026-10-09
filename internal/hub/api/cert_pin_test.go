@@ -32,6 +32,7 @@ func savedConfig(t *testing.T, task *heronv1.ProbeTaskDetail) []byte {
 }
 
 func TestCertPinSaveKeepsPinUnlessTheActionSaysOtherwise(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -70,6 +71,7 @@ func TestCertPinSaveKeepsPinUnlessTheActionSaysOtherwise(t *testing.T) {
 }
 
 func TestCertPinRejectsEmptySetUnsetOneofAndStalePrecondition(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -112,6 +114,7 @@ func TestCertPinRejectsEmptySetUnsetOneofAndStalePrecondition(t *testing.T) {
 }
 
 func TestExecuteChangeCarriesPinActionOutsideTheMask(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -185,6 +188,7 @@ func TestExecuteChangeCarriesPinActionOutsideTheMask(t *testing.T) {
 }
 
 func TestListProbeCertificatesHidesOutOfScopeTasks(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -213,6 +217,7 @@ func TestListProbeCertificatesHidesOutOfScopeTasks(t *testing.T) {
 }
 
 func TestSaveProbeTaskFieldClassificationIsExhaustive(t *testing.T) {
+	t.Parallel()
 	var check func(prefix string, md protoreflect.MessageDescriptor)
 	check = func(prefix string, md protoreflect.MessageDescriptor) {
 		t.Helper()

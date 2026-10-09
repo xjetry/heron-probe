@@ -14,6 +14,7 @@ import (
 )
 
 func TestHeartbeatFieldNumberAndPresence(t *testing.T) {
+	t.Parallel()
 	field := (&heronv1.Settings{}).ProtoReflect().Descriptor().Fields().ByName("heartbeat")
 	if field == nil || field.Number() != 13 || !field.HasPresence() || field.Message() == nil {
 		t.Fatalf("settings.heartbeat must be a message with presence at field 13: %v", field)
@@ -23,6 +24,7 @@ func TestHeartbeatFieldNumberAndPresence(t *testing.T) {
 // 从未配置过就不带这一组；配置过后（哪怕随后清空 url）一直带着它，has_url=false 表示停用。
 // url 是只写设置：任何响应里都不回显原文，只给 has_url 与 url_host。
 func TestHeartbeatSettingsPresenceAndEcho(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -59,6 +61,7 @@ func TestHeartbeatSettingsPresenceAndEcho(t *testing.T) {
 // interval_s 的范围由 store 写事务裁决，api 把它映射成点名字段与范围的 InvalidArgument；0 不是"取默认"。
 // method 的 UNSPECIFIED 与 url 的形态由 api 直接拒绝；被拒的更新一项都不写。
 func TestHeartbeatSettingsValidates(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -103,6 +106,7 @@ func readHeartbeatStatus(t *testing.T, client heronv1connect.AdminServiceClient,
 }
 
 func TestGetHeartbeatStatusAccessAndState(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	client := heronv1connect.NewAdminServiceClient(h.srv.Client(), h.srv.URL)
 	if _, err := client.GetHeartbeatStatus(t.Context(), connect.NewRequest(&heronv1.GetHeartbeatStatusRequest{})); connect.CodeOf(err) != connect.CodeUnauthenticated {

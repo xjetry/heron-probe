@@ -8,6 +8,7 @@ import (
 // logo 的预算从 checkLogo 的接受集推出，成立的前提是 checkLogo 只经 logoPrefix 与 isBase64Char 接受值。
 // 前缀集或字母表放宽时上界自动变大；这里另把"当前上界等于上限加引号"钉住，让放宽在用例里可见。
 func TestLogoBudgetEncodingContract(t *testing.T) {
+	t.Parallel()
 	t.Run("derived_budget", func(t *testing.T) {
 		got, sample := logoBoundary(maxLogoBytes)
 		if want := maxLogoBytes + 2; got != want {

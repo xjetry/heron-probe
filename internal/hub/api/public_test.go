@@ -77,6 +77,7 @@ func pubPost(t *testing.T, h *harness, method, body string, header map[string]st
 // 未公开与不存在的节点得到同一个响应：状态码、正文与响应头（除 Date）都相同，错误里没有 id。
 // 错误 metadata 走响应头，只比正文看不到按分支加的头。
 func TestPublicHistoryTreatsPrivateAndMissingNodesAlike(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	pub, _ := h.createNode(t, "pub")
@@ -108,6 +109,7 @@ func TestPublicHistoryTreatsPrivateAndMissingNodesAlike(t *testing.T) {
 // 匿名请求的解码上限是 publicMaxBody：GET 的 message 与 POST 正文都按它计，恰好满额照常处理，多一个字节即
 // resource_exhausted。填充用 JSON 空白，请求本身合法，拒绝只能来自大小。
 func TestPublicDecodeBudget(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	padded := func(n int) string { return "{" + strings.Repeat(" ", n-2) + "}" }
 	for _, c := range []struct {
@@ -126,6 +128,7 @@ func TestPublicDecodeBudget(t *testing.T) {
 }
 
 func TestPublicHistorySharesWindowValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	pub, _ := h.createNode(t, "pub")
@@ -160,6 +163,7 @@ func TestPublicHistorySharesWindowValidation(t *testing.T) {
 }
 
 func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()
@@ -229,6 +233,7 @@ func TestPublicSnapshotListsOnlyPublicNodesWithPublicFields(t *testing.T) {
 }
 
 func TestPublicSiteServesSavedSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	client := h.publicClient()
@@ -273,6 +278,7 @@ var publicFields = map[protoreflect.FullName][]protoreflect.Name{
 }
 
 func TestPublicResponsesExposeOnlyAllowlistedFields(t *testing.T) {
+	t.Parallel()
 	svc := heronv1.File_heron_v1_public_proto.Services().ByName("PublicService")
 	seen := map[protoreflect.FullName]bool{}
 	var walk func(md protoreflect.MessageDescriptor)
@@ -315,6 +321,7 @@ func TestPublicResponsesExposeOnlyAllowlistedFields(t *testing.T) {
 // 公开节点的历史与管理端同一来源：对同一个请求两端的应答逐字段相同，公开端只多了"节点必须公开"这一道门。
 // 任务仍分配给该节点时探测序列的标签两端也相同；撤下之后的分歧由 TestPublicProbeLabelsOnlyTasksAssignedToTheNode 钉住。
 func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "pub")
@@ -366,6 +373,7 @@ func TestPublicHistoryMatchesAdminForAPublicNode(t *testing.T) {
 // 公开端只标注当前分配给被查节点的任务：任务从公开节点撤下、目标改成只分配给私有节点的内网地址之后，
 // 公开节点历史里的这条序列不带种类与目标；管理端照旧按任务当前的配置标注。
 func TestPublicProbeLabelsOnlyTasksAssignedToTheNode(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	pub, _ := h.createNode(t, "pub")
@@ -420,6 +428,7 @@ func TestPublicProbeLabelsOnlyTasksAssignedToTheNode(t *testing.T) {
 }
 
 func TestPublicRateLimitPerSourceAddress(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "127.0.0.0/8")
 	site := jsonQuery("{}")
 	from := func(ip string) map[string]string { return map[string]string{"X-Forwarded-For": ip} }
@@ -457,6 +466,7 @@ func TestPublicRateLimitPerSourceAddress(t *testing.T) {
 
 // 对端不是可信代理时 X-Forwarded-For 不被采信：改这个头换不了桶。
 func TestPublicRateLimitIgnoresForwardedForFromUntrustedPeers(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	for i := range 60 {
 		pubGet(t, h, "GetSite", jsonQuery("{}"), map[string]string{"X-Forwarded-For": fmt.Sprintf("198.51.100.%d", i+1)})
@@ -467,6 +477,7 @@ func TestPublicRateLimitIgnoresForwardedForFromUntrustedPeers(t *testing.T) {
 }
 
 func TestPublicCacheControlPerMethod(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	pub, _ := h.createNode(t, "pub")
@@ -502,6 +513,7 @@ func TestPublicCacheControlPerMethod(t *testing.T) {
 
 // next 什么都不写就返回时，net/http 会隐式补 200；缓存头仍须按表写出，而不是缺席。
 func TestCacheControlCoversImplicitOK(t *testing.T) {
+	t.Parallel()
 	p := &Public{maxAge: map[string]uint32{"/heron.v1.PublicService/GetSite": 60}}
 	rec := httptest.NewRecorder()
 	p.cacheControl(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/heron.v1.PublicService/GetSite", nil))
@@ -511,6 +523,7 @@ func TestCacheControlCoversImplicitOK(t *testing.T) {
 }
 
 func TestCachePolicyRequiresGETAndMaxAgeTogether(t *testing.T) {
+	t.Parallel()
 	opts := func(get bool, maxAge uint32, set bool) *descriptorpb.MethodOptions {
 		o := &descriptorpb.MethodOptions{}
 		if get {

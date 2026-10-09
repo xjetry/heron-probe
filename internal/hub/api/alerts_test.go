@@ -43,6 +43,7 @@ func webhook(url string) *heronv1.NotifyChannel {
 }
 
 func TestAlertRuleCRUD(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	n1, _ := h.createNode(t, "a")
@@ -103,6 +104,7 @@ func TestAlertRuleCRUD(t *testing.T) {
 }
 
 func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	c := webhook("http://127.0.0.1")
@@ -114,6 +116,7 @@ func TestNotifyChannelRejectsUnknownKind(t *testing.T) {
 }
 
 func TestSaveAlertRuleValidationTexts(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
@@ -154,6 +157,7 @@ func TestSaveAlertRuleValidationTexts(t *testing.T) {
 }
 
 func TestProbeAlertRuleRoundTrip(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
@@ -173,6 +177,7 @@ func TestProbeAlertRuleRoundTrip(t *testing.T) {
 
 // 四个新资源指标经真实 Connect 处理器保存与回显；越界阈值按指标的范围拒绝，错误文案点名字段与上限。
 func TestSaveAlertRuleResourceMetrics(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tc := range []struct {
@@ -213,6 +218,7 @@ func TestSaveAlertRuleResourceMetrics(t *testing.T) {
 }
 
 func TestAlertErrorsNameRequestFields(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tc := range []struct {
@@ -266,6 +272,7 @@ func TestAlertErrorsNameRequestFields(t *testing.T) {
 }
 
 func TestWebhookConfigRoundTrip(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	want := webhook("https://example.test/notify")
@@ -294,6 +301,7 @@ func TestWebhookConfigRoundTrip(t *testing.T) {
 }
 
 func TestNotifyChannelCRUDHidesToken(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	paths := make(chan string, 1)
@@ -341,6 +349,7 @@ func TestNotifyChannelCRUDHidesToken(t *testing.T) {
 // 节奏上限省略时按种类取默认值（Telegram 20、Webhook 0），给出时原样保存（含 0 = 不限），响应与列表里恒有值。
 // 省略是"取默认"而不是"保留旧值"：保存是整体替换，只有只写不读的凭据才按省略保留。
 func TestNotifyChannelRatePerMinute(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	tg := &heronv1.NotifyChannel{Name: "tg", Kind: heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM, Telegram: &heronv1.TelegramConfig{BotToken: "secret", ChatId: "chat"}}
@@ -372,6 +381,7 @@ func TestNotifyChannelRatePerMinute(t *testing.T) {
 }
 
 func TestDeleteNotifyChannelInUse(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	c := saveChannel(t, h, webhook("http://127.0.0.1"))
@@ -393,6 +403,7 @@ func TestDeleteNotifyChannelInUse(t *testing.T) {
 }
 
 func TestDeleteProbeTaskInUse(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	task, _, err := h.reg.Save(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: false, NodeIDs: nil})
@@ -415,6 +426,7 @@ func TestDeleteProbeTaskInUse(t *testing.T) {
 }
 
 func TestTestNotifyChannel(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, status := range []int{200, 500} {
@@ -438,6 +450,7 @@ func TestTestNotifyChannel(t *testing.T) {
 }
 
 func TestListAlertEventsPaging(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	n, _ := h.createNode(t, "n")
@@ -501,6 +514,7 @@ func TestListAlertEventsPaging(t *testing.T) {
 }
 
 func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -528,6 +542,7 @@ func TestUpdateNodeOfflineGraceFloor(t *testing.T) {
 }
 
 func TestDeleteNodeClearsAlertScopeAndStates(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -563,6 +578,7 @@ func TestDeleteNodeClearsAlertScopeAndStates(t *testing.T) {
 // 枚举的全集核对：UNSPECIFIED 之外的每个值都有映射且往返一致，表里没有多出的项；反过来，映射出的每个存储种类都要被
 // alert.CheckRule 接受，免得表配上了、校验却不认这个种类。
 func TestAlertKindsMapEveryValue(t *testing.T) {
+	t.Parallel()
 	values := heronv1.AlertKind(0).Descriptor().Values()
 	for i := 0; i < values.Len(); i++ {
 		v := heronv1.AlertKind(values.Get(i).Number())

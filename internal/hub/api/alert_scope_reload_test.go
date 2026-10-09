@@ -15,6 +15,7 @@ import (
 )
 
 func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "scoped")

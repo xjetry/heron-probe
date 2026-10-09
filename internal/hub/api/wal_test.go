@@ -12,6 +12,7 @@ import (
 )
 
 func TestWALObservationWireStates(t *testing.T) {
+	t.Parallel()
 	zero, size := int64(0), int64(12345)
 	for _, tc := range []struct {
 		name string
@@ -61,6 +62,7 @@ func TestWALObservationWireStates(t *testing.T) {
 }
 
 func TestGetStorageStatsIncludesWALObservation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	h.createNode(t, "wal")

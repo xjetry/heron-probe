@@ -11,6 +11,7 @@ import (
 )
 
 func TestCoverageBothAPIsFromReception(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, token := h.createNode(t, "coverage")

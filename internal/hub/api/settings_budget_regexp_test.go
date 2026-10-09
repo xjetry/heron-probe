@@ -3,6 +3,7 @@ package api
 import "testing"
 
 func TestRegexpBudgetSample(t *testing.T) {
+	t.Parallel()
 	t.Run("accent", func(t *testing.T) {
 		sample := regexpBudgetSample(accentRE.String())
 		if !accentRE.MatchString(sample) {

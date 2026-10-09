@@ -59,6 +59,7 @@ func settingsBody(t *testing.T, generators map[string]func() any) []byte {
 }
 
 func TestSettingsBudgetTableCoversEveryField(t *testing.T) {
+	t.Parallel()
 	paths := make(map[string]bool)
 	walkSettings(func(field settingsBudgetField) {
 		if field.fd.Message() == nil {
@@ -84,6 +85,7 @@ func TestSettingsBudgetTableCoversEveryField(t *testing.T) {
 }
 
 func TestSettingsBudgetEntriesAreExact(t *testing.T) {
+	t.Parallel()
 	walkSettings(func(field settingsBudgetField) {
 		if field.fd.Message() != nil {
 			return
@@ -122,6 +124,7 @@ func TestSettingsBudgetEntriesAreExact(t *testing.T) {
 }
 
 func TestSettingsBudgetIsTheWorstBody(t *testing.T) {
+	t.Parallel()
 	body := settingsBody(t, settingsValueGenerators(boundaryChannelIDs()))
 	if len(body) != maxSettingsBody {
 		t.Fatalf("boundary body=%d budget=%d difference=%d", len(body), maxSettingsBody, len(body)-maxSettingsBody)
@@ -130,6 +133,7 @@ func TestSettingsBudgetIsTheWorstBody(t *testing.T) {
 }
 
 func TestSettingsStringEscapingBound(t *testing.T) {
+	t.Parallel()
 	for r := rune(0); r <= utf8.MaxRune; r++ {
 		if !utf8.ValidRune(r) {
 			continue

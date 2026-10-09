@@ -23,6 +23,7 @@ import (
 // 直接读取线上字节，不经 Connect 客户端解压；gRPC 的压缩位在消息帧里，只有检查 HTTP 头会漏掉它。
 // 管理端只有 GetSnapshot 压缩（理由与它的字符串字段清单见 Service.Handler），其余过程一律不压缩。
 func TestAdminResponseCompressionPolicy(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	h.createNode(t, strings.Repeat("node-", 10))
@@ -239,6 +240,7 @@ func TestAdminResponseCompressionPolicy(t *testing.T) {
 // 这里枚举响应可达的全部字符串与字节字段：清单之外多出任何一个，都要先回答「它是谁写的、agent 能不能放任意文本进来」，
 // 再决定加进清单还是从快照里拿掉。
 func TestSnapshotStringFieldsAreAudited(t *testing.T) {
+	t.Parallel()
 	audited := map[string]string{
 		"hub_version":                     "hub 构建时注入",
 		"bound_agent_version":             "hub 构建时注入",

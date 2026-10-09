@@ -17,6 +17,7 @@ import (
 )
 
 func TestAlertEnumGotUsesProtocolVocabulary(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	resp, err := h.http.Post(h.srv.URL+"/heron.v1.AdminService/SaveAlertRule", "application/json", strings.NewReader(`{"rule":{"name":"offline","kind":"offline","allNodes":true}}`))
@@ -34,6 +35,7 @@ func TestAlertEnumGotUsesProtocolVocabulary(t *testing.T) {
 }
 
 func TestWebhookHeaderNamesAreUnambiguous(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tc := range []struct {
@@ -62,6 +64,7 @@ func TestWebhookHeaderNamesAreUnambiguous(t *testing.T) {
 }
 
 func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -72,6 +75,7 @@ func TestUpdateNodeRequiresExplicitGrace(t *testing.T) {
 }
 
 func TestNewRejectsNonpositiveTTL(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	for _, ttl := range []time.Duration{0, -time.Second} {
 		t.Run(ttl.String(), func(t *testing.T) {
@@ -88,6 +92,7 @@ func TestNewRejectsNonpositiveTTL(t *testing.T) {
 }
 
 func TestTaskIDsMustFitStorage(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tc := range []struct {
@@ -122,6 +127,7 @@ func TestTaskIDsMustFitStorage(t *testing.T) {
 }
 
 func TestAlertFieldErrorsUseProtocolVocabulary(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tc := range []struct {
@@ -183,6 +189,7 @@ func TestAlertFieldErrorsUseProtocolVocabulary(t *testing.T) {
 }
 
 func TestTestNotifyChannelClassifiesFailures(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, status := range []int{400, 503} {
@@ -203,6 +210,7 @@ func TestTestNotifyChannelClassifiesFailures(t *testing.T) {
 }
 
 func TestWebhookCredentialsAreWriteOnlyAndMerged(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	type request struct{ path, auth, keep, replaced string }

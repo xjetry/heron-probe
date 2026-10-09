@@ -43,6 +43,7 @@ func comparisonHarness(t *testing.T) (h *harness, task uint64, pub, pub2, priv, 
 // 四种调用方（会话、全站 token、范围内 token、范围外 token）经真实 Connect 入口读到同一份候选，
 // 标注按任务是否整体落入凭据范围决定；没有可见候选节点时与任务不存在同一回答。
 func TestListProbeComparisonNodesThroughAdminAPI(t *testing.T) {
+	t.Parallel()
 	h, task, pub, pub2, priv, other, _ := comparisonHarness(t)
 	ctx := t.Context()
 	resp, err := h.admin.ListProbeComparisonNodes(ctx, connect.NewRequest(&heronv1.ListProbeComparisonNodesRequest{TaskId: task}))
@@ -95,6 +96,7 @@ func TestListProbeComparisonNodesThroughAdminAPI(t *testing.T) {
 }
 
 func TestQueryProbeComparisonThroughAdminAPI(t *testing.T) {
+	t.Parallel()
 	h, task, pub, pub2, priv, other, base := comparisonHarness(t)
 	ctx := t.Context()
 	resp, err := h.admin.QueryProbeComparison(ctx, connect.NewRequest(&heronv1.QueryProbeComparisonRequest{
@@ -201,6 +203,7 @@ func equalInt64(a, b []int64) bool {
 
 // 公开端：候选按公开节点过滤、非空即标注；私有节点的对比对公开调用方不存在。
 func TestPublicProbeComparison(t *testing.T) {
+	t.Parallel()
 	h, task, pub, pub2, priv, _, base := comparisonHarness(t)
 	ctx := t.Context()
 	resp, err := h.publicClient().ListProbeComparisonNodes(ctx, connect.NewRequest(&heronv1.ListProbeComparisonNodesRequest{TaskId: task}))
@@ -253,6 +256,7 @@ func TestPublicProbeComparison(t *testing.T) {
 // 读量超额从两端真实入口返回 FailedPrecondition，错误文本带额度事实与建议；映射共用
 // history.queryError，这里经指标族（权重 1，额度 12000）用真实数据触发同一条路径。
 func TestReadQuotaThroughRealEntries(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
@@ -293,6 +297,7 @@ func TestReadQuotaThroughRealEntries(t *testing.T) {
 // 范围内只读 token 能读对比两个入口（scopedReadAllowed）；它们不携带 CONFIGURE，
 // 只有在 token 读方法表里才能通过。公开端不适用（无鉴权）。
 func TestScopedReadOnlyTokenReadsComparison(t *testing.T) {
+	t.Parallel()
 	h, task, pub, pub2, priv, _, base := comparisonHarness(t)
 	ctx := t.Context()
 	ro, _, _ := grantedClient(t, h, &heronv1.TokenGrant{NodeIds: []int64{pub, pub2, priv}})

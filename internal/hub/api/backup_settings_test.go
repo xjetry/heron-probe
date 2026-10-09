@@ -29,6 +29,7 @@ func echoOf(in *heronv1.BackupSettings, hasSecret bool, channels ...int64) *hero
 func backupChannels(s *heronv1.Settings) []int64 { return s.GetBackup().GetNotify().GetChannelIds() }
 
 func TestBackupSettingsDefaultsWriteOnlyAndOmission(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	defaults := currentSettings(t, h).GetBackup()
@@ -63,6 +64,7 @@ func TestBackupSettingsDefaultsWriteOnlyAndOmission(t *testing.T) {
 
 // has_secret 由存储值是否非空推出：两个方向都要钉住，恒为 true 与恒为 false 都会让读侧说错"是否已配置"。
 func TestBackupHasSecretFollowsStoredSecret(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	if currentSettings(t, h).GetBackup().GetHasSecret() {
@@ -92,6 +94,7 @@ func TestBackupHasSecretFollowsStoredSecret(t *testing.T) {
 
 // notify 缺席不变、显式空集合关闭、给出即替换；三个方向缺一个，只改周期的脚本就会顺手清空备份失败告警的渠道。
 func TestBackupNotifyPresence(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a := saveChannel(t, h, webhook("https://hooks.example/a")).Id
@@ -151,6 +154,7 @@ func postBackupJSON(t *testing.T, h *harness, backup string) {
 }
 
 func TestBackupSettingsRanges(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		field    string
 		min, max uint32
@@ -189,6 +193,7 @@ func TestBackupSettingsRanges(t *testing.T) {
 }
 
 func TestBackupTargetValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	in := validSettings()
@@ -237,6 +242,7 @@ func TestBackupTargetValidation(t *testing.T) {
 
 // 渠道必须存在，错误点名不存在的 ID，整次更新不写入。
 func TestBackupNotifyChannelMustExist(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a := saveChannel(t, h, webhook("https://hooks.example/a")).Id
@@ -254,6 +260,7 @@ func TestBackupNotifyChannelMustExist(t *testing.T) {
 // 没有超出预算。SaveSettings 先存备份再存登录通知，点名的是备份列表里排序后第一个不存在的 ID，即请求里最后、最小的
 // 那个，所以它也说明整个列表都被解码了。
 func TestUpdateSettingsBudgetFitsFullBackupWithWorstCaseEscaping(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ids := boundaryChannelIDs()

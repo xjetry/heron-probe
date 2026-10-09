@@ -27,6 +27,7 @@ func adminService() protoreflect.ServiceDescriptor {
 }
 
 func TestAdminAccessTableMatchesDeclaredPolicy(t *testing.T) {
+	t.Parallel()
 	svc := adminService()
 	table := accessTable(svc)
 	if len(table) != svc.Methods().Len() {
@@ -93,6 +94,7 @@ func expectPanic(t *testing.T, want string, fn func()) {
 }
 
 func TestAccessTableRefusesUndeclaredOrUnknownAccess(t *testing.T) {
+	t.Parallel()
 	expectPanic(t, "synthetic.S.Bare", func() { accessTable(syntheticService(t, nil)) })
 	unknown := &descriptorpb.MethodOptions{}
 	proto.SetExtension(unknown, heronv1.E_Access, heronv1.Access(99))

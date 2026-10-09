@@ -58,6 +58,7 @@ func previewChange(t *testing.T, client heronv1connect.AdminServiceClient, m *he
 }
 
 func TestAgenticPreviewCommitReplayAndConflict(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "A")
@@ -127,6 +128,7 @@ func TestAgenticPreviewCommitReplayAndConflict(t *testing.T) {
 }
 
 func TestAgenticCreateRotateDeleteAndIsolatedWindows(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	grant := &heronv1.TokenGrant{Permissions: []heronv1.TokenPermission{heronv1.TokenPermission_TOKEN_PERMISSION_CREATE, heronv1.TokenPermission_TOKEN_PERMISSION_REGISTER, heronv1.TokenPermission_TOKEN_PERMISSION_ROTATE, heronv1.TokenPermission_TOKEN_PERMISSION_DELETE}}
@@ -216,6 +218,7 @@ func TestAgenticCreateRotateDeleteAndIsolatedWindows(t *testing.T) {
 }
 
 func TestAgenticCannotEscalateOrTouchHub(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	client, _, token := grantedClient(t, h, &heronv1.TokenGrant{AllNodes: true, Permissions: []heronv1.TokenPermission{heronv1.TokenPermission_TOKEN_PERMISSION_CONFIGURE, heronv1.TokenPermission_TOKEN_PERMISSION_UPDATE}})
@@ -235,6 +238,7 @@ func TestAgenticCannotEscalateOrTouchHub(t *testing.T) {
 }
 
 func TestAgenticSharedRulesAndReadSurfaces(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -367,6 +371,7 @@ func TestAgenticSharedRulesAndReadSurfaces(t *testing.T) {
 }
 
 func TestAgenticPreviewKeepsCredentialsAndConcurrentRetry(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, token := h.createNode(t, "stable")
@@ -421,6 +426,7 @@ func TestAgenticPreviewKeepsCredentialsAndConcurrentRetry(t *testing.T) {
 }
 
 func TestAgenticRulePatchUsesDatabaseAndPreservesSelectors(t *testing.T) {
+	t.Parallel()
 	for _, dynamic := range []bool{false, true} {
 		t.Run(fmt.Sprint(dynamic), func(t *testing.T) {
 			h := newHarness(t, "")
@@ -486,6 +492,7 @@ func TestAgenticRulePatchUsesDatabaseAndPreservesSelectors(t *testing.T) {
 }
 
 func TestAgenticHistoryHidesReassignedTaskMetadata(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -524,6 +531,7 @@ func TestAgenticHistoryHidesReassignedTaskMetadata(t *testing.T) {
 }
 
 func TestAgenticScopedWritesPreserveGlobalExpiryState(t *testing.T) {
+	t.Parallel()
 	for _, save := range []bool{false, true} {
 		t.Run(fmt.Sprint(save), func(t *testing.T) {
 			h := newHarness(t, "")
@@ -565,6 +573,7 @@ func TestAgenticScopedWritesPreserveGlobalExpiryState(t *testing.T) {
 }
 
 func TestAgenticReferenceErrorsHideForeignRules(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "a")
@@ -625,6 +634,7 @@ func rawJSONChange(t *testing.T, h *harness, token string) func(map[string]any) 
 }
 
 func TestAgenticRawJSONFieldMaskAndAny(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "original")
@@ -651,6 +661,7 @@ func TestAgenticRawJSONFieldMaskAndAny(t *testing.T) {
 }
 
 func TestAgenticRawJSONOneTimeSecrets(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "rotatable")
@@ -694,6 +705,7 @@ func TestAgenticRawJSONOneTimeSecrets(t *testing.T) {
 }
 
 func TestAgenticFieldMaskClearsAndRejects(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "original")
@@ -746,6 +758,7 @@ func TestAgenticFieldMaskClearsAndRejects(t *testing.T) {
 }
 
 func TestAgenticAlertScopeIncludesReferencedProbe(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -791,6 +804,7 @@ func TestAgenticAlertScopeIncludesReferencedProbe(t *testing.T) {
 }
 
 func TestAgenticNodeUpdatePreviewCommitReplay(t *testing.T) {
+	t.Parallel()
 	for _, cancel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel=%t", cancel), func(t *testing.T) {
 			h := newHarness(t, "")
@@ -838,8 +852,10 @@ func TestAgenticNodeUpdatePreviewCommitReplay(t *testing.T) {
 }
 
 func TestAgenticReceiptFailureRollsBackBeforePublication(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"node", "rotate", "probe", "alert", "update"} {
 		t.Run(action, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t, "")
 			h.login(t)
 			node, token := h.createNode(t, "unchanged")
@@ -930,6 +946,7 @@ func TestAgenticReceiptFailureRollsBackBeforePublication(t *testing.T) {
 // 只改它自己时预期版本不变、审计前后相同。本用例按 UpdateNodeRequest 的描述符枚举每个字段，新增字段没有在这里
 // 给出取值就直接失败，迫使两张登记表与这里一起更新。
 func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
+	t.Parallel()
 	type pair struct {
 		first, second func(*heronv1.UpdateNodeRequest)
 	}
@@ -983,6 +1000,7 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t, "")
 			h.login(t)
 			id, _ := h.createNode(t, "seed")
@@ -1102,6 +1120,7 @@ var changeExpectations = map[string]struct {
 // 操作必须在 store 的登记表里（动作名与分支名相同、有种类），预览执行的回执以种类名为快照主键、资源身份正确，
 // 且不写回执。
 func TestExecuteChangeCoversEveryOneofField(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	var f changeFixture
@@ -1247,6 +1266,7 @@ func traceNode(t *testing.T, h *harness, id int64) nodeTrace {
 // 轮换 token 的 handler 若在主写之前接错线、先做一次同一节点上改节点目标的写，整次变更必须失败且不留任何痕迹：
 // 名字、凭据哈希、回执与内存里的凭据映射都不变。预览与正式各一遍。
 func TestChangeSiblingFirstWriteLeavesNoTrace(t *testing.T) {
+	t.Parallel()
 	for _, preview := range []bool{false, true} {
 		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
 			h := newHarness(t, "")
@@ -1274,6 +1294,7 @@ func TestChangeSiblingFirstWriteLeavesNoTrace(t *testing.T) {
 }
 
 func TestRunChangeTerminalStates(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "original")

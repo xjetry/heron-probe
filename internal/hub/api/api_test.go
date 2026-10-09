@@ -83,6 +83,15 @@ func (s *stubHeartbeat) set(st heartbeat.Status) {
 	s.mu.Unlock()
 }
 
+// 本包的用例默认并行（t.Parallel）。一个用例能并行的前提，缺一条就不加并写明原因：
+//   - 不与别的用例共享假时钟、Store 或 harness：各自经 newHarness 等夹具在自己的 t.TempDir 里装配；
+//   - 不用 t.Setenv，不改进程级设置（GOMAXPROCS、slog 默认 logger、http.DefaultTransport）；
+//   - 不读写包级可变状态；
+//   - 断言里的耗时阈值（上界或比值）远大于负载能造成的停顿：负载下一次调度停顿可达几十毫秒，阈值在这个量级的
+//     不并行；阈值在百毫秒以上且比被量操作的正常耗时大两个数量级的，或只用来区分"等满了某个超时"与"没等"的
+//     （如 drainTimeout，缺陷路径至少要等满它），可以并行。
+//
+// 不并行的用例在 go test 里先于全部并行用例串行跑完，两类不会重叠。
 func newHarness(t *testing.T, trusted string, opts ...harnessOption) *harness {
 	t.Helper()
 	return newZonedHarness(t, trusted, time.UTC, store.DefaultRetention, opts...)
@@ -267,6 +276,7 @@ func rowCounts(t *testing.T, path string) map[string]int64 {
 }
 
 func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	services := heronv1.File_heron_v1_admin_proto.Services()
 	count := 0
@@ -303,6 +313,7 @@ func TestEveryAdminProcedureRejectsAnonymousCalls(t *testing.T) {
 }
 
 func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	ctx := context.Background()
 	_, err := h.admin.Login(ctx, connect.NewRequest(&heronv1.LoginRequest{Password: password}))
@@ -336,6 +347,7 @@ func TestLoginRequiresAdminAndRightPassword(t *testing.T) {
 // 另一来源的错误密码登录停在它的失败日志上（已记账、未放门）时，管理员经 HTTP 登录得到
 // ResourceExhausted 与稍后重试的正文，不是密码错误。暂停点若不在门内，这次登录会成功而让用例变红。
 func TestLoginBusyReturnsResourceExhausted(t *testing.T) {
+	t.Parallel()
 	pause, entered, release := testwait.PauseAtLog(slog.Default().Handler(), "login failed")
 	h := newHarness(t, "", withAuthLog(slog.New(pause)))
 	ctx := context.Background()
@@ -388,6 +400,7 @@ func loginRaw(t *testing.T, h *harness, xfProto string) *http.Response {
 // 登录失败按可信代理追加在另起一行里的真实地址计：客户端每次换一个伪造的第一行，锁定照样落在它自己的来源上，
 // 换了伪造值带正确密码也进不去。
 func TestLoginLockoutKeysOnEveryForwardedForLine(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "127.0.0.1/32")
 	h.auth.SetPassword(t.Context(), password)
 	login := func(pw string, forged int) (int, string) {
@@ -420,6 +433,7 @@ func TestLoginLockoutKeysOnEveryForwardedForLine(t *testing.T) {
 }
 
 func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) {
+	t.Parallel()
 	plain := newHarness(t, "")
 	plain.auth.SetPassword(context.Background(), password)
 	cookies := loginRaw(t, plain, "https").Cookies() // 对端不可信：转发头不采信
@@ -447,6 +461,7 @@ func TestSessionCookieIsHostOnlyStrictAndSecureOnlyBehindTLSProxy(t *testing.T) 
 // 两项协议约束各自独立：非 JSON/proto 的 Content-Type 被 connect-go 以 415 拒绝；
 // 未标为无副作用的方法不接受 GET（405）；两者都不会进入方法体。带有效 cookie 才有意义。
 func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	var calls atomic.Int64
@@ -505,6 +520,7 @@ func TestCrossSiteRequestShapesAreRejectedWithoutSideEffects(t *testing.T) {
 }
 
 func TestPasswordChangeAndExpiryEndSessions(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -524,6 +540,7 @@ func TestPasswordChangeAndExpiryEndSessions(t *testing.T) {
 }
 
 func TestCreatedTokenReportsAndDeleteForgetsEverything(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -552,6 +569,7 @@ func TestCreatedTokenReportsAndDeleteForgetsEverything(t *testing.T) {
 }
 
 func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -572,6 +590,7 @@ func TestRotateTokenInvalidatesTheOldOne(t *testing.T) {
 }
 
 func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -602,6 +621,7 @@ func TestRegisterAdoptsPrecreatedNodeToken(t *testing.T) {
 }
 
 func TestUpdateAndReorderNodes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -630,6 +650,7 @@ func TestUpdateAndReorderNodes(t *testing.T) {
 }
 
 func TestRegisterWindowLifecycle(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -670,6 +691,7 @@ func TestRegisterWindowLifecycle(t *testing.T) {
 }
 
 func TestGetSnapshotReportsHubVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	resp, err := h.admin.GetSnapshot(context.Background(), connect.NewRequest(&heronv1.GetSnapshotRequest{}))
@@ -682,6 +704,7 @@ func TestGetSnapshotReportsHubVersion(t *testing.T) {
 }
 
 func TestSnapshotReflectsLiveState(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -717,6 +740,7 @@ func TestSnapshotReflectsLiveState(t *testing.T) {
 }
 
 func TestQueryMetricsShapeAndValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -771,6 +795,7 @@ func TestQueryMetricsShapeAndValidation(t *testing.T) {
 }
 
 func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -814,6 +839,7 @@ func TestUnicodeValidationAndQueryRangeEdges(t *testing.T) {
 }
 
 func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -836,6 +862,7 @@ func TestDeletedNodeRejectsLateStorageWrites(t *testing.T) {
 }
 
 func TestSessionBoundaryAndRevocation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -886,6 +913,7 @@ func TestSessionBoundaryAndRevocation(t *testing.T) {
 }
 
 func TestWindowAndQueryAdmissionBounds(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -927,6 +955,7 @@ func netCounters(boot string, rx, tx uint64) *heronv1.Metrics {
 }
 
 func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -1005,6 +1034,7 @@ func TestTrafficIsReportedAdjustedAndConfigured(t *testing.T) {
 }
 
 func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -1043,6 +1073,7 @@ func TestQueryMetricsEmitsSumForAdditiveColumns(t *testing.T) {
 }
 
 func TestAdjustTrafficRejectsOutOfRangeUsage(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")

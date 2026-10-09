@@ -14,6 +14,7 @@ import (
 
 // 与仓库里的文件逐个比对：嵌入的通配若漏了文件或内容过期，这里红。
 func TestApiReferenceServesTheRepositoryProtoAndGuide(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	resp, err := h.admin.GetApiReference(context.Background(), connect.NewRequest(&heronv1.GetApiReferenceRequest{}))
@@ -69,6 +70,7 @@ func TestApiReferenceServesTheRepositoryProtoAndGuide(t *testing.T) {
 }
 
 func TestApiReferenceIsReachableWithAToken(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "agent")

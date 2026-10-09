@@ -109,6 +109,7 @@ func currentSessions(t *testing.T, h *harness, lines ...string) []string {
 }
 
 func TestForgedSessionCookieDoesNotShadowValidOne(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -133,6 +134,7 @@ func TestForgedSessionCookieDoesNotShadowValidOne(t *testing.T) {
 
 // 候选数不设上限：设了上限，写 cookie 的一方用更多的值就能把有效值挤出去。
 func TestManyForgedSessionCookiesDoNotCrowdOutValidOne(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -158,6 +160,7 @@ func TestManyForgedSessionCookiesDoNotCrowdOutValidOne(t *testing.T) {
 //
 // Path 由写 cookie 的兄弟主机决定，给更长的 Path 就能在两种浏览器里都排到会话前面。
 func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	valid := pair(strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"="))
@@ -182,6 +185,7 @@ func TestMalformedNeighbourCookiesDoNotHideSession(t *testing.T) {
 // cookie-value 可以整体包在一对双引号里（RFC 6265 §4.1.1）。会话值与 Request.Cookies 一样去掉这对引号再校验：
 // hub 签发的值不带引号，这里钉住的是切分与 net/http 对合法输入的结果一致。
 func TestQuotedSessionCookieValueAuthenticates(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -194,6 +198,7 @@ func TestQuotedSessionCookieValueAuthenticates(t *testing.T) {
 
 // 多个值都有效时取顺序上第一个有效的；会话列表的"当前"读的就是进 ctx 的那个。
 func TestTwoValidSessionCookiesPickFirstValid(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	a, b := twoSessions(t, h)
 	forged := forgedToken(t)
@@ -212,6 +217,7 @@ func TestTwoValidSessionCookiesPickFirstValid(t *testing.T) {
 }
 
 func TestLogoutWithForgedCookieRevokesTheValidSession(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	a, b := twoSessions(t, h)
 	r := cookieCall(t, h, "Logout", "{}", pairs(forgedToken(t), a))
@@ -230,6 +236,7 @@ func TestLogoutWithForgedCookieRevokesTheValidSession(t *testing.T) {
 }
 
 func TestRevokeCurrentSessionWithForgedCookie(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	a, b := twoSessions(t, h)
 	r := cookieCall(t, h, "RevokeSession", `{"id":"`+sessionID(a)+`"}`, pairs(forgedToken(t), a))
@@ -253,7 +260,9 @@ func TestRevokeCurrentSessionWithForgedCookie(t *testing.T) {
 //   - 不配代理：这是默认部署，来源就是 TCP 对端。起两个 hub，都从 127.0.0.1 访问，其中一个先收到伪造 cookie。
 //     只比 X-Forwarded-For 来源的那一组照不到记在 TCP 对端上的计数，而默认部署下 TCP 对端就是管理员自己的地址。
 func TestForgedSessionCookiesDoNotCountAsLoginFailures(t *testing.T) {
+	t.Parallel()
 	t.Run("behind a trusted proxy", func(t *testing.T) {
+		t.Parallel()
 		h := newHarness(t, "127.0.0.1/32")
 		h.login(t)
 		valid := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -262,6 +271,7 @@ func TestForgedSessionCookiesDoNotCountAsLoginFailures(t *testing.T) {
 		assertSameLockout(t, wrongPasswordsUntilLocked(t, h, forged), wrongPasswordsUntilLocked(t, h, control))
 	})
 	t.Run("without a proxy", func(t *testing.T) {
+		t.Parallel()
 		forgedHub, controlHub := newHarness(t, ""), newHarness(t, "")
 		forgedHub.login(t)
 		controlHub.login(t)

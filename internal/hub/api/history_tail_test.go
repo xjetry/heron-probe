@@ -17,6 +17,7 @@ type historyClient interface {
 }
 
 func TestHistoryTailFromReportToBothAPIs(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, token := h.createNode(t, "history")

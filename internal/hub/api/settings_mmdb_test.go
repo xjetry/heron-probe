@@ -10,6 +10,7 @@ import (
 
 // 回显的后端与路径取自装配给 api 的后端对象，UpdateSettings 对两项的缺席、给出、伪造与未知枚举一律忽略。
 func TestSettingsGeoBackendIsReadOnly(t *testing.T) {
+	t.Parallel()
 	mmdbPath := filepath.Join("..", "geo", "testdata", "country.mmdb")
 	local, err := geo.OpenMMDB(mmdbPath)
 	if err != nil {
@@ -55,6 +56,7 @@ func TestSettingsGeoBackendIsReadOnly(t *testing.T) {
 
 // 回显的后端取自 Config.Geo；缺了它 GetSettings 要到请求时才空指针，装配时就拒绝。
 func TestNewRequiresTheGeoBackend(t *testing.T) {
+	t.Parallel()
 	defer func() {
 		if r := recover(); r != "api.Config.Geo must be set" {
 			t.Errorf("panic = %v, want api.Config.Geo must be set", r)

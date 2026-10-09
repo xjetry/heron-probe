@@ -53,6 +53,7 @@ func chooseLoginChannels(t *testing.T, h *harness, ids ...int64) *heronv1.Settin
 }
 
 func TestLoginNotifyFieldNumberAndPresence(t *testing.T) {
+	t.Parallel()
 	field := (&heronv1.Settings{}).ProtoReflect().Descriptor().Fields().ByName("login_notify")
 	if field == nil || field.Number() != 12 || !field.HasPresence() || field.Message() == nil {
 		t.Fatalf("settings.login_notify must be a message with presence at field 12: %v", field)
@@ -69,6 +70,7 @@ func loginEvents(t *testing.T, h *harness) []*heronv1.AlertEvent {
 }
 
 func TestLoginNotifySettingsPresenceReferencesAndDeletion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a := saveChannel(t, h, webhook("https://example.invalid/a")).Id
@@ -99,6 +101,7 @@ func TestLoginNotifySettingsPresenceReferencesAndDeletion(t *testing.T) {
 
 // 列表按请求里的原始条数计，重复也算：满上限的重复合法并合并成一个，多一条整次拒绝、什么都不写。
 func TestLoginNotifyChannelListCountsRawEntries(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a := saveChannel(t, h, webhook("https://example.invalid/a")).Id
@@ -119,6 +122,7 @@ func TestLoginNotifyChannelListCountsRawEntries(t *testing.T) {
 // 响应总带 login_notify：关闭时是空 message，与"hub 不认识这个字段"可以区分。读到的整份设置原样写回，
 // 开着的保持原渠道，关着的仍关着。
 func TestLoginNotifyResponseAlwaysCarriesTheField(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	raw := func(path, body string) map[string]any {
@@ -160,6 +164,7 @@ func TestLoginNotifyResponseAlwaysCarriesTheField(t *testing.T) {
 }
 
 func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
+	t.Parallel()
 	for _, trusted := range []bool{false, true} {
 		t.Run(fmt.Sprint(trusted), func(t *testing.T) {
 			prefix := ""
@@ -234,6 +239,7 @@ func TestLoginNotifySuccessDeliversAndUsesTrustedSource(t *testing.T) {
 }
 
 func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "127.0.0.0/8")
 	h.login(t)
 	c := saveChannel(t, h, webhook("https://example.invalid/hook"))
@@ -273,6 +279,7 @@ func TestLoginNotifyLockThresholdOnlyOnce(t *testing.T) {
 // 两条摘要都写进事件时刻，按 hub 的 --timezone 写成带偏移的 RFC 3339：投递会重试、重启后续投，接收方
 // 看到的送达时刻不是登录时刻，而 Telegram 只发摘要。从登录入口一直看到 Telegram 收到的正文。
 func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
+	t.Parallel()
 	shanghai, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +379,7 @@ func TestLoginNotifySummaryCarriesZonedTime(t *testing.T) {
 }
 
 func TestLoginNotifyTokenReadsAndCleanup(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "remove me")
@@ -429,6 +437,7 @@ func TestLoginNotifyTokenReadsAndCleanup(t *testing.T) {
 }
 
 func TestLoginNotifyOnlyUpdatePreservesAppearance(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())

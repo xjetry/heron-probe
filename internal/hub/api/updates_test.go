@@ -28,6 +28,7 @@ func (f *updateAPIFake) Submit(_ context.Context, r update.Request) (update.Job,
 func (f *updateAPIFake) Latest(context.Context) (string, error) { f.checks++; return "v0.3.0", nil }
 
 func TestUpdateAPIUsesExplicitReleaseChecksAndRunningHubVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "", withConfig(func(c *Config) { c.HubVersion = "v0.2.0" }))
 	h.login(t)
 	f := &updateAPIFake{}
@@ -63,6 +64,7 @@ func TestUpdateAPIUsesExplicitReleaseChecksAndRunningHubVersion(t *testing.T) {
 }
 
 func TestUpdateAPIReadTokenCannotAuthorizeUpdates(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "read")
@@ -77,6 +79,7 @@ func TestUpdateAPIReadTokenCannotAuthorizeUpdates(t *testing.T) {
 }
 
 func TestUpdateAPIRejectsInvalidTargetsAndBounds(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, v := range []string{"https://example.test/program", "v0.3.0-rc1", strings.Repeat("x", 35)} {
@@ -103,6 +106,7 @@ func boundManager(t *testing.T, h *harness, bound string) *updates.Manager {
 }
 
 func TestSnapshotAndUpdatesCarryBoundAgentVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	boundManager(t, h, "v1.2.3")
@@ -123,6 +127,7 @@ func TestSnapshotAndUpdatesCarryBoundAgentVersion(t *testing.T) {
 }
 
 func TestSnapshotWithoutUpdatesHasNoBoundAgentVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	snap, err := h.admin.GetSnapshot(t.Context(), connect.NewRequest(&heronv1.GetSnapshotRequest{}))
@@ -136,6 +141,7 @@ func TestSnapshotWithoutUpdatesHasNoBoundAgentVersion(t *testing.T) {
 }
 
 func TestStartUpdateRejectsNonBoundVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "bound")
@@ -153,6 +159,7 @@ func TestStartUpdateRejectsNonBoundVersion(t *testing.T) {
 }
 
 func TestExecuteChangeStartUpdateRejectsNonBoundVersion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	node, _ := h.createNode(t, "bound")
@@ -198,6 +205,7 @@ func (f *localJobFake) Status(context.Context) update.Status {
 // hub 自身的更新状态与节点同一判定：hub 经安装脚本等途径已运行到目标版本后，本机更新器留下的失败记录不再显示；
 // 本机更新器仍在执行的任务（新进程已运行目标版本、处于验证阶段）与成功记录照常显示。
 func TestUpdateAPIHidesSupersededLocalHubTask(t *testing.T) {
+	t.Parallel()
 	job := func(state, version string) *update.Job {
 		return &update.Job{Request: update.Request{ID: "0123456789abcdef0123456789abcdef", Version: version}, State: state, Error: "download official release: i/o timeout"}
 	}

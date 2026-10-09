@@ -10,6 +10,7 @@ import (
 )
 
 func TestCorruptBackupNumbersRecoverThroughSettingsAPI(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	in := validSettings()

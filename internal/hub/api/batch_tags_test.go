@@ -14,6 +14,7 @@ import (
 )
 
 func TestBatchNodeTagsRefreshesDynamicScopesAndRollsBackTaskLimit(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, tokenA := h.createNode(t, "a")
@@ -102,6 +103,7 @@ func TestBatchNodeTagsRefreshesDynamicScopesAndRollsBackTaskLimit(t *testing.T) 
 }
 
 func TestBatchNodeTagsPreservesOtherDataAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	var ids []int64
@@ -156,6 +158,7 @@ func TestBatchNodeTagsPreservesOtherDataAndIsIdempotent(t *testing.T) {
 }
 
 func TestBatchNodeTagsValidationAndRollback(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")

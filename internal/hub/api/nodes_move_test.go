@@ -65,6 +65,7 @@ func wantPositions(t *testing.T, got []struct {
 // MoveNodes 走全序名次：被选节点按现有先后连续占位，其余节点相对顺序不变；ListNodes 回读名次，
 // 标签过滤只筛行、不改名次。
 func TestMoveNodesReportsPositions(t *testing.T) {
+	t.Parallel()
 	h, ids := moveNodesHarness(t, "a", "b", "c", "d", "e")
 	// a、b 挂上标签：无标签列表只含 c、e、d，名次仍是全序名次。
 	if _, err := h.svc.BatchUpdateNodeTags(t.Context(), connect.NewRequest(&heronv1.BatchUpdateNodeTagsRequest{NodeIds: ids[:2], AddTags: []string{"x"}})); err != nil {
@@ -79,6 +80,7 @@ func TestMoveNodesReportsPositions(t *testing.T) {
 }
 
 func TestMoveNodesRejectsBadArguments(t *testing.T) {
+	t.Parallel()
 	h, ids := moveNodesHarness(t, "a", "b", "c")
 	for _, c := range []struct {
 		label    string
@@ -104,6 +106,7 @@ func TestMoveNodesRejectsBadArguments(t *testing.T) {
 
 // 重复 id 去重、请求顺序不影响结果：c、d 按库内先后连续放到第 2 位。
 func TestMoveNodesDedupesRequest(t *testing.T) {
+	t.Parallel()
 	h, ids := moveNodesHarness(t, "a", "b", "c", "d")
 	if _, err := h.svc.MoveNodes(t.Context(), connect.NewRequest(&heronv1.MoveNodesRequest{Ids: []int64{ids[3], ids[2], ids[3]}, Position: 2})); err != nil {
 		t.Fatal(err)
@@ -113,6 +116,7 @@ func TestMoveNodesDedupesRequest(t *testing.T) {
 
 // MoveNodes 改的是全序：API token 只有读权限，写被拒。
 func TestMoveNodesRejectsApiToken(t *testing.T) {
+	t.Parallel()
 	h, ids := moveNodesHarness(t, "a", "b")
 	_, token := createToken(t, h, "ro")
 	res := rawCall(t, h, "MoveNodes", `{"ids":[`+strconv.FormatInt(ids[0], 10)+`],"position":1}`, bearer(token))

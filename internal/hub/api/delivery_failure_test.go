@@ -17,6 +17,7 @@ import (
 // 存储类别与协议枚举必须一一对应：漏一个映射会让 ListAlertEvents 整页 internal，
 // 两个类别映到同一枚举值会让只读口径分不清它们。
 func TestDeliveryFailureMappingIsOneToOne(t *testing.T) {
+	t.Parallel()
 	seen := map[heronv1.DeliveryFailure]store.DeliveryFailure{}
 	for _, f := range append([]store.DeliveryFailure{store.FailureNone}, store.DeliveryFailures()...) {
 		v, err := deliveryFailureProto(f)
@@ -65,6 +66,7 @@ func rawBody(t *testing.T, h *harness, method, body string, headers map[string][
 }
 
 func TestDeliveryErrorTextOnlyReachesSessions(t *testing.T) {
+	t.Parallel()
 	const echoed = `{"text":"alert","token":"secret-echo-7f3a"}`
 	h := newHarness(t, "")
 	h.login(t)
@@ -101,6 +103,7 @@ func TestDeliveryErrorTextOnlyReachesSessions(t *testing.T) {
 }
 
 func TestListAlertEventsReportsFailureCategory(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	n, _ := h.createNode(t, "n")
@@ -140,6 +143,7 @@ func TestListAlertEventsReportsFailureCategory(t *testing.T) {
 }
 
 func TestGetAlertDeliveryErrorNotFound(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, err := h.admin.GetAlertDeliveryError(t.Context(), connect.NewRequest(&heronv1.GetAlertDeliveryErrorRequest{DeliveryId: 999}))

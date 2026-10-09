@@ -14,6 +14,7 @@ import (
 
 // 公开备注的准入：单行、至多 100 个码点、不含控制字符；超长拒绝而不截断，被拒的更新什么都不写。
 func TestPublicRemarkAdmission(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -54,6 +55,7 @@ func TestPublicRemarkAdmission(t *testing.T) {
 
 // 公开备注只随公开节点下发：管理端总是可见，公开快照只含公开节点，私有节点的备注不经公开端出现。
 func TestPublicRemarkProjection(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := context.Background()
@@ -92,6 +94,7 @@ func TestPublicRemarkProjection(t *testing.T) {
 
 // 只改公开备注的变更也要改变预期版本并留下审计差异：快照白名单带着 public_remark，before/after 因此不同。
 func TestPublicRemarkExecuteChange(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "changed")

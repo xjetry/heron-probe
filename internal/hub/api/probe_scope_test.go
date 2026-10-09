@@ -61,6 +61,7 @@ func taskIDs(tasks *heronv1.ProbeTasks) []uint64 {
 // ListProbeTasks 对 all_nodes 任务回显当前展开的节点：保存请求不混入显式节点，之后建的节点纳入、删的节点
 // 掉出。建节点推进版本，删节点不推。
 func TestListProbeTasksExpandsAllNodesAcrossNodeCreationAndDeletion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -96,6 +97,7 @@ func TestListProbeTasksExpandsAllNodesAcrossNodeCreationAndDeletion(t *testing.T
 // 建节点推进版本：已经持有旧版本的 agent 再次上报时拿到新清单，新节点的清单含 all_nodes 任务，显式空分配的任务
 // 谁也拿不到。删节点不推版本，持有当前版本的 agent 不重取。
 func TestAgentsRefetchAllNodesTasksAfterNodeCreation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tokA := h.createNode(t, "a")
@@ -126,6 +128,7 @@ func TestAgentsRefetchAllNodesTasksAfterNodeCreation(t *testing.T) {
 
 // all_nodes 任务计入每个节点的上限；超限指向 all_nodes 字段并回滚。
 func TestSaveAllNodesProbeTaskPastTheLimitIsRejected(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
@@ -144,6 +147,7 @@ func TestSaveAllNodesProbeTaskPastTheLimitIsRejected(t *testing.T) {
 
 // 没有节点时 all_nodes 任务可以多于 64 个；此时建节点与自助注册都以 ResourceExhausted 失败并说明原因，节点不建。
 func TestCreatingNodeInheritingTooManyTasksIsRejected(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	var tasks []*heronv1.ProbeTaskDetail
@@ -173,6 +177,7 @@ func TestCreatingNodeInheritingTooManyTasksIsRejected(t *testing.T) {
 
 // 公开端的任务标签规则对 all_nodes 任务同样成立：它对每个公开节点都算当前分配，包括任务保存之后才建的节点。
 func TestPublicProbeLabelsIncludeAllNodesTasks(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	all := h.saveAllNodesTask(t, "192.0.2.1").GetTask().GetId()

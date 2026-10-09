@@ -8,17 +8,22 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/xjetry/heron-probe/internal/hub/store"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/hub/store"
+	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
-// gateForTest 把等待上限缩到毫秒级，并把每来源上限固定为 4：通用语义在多空位下测，结果不随测试机
-// 的 CPU 数变化；上限按 CPU 数的取法由 TestHistoryInFlightPerSourceFollowsCPUs 单独核对。
+// gateForTest 用调用方给的等待上限（测拒绝路径的用例缩到毫秒级），并把每来源上限固定为 4：通用语义在多空位下测，
+// 结果不随测试机的 CPU 数变化；上限按 CPU 数的取法由 TestHistoryInFlightPerSourceFollowsCPUs 单独核对。
+//
+// 用例要先观察到等待者挂上唤醒路径、再腾出空位时，wait 取 testwait.Bound：等待者到点就放弃并把自己从计数里减掉，
+// wait 短于观察所需的时间（负载下一次调度停顿可达几十毫秒），用例就在等待者已经放弃之后才去看，误报"没有挂上"。
+// 这类用例的断言都是计数与状态，不含等待时长。
 func gateForTest(wait time.Duration) *historyGate {
 	g := newHistoryGate()
 	g.wait = wait
@@ -26,7 +31,24 @@ func gateForTest(wait time.Duration) *historyGate {
 	return g
 }
 
+// waitForWaiters 等到 source 上恰有 want 个等待者挂在唤醒路径上（sourceInFlight.wait）。
+func waitForWaiters(t *testing.T, g *historyGate, source string, want int) {
+	t.Helper()
+	waiting := func() int {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if e := g.sources[source]; e != nil {
+			return e.wait
+		}
+		return 0
+	}
+	testwait.Until(t, time.Millisecond, func() bool { return waiting() == want },
+		"waiters on %q = %v, want %d", source, testwait.When(func() string { return strconv.Itoa(waiting()) }), want)
+}
+
 // 每来源上限是 GOMAXPROCS 的四分之一、至少 1（依据见 historyInFlightPerSource 的注释）。
+//
+// 不并行：GOMAXPROCS 是进程级设置，并行用例在它被改小的期间新建的 historyGate 会拿到错的上限，调度也被压到少数处理器上。
 func TestHistoryInFlightPerSourceFollowsCPUs(t *testing.T) {
 	prev := runtime.GOMAXPROCS(0)
 	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
@@ -40,6 +62,7 @@ func TestHistoryInFlightPerSourceFollowsCPUs(t *testing.T) {
 
 // 上限：同一来源第 5 个在飞等不到空位，按 ResourceExhausted 拒绝，文案与限流区分。
 func TestHistoryGateLimitReached(t *testing.T) {
+	t.Parallel()
 	g := gateForTest(20 * time.Millisecond)
 	for range g.limit {
 		if _, err := g.acquire(context.Background(), "a"); err != nil {
@@ -59,7 +82,8 @@ func TestHistoryGateLimitReached(t *testing.T) {
 
 // 等待后成功：腾出空位时等待者醒来拿到。
 func TestHistoryGateWaitThenSuccess(t *testing.T) {
-	g := gateForTest(2 * time.Second)
+	t.Parallel()
+	g := gateForTest(testwait.Bound)
 	held := make([]func(), g.limit)
 	for i := range held {
 		held[i], _ = g.acquire(context.Background(), "a")
@@ -69,19 +93,22 @@ func TestHistoryGateWaitThenSuccess(t *testing.T) {
 		_, err := g.acquire(context.Background(), "a")
 		got <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	// 等它真挂上唤醒路径再腾空位，测的才是"等待后成功"而不是"来时已有空位"。
+	waitForWaiters(t, g, "a", 1)
 	held[0]() // 腾出一个空位
 	select {
 	case err := <-got:
 		if err != nil {
 			t.Fatalf("有空位后等待者应当成功: %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("有空位后等待者没有被唤醒")
 	}
 }
 
 // 来源之间互不阻塞：来源 A 占满不挡来源 B。
+//
+// 不并行：断言含 20ms 的耗时上界，与负载下的调度停顿同一量级。
 func TestHistoryGateSourcesIndependent(t *testing.T) {
 	g := gateForTest(50 * time.Millisecond)
 	for range g.limit {
@@ -100,6 +127,7 @@ func TestHistoryGateSourcesIndependent(t *testing.T) {
 
 // 错误路径也要释放：查询失败后同来源的下一个请求立即拿到空位。
 func TestHistoryErrorPathReleasesSlot(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	g := gateForTest(2 * time.Second)
@@ -124,6 +152,7 @@ func TestHistoryErrorPathReleasesSlot(t *testing.T) {
 
 // panic 路径释放：recover 之后空位可用。
 func TestHistoryGateReleaseOnPanic(t *testing.T) {
+	t.Parallel()
 	g := gateForTest(50 * time.Millisecond)
 	func() {
 		defer func() { _ = recover() }()
@@ -143,7 +172,8 @@ func TestHistoryGateReleaseOnPanic(t *testing.T) {
 
 // 状态有界：既无在飞也无等待的来源要从表里删掉。
 func TestHistoryGateIdleReclaimed(t *testing.T) {
-	g := gateForTest(10 * time.Millisecond)
+	t.Parallel()
+	g := gateForTest(testwait.Bound)
 	for range 3 {
 		release, err := g.acquire(context.Background(), "a")
 		if err != nil {
@@ -172,19 +202,7 @@ func TestHistoryGateIdleReclaimed(t *testing.T) {
 		waited <- r
 	}()
 	// 等这个等待者真挂上唤醒路径（wait=1）再断言来源行还在。
-	deadline := time.Now().Add(time.Second)
-	for {
-		g.mu.Lock()
-		n := g.sources["a"].wait
-		g.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("等待者没有挂上唤醒路径")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForWaiters(t, g, "a", 1)
 	g.mu.Lock()
 	if _, alive := g.sources["a"]; !alive {
 		t.Fatalf("有等待者时来源不应被删除: %v", g.sources)
@@ -194,7 +212,7 @@ func TestHistoryGateIdleReclaimed(t *testing.T) {
 	select {
 	case waiterRelease := <-waited:
 		waiterRelease()
-	case <-time.After(time.Second):
+	case <-time.After(testwait.Bound):
 		t.Fatal("等待者没有被唤醒")
 	}
 	for _, r := range held[1:] {
@@ -215,7 +233,8 @@ func TestHistoryGateIdleReclaimed(t *testing.T) {
 // 被唤醒的等待者拿到空位后，全部归还时来源同样回收；两个等待者争一个空位时，没抢到的重新排队，
 // 不把自己多算一次。等待计数漏减时，来源永远回收不掉，状态随出现过争用的来源数增长。
 func TestHistoryGateWokenWaitersReclaimed(t *testing.T) {
-	g := gateForTest(2 * time.Second)
+	t.Parallel()
+	g := gateForTest(testwait.Bound)
 	held := make([]func(), g.limit)
 	for i := range held {
 		var err error
@@ -237,19 +256,7 @@ func TestHistoryGateWokenWaitersReclaimed(t *testing.T) {
 	}
 	waitFor := func(want int) {
 		t.Helper()
-		deadline := time.Now().Add(time.Second)
-		for {
-			g.mu.Lock()
-			n := g.sources["a"].wait
-			g.mu.Unlock()
-			if n == want {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("等待计数 %d，应为 %d", n, want)
-			}
-			time.Sleep(time.Millisecond)
-		}
+		waitForWaiters(t, g, "a", want)
 	}
 	waitFor(waiters)
 	held[0]() // 一个空位、两个等待者：一个拿到，另一个重新排队
@@ -276,6 +283,7 @@ func (p *Public) testHistoryGate() *historyGate  { return p.history.gate }
 // 两个服务的全部历史查询入口都经过按来源并发闸：占满该来源的空位后，入口返回
 // 并发在飞过多的 ResourceExhausted；空位归还后入口恢复。任一入口绕过闸都会变绿而红。
 func TestHistoryEntriesGated(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()
@@ -357,6 +365,7 @@ func assertGated(t *testing.T, g *historyGate, key string, call func() error) {
 // 来源键必须区分调用方：键若退化成全局，一个来源的重查询会挡住所有来源。
 // 这里从真实入口验证——凭据 A 占满自己的份额后，凭据 B 的同型查询立即执行。
 func TestHistorySourcesDoNotBlockEachOther(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()
@@ -391,6 +400,7 @@ func TestHistorySourcesDoNotBlockEachOther(t *testing.T) {
 // 准入顺序，只核对闸与释放；准入顺序由 TestComparisonNodeChecksHappenInsideTheSlot 在
 // history 层直接计数。
 func TestHistoryNodeChecksHappenInsideTheSlot(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()
@@ -464,6 +474,7 @@ func TestHistoryNodeChecksHappenInsideTheSlot(t *testing.T) {
 // 的空位时一次都不能调用，放开后每个节点调用一次。两端的入口只把各自的谓词交给 history.comparison，
 // 准入的执行顺序只在这一处决定。
 func TestComparisonNodeChecksHappenInsideTheSlot(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	for _, side := range []struct {
 		name string

@@ -65,6 +65,7 @@ func rejected(t *testing.T, h *harness, in *heronv1.Settings, want string, befor
 }
 
 func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -87,6 +88,7 @@ func TestUpdateSettingsValidatesTitleThemeAndAccent(t *testing.T) {
 }
 
 func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	// 总闸、国家查询两项、backup 与 login_notify 没有提交，回显的是从未保存过时的值（login_notify 关闭即空 message）；
@@ -109,6 +111,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 
 // 标题与节点名是同一种显示文字，清洗结果必须一致；任何一边换成自己的写法，这里就会分叉。
 func TestTitleAndNodeNameCleanAlike(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{" \x01 状态\u202e 页 \x7f\t", "\u0085a\u200cb", "\u2066x\u2069 "} {
 		name, err := cleanName(raw)
 		if err != nil {
@@ -130,6 +133,7 @@ const noGroup = "settings must give at least one group: the appearance (title, t
 // 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
 // 点名各组。
 func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -169,6 +173,7 @@ func TestUpdateSettingsGroupsAreIndependent(t *testing.T) {
 // 样例值取清洗后的形式，回显与输入逐字相同。新增的外观字符串字段没有样例时按 "x" 试，新增的 presence 布尔字段按 true 试；
 // 取值有约束的新字段把合法样例补进这里。
 func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -262,6 +267,7 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 }
 
 func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -307,6 +313,7 @@ func TestUpdateSettingsLogoAcceptsOnlyOneShape(t *testing.T) {
 }
 
 func TestUpdateSettingsCustomCSSRejectsOnlyLiteralEndTagOpen(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	before := saveSettings(t, h, validSettings())
@@ -400,6 +407,7 @@ func postUpdateSettings(t *testing.T, h *harness, body []byte) (int, string) {
 // 备份各项与登录通知渠道确实变成请求里的值，才说明它们按字段被解码、这是一份全字段的设置；查询开关从未保存过时就是
 // false，所以先把它打开。
 func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	saveSettings(t, h, &heronv1.Settings{Theme: "auto", GeoEnabled: proto.Bool(true)})
@@ -441,6 +449,7 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 }
 
 func TestGetStorageStatsMatchesTheStore(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	h.createNode(t, "n")
@@ -467,6 +476,7 @@ func TestGetStorageStatsMatchesTheStore(t *testing.T) {
 // store.NotifyLists 是全部通知渠道选择列表；api 为每个列表登记请求里的字段路径（notifyListFields），两边不能与登记表
 // 脱节：漏登记路径的列表报错时点不出字段。
 func TestNotifyListsHaveRequestFields(t *testing.T) {
+	t.Parallel()
 	for _, l := range store.NotifyLists {
 		if notifyListFields[l.List] == "" {
 			t.Errorf("notify list %s has no request field path in notifyListFields", l.List)

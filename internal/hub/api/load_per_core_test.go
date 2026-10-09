@@ -10,6 +10,7 @@ import (
 
 // 按核负载同时出现在管理端与公开端的实时快照和历史里。只从其中一条路径拿掉，对应的断言会红，另一条仍绿。
 func TestLoad1PerCoreOnAdminAndPublicRealtimeAndHistory(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, tok := h.createNode(t, "load")

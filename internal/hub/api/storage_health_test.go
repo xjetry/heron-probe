@@ -30,6 +30,7 @@ func (h *harness) storageStatsWithToken(t *testing.T, tok string) *heronv1.GetSt
 // 1m 探测表恰在阈值上：前者标红、后者不标。上卷之前水位是种子值 0，四张有水位的表都标红，也没有上卷完成时刻；
 // 上卷之后水位跟上、不再标红，完成时刻就是上卷时的时钟。
 func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, tok := createToken(t, h, "reader")
@@ -111,6 +112,7 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 // 后台协程会把控制行删掉，判定不依赖任何真实时间窗。用 6 小时的 1m 保留期（远短于默认的 7 天）构造，一行
 // 7 小时前的 probe_1m 数据在配置下已超期、在默认值下不会超期，两个结论只要有一个取到默认值就会分开。
 func TestGetStorageStatsUsesTheConfiguredRetention(t *testing.T) {
+	t.Parallel()
 	retention := store.Retention{M1: 6 * time.Hour, M5: 168 * time.Hour, H1: 168 * time.Hour, AlertEvents: store.DefaultRetention.AlertEvents}
 	h := newZonedHarness(t, "", time.UTC, retention)
 	h.login(t)

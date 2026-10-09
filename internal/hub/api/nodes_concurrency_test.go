@@ -11,6 +11,7 @@ import (
 )
 
 func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	id, _, err := h.auth.CreateNode(t.Context(), "n", store.Billing{})
 	if err != nil {
@@ -46,6 +47,7 @@ func TestConcurrentUpdatesKeepResetDayConsistent(t *testing.T) {
 // 暴露缺陷需要更新恰在库提交后、SetResetDay 前被抢占，并让删除完成事务与 Forget，窗口很窄。
 // 它是不变式的声明而非可靠探测器；TestConcurrentUpdatesKeepResetDayConsistent 更稳定地探测无锁分叉。
 func TestConcurrentUpdateCannotReviveDeletedResetDay(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	for round := range 2000 {
 		id, _, err := h.auth.CreateNode(t.Context(), "n", store.Billing{})

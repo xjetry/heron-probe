@@ -37,6 +37,7 @@ func listSessions(t *testing.T, h *harness, token string) []*heronv1.Session {
 }
 
 func TestSessionsListAndRevoke(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	first := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -79,6 +80,7 @@ func TestSessionsListAndRevoke(t *testing.T) {
 }
 
 func TestSessionIDsCannotAuthenticate(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	current := strings.TrimPrefix(sessionCookieHeader(t, h), SessionCookie+"=")
@@ -95,6 +97,7 @@ func TestSessionIDsCannotAuthenticate(t *testing.T) {
 }
 
 func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
+	t.Parallel()
 	for _, scheme := range []string{"http", "https"} {
 		t.Run(scheme, func(t *testing.T) {
 			h := newHarness(t, "127.0.0.1/32")
@@ -124,6 +127,7 @@ func TestRevokeCurrentSessionClearsCookie(t *testing.T) {
 }
 
 func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"idle", "absolute"} {
 		t.Run(kind, func(t *testing.T) {
 			h := newHarness(t, "")
@@ -195,6 +199,7 @@ func TestListSessionsExpiryMatchesAuthentication(t *testing.T) {
 }
 
 func TestSessionMethodsRejectAPITokens(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	_, token := createToken(t, h, "session-test")
@@ -206,6 +211,7 @@ func TestSessionMethodsRejectAPITokens(t *testing.T) {
 }
 
 func TestRevokeSessionRejectsMalformedID(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, id := range []string{"", strings.Repeat("a", 62), strings.Repeat("a", 66), strings.Repeat("z", 64)} {

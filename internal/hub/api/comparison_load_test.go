@@ -82,6 +82,7 @@ func loadSizes() (nodes, busy, tasks, calls, hammerSec int) {
 }
 
 func TestProbeComparisonCostAcceptance(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("HERON_LOAD") == "" {
 		t.Skip("set HERON_LOAD=1 to run the §2.4 cost acceptance (heavy: minutes, multi-GB database)")
 	}

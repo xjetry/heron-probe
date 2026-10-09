@@ -14,6 +14,7 @@ import (
 )
 
 func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	n1, _ := h.createNode(t, "a")
@@ -68,6 +69,7 @@ func TestProbeTaskLifecycleThroughAdminAPI(t *testing.T) {
 
 // dns_server 经管理 API 落库并原样回读，agent 取到的清单同样携带；非 DNS 任务携带它被 CheckTask 拒绝。
 func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	ctx := t.Context()
@@ -94,6 +96,7 @@ func TestProbeTaskDNSServerThroughAdminAPI(t *testing.T) {
 
 // query 分支覆盖窗口校验中的节点查找失败，不覆盖 QueryProbes 自身的历史存储查询。
 func TestProbeWritesAndWindowLookupFailuresStayInternal(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -112,6 +115,7 @@ func validProbeTask() *heronv1.ProbeTask {
 }
 
 func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -153,6 +157,7 @@ func TestSaveProbeTaskErrorsNameTheFieldAndCode(t *testing.T) {
 }
 
 func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -188,6 +193,7 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 }
 
 func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -233,6 +239,7 @@ func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
 // 没分配给被查节点的任务照样标注（管理端口径与分配无关），
 // 清单里已没有的任务（删除后仍有历史）两者都空，由客户端退回编号。
 func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")

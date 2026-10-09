@@ -68,6 +68,7 @@ func snapshotRequest(method, query, body string, header map[string]string) func(
 // 缓存对每一种请求形态的应答都与直连 connect 相同：规范形态由缓存回答（第二次是命中），
 // 其余形态原样交给 connect；缓存不替 connect 接受它会拒绝的请求，也不给请求方它没要的压缩。
 func TestSnapshotCacheIsTransparent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "pub")
@@ -181,6 +182,7 @@ func canonicalSnapshotRequests() []func() *http.Request {
 
 // 规范形态的构造恰好覆盖 8 个不同的键，也就是缓存的全部键空间。
 func TestCanonicalSnapshotRequestsCoverTheKeySpace(t *testing.T) {
+	t.Parallel()
 	keys := map[snapshotKey]bool{}
 	for _, req := range canonicalSnapshotRequests() {
 		key, ok := canonicalSnapshotRequest(req())
@@ -196,6 +198,7 @@ func TestCanonicalSnapshotRequestsCoverTheKeySpace(t *testing.T) {
 
 // 窗口从填充开始计：填充期间过去的时间算在窗口里，在途填充读到的旧快照也最多再下发 1 秒。
 func TestSnapshotCacheWindowStartsBeforeTheFill(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	calls := 0
 	cache := newSnapshotCache(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +220,7 @@ func TestSnapshotCacheWindowStartsBeforeTheFill(t *testing.T) {
 
 // 外层在调用前设的 Vary 保留，Accept-Encoding 追加在后面：命中与直连 connect 一样。
 func TestSnapshotCacheAppendsVary(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	_, direct := h.pub.connectHandler()
 	outer := func(next http.Handler) http.Handler {
@@ -242,6 +246,7 @@ func TestSnapshotCacheAppendsVary(t *testing.T) {
 
 // 同一个键在窗口内只进一次处理器：并发的同键请求排队，拿到同一份字节。
 func TestSnapshotCacheSerializesOnceForConcurrentRequests(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var calls atomic.Int64
 	allArrived := make(chan struct{})
@@ -280,6 +285,7 @@ func TestSnapshotCacheSerializesOnceForConcurrentRequests(t *testing.T) {
 }
 
 func TestSnapshotCacheKeysWindowAndWhatItStores(t *testing.T) {
+	t.Parallel()
 	clk := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	var calls int
 	gzipHonest, fail := true, false
@@ -346,6 +352,7 @@ func TestSnapshotCacheKeysWindowAndWhatItStores(t *testing.T) {
 // 节点改为非公开之后：已缓存的快照最多再下发 1 秒（spec §10 的字面值），之后不再出现；
 // 历史查询不经这层缓存，立即 NotFound；此前没有缓存的键（POST）立即反映改动。
 func TestSnapshotCacheWindowAfterNodeTurnsPrivate(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "flip")
@@ -374,6 +381,7 @@ func TestSnapshotCacheWindowAfterNodeTurnsPrivate(t *testing.T) {
 
 // 快照缓存的命中同样计数：限流包在缓存外面。
 func TestPublicRateLimitCountsSnapshotCacheHits(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	for i := range 60 {
 		if got := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil); got.status != http.StatusOK {

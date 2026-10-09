@@ -31,6 +31,7 @@ func listSilences(t *testing.T, h *harness) []*heronv1.SilenceEntry {
 
 // 静默的作用域与告警规则同一形状：selector_tags 读出当前交集的展开，标签变化经 UpdateNode 在同一事务里重算。
 func TestSilenceAPIScopeFollowsTagChanges(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	a, _ := h.createNode(t, "a")
@@ -83,6 +84,7 @@ func TestSilenceAPIScopeFollowsTagChanges(t *testing.T) {
 
 // 端到端：生效的静默让离线触发的事件落库为 silenced 且没有投递；一次性窗口过期后不再抑制。
 func TestSilenceSuppressesAlertDeliveriesEndToEnd(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
@@ -123,6 +125,7 @@ func TestSilenceSuppressesAlertDeliveriesEndToEnd(t *testing.T) {
 
 // 维护状态随 UpdateNode 整体替换，回显在 Node 与公开页的 PublicNode 上。
 func TestUpdateNodeMaintenanceRoundTrip(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
@@ -158,6 +161,7 @@ func TestUpdateNodeMaintenanceRoundTrip(t *testing.T) {
 
 // ListSilences 读库：维护任务删掉到期的一次性静默后（不经引擎），列表不再显示它，而不是等 hub 重启。
 func TestListSilencesReadsTheStoreAfterPruning(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")
@@ -176,6 +180,7 @@ func TestListSilencesReadsTheStoreAfterPruning(t *testing.T) {
 }
 
 func TestSaveSilenceValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "a")

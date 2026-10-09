@@ -60,6 +60,7 @@ func listTags(t *testing.T, h *harness) []string {
 
 // 三个节点分别挂 {a}、{a,b}、{b}：多选取交集，空选择返回全部，不存在的标签让结果为空。
 func TestListNodesFiltersByTagIntersection(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tags := range [][]string{{"a"}, {"a", "b"}, {"b"}} {
@@ -89,6 +90,7 @@ func TestListNodesFiltersByTagIntersection(t *testing.T) {
 
 // 过滤条件按标签名的规则校验；不同的标签多于 16 个时注定为空，按参数错误拒绝（折叠后重复的只算一个）。
 func TestListNodesTagFilterValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	var seventeen, sixteenTwice []string
@@ -120,6 +122,7 @@ func TestListNodesTagFilterValidation(t *testing.T) {
 // untagged 只返回无标签节点，与 ListNodes 的节点顺序一致；与 tags 同时给出返回 InvalidArgument，错误信息同时点出
 // 两个字段；untagged 为假时 tags 仍按交集过滤、空 tags 仍返回全部。
 func TestListNodesUntagged(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	for _, tags := range [][]string{{"a"}, {"a", "b"}, {"b"}} {
@@ -158,6 +161,7 @@ func TestListNodesUntagged(t *testing.T) {
 
 // db 与 DB 是同一个标签，沿用先建的写法；同一请求里折叠后重复的只留第一个；回显按折叠后的名字排序。
 func TestTagsAreCaseInsensitiveAndKeepTheFirstSpelling(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	first, _ := h.createNode(t, "first")
@@ -175,6 +179,7 @@ func TestTagsAreCaseInsensitiveAndKeepTheFirstSpelling(t *testing.T) {
 
 // 名字只去首尾空白，中间的空格是名字的一部分：原样存下与回显，过滤按折叠比较同样命中；去掉空格后的写法是另一个名字。
 func TestTagNamesKeepInnerSpaces(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -199,6 +204,7 @@ func TestTagNamesKeepInnerSpaces(t *testing.T) {
 
 // 每节点至多 16 个（按去重后计），名字 1–64 个字符、不含控制字符；被拒的更新什么都不写。
 func TestUpdateNodeTagValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -241,6 +247,7 @@ func TestUpdateNodeTagValidation(t *testing.T) {
 
 // 删除标签只解除关联：节点仍在、Node.tags 不再含它；大小写不敏感；不存在的标签 NotFound。
 func TestDeleteTagDetachesItFromNodes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
@@ -266,6 +273,7 @@ func TestDeleteTagDetachesItFromNodes(t *testing.T) {
 
 // 删节点后 node_tag 没有它的行，标签本身留着。
 func TestDeleteNodeLeavesNoTagRows(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	gone, _ := h.createNode(t, "gone")
@@ -287,6 +295,7 @@ func TestDeleteNodeLeavesNoTagRows(t *testing.T) {
 // 标签跟着节点行读出，节点不在快照里它的标签就无处可出。两个方向同库断言，只测一个方向分不出
 // "标签被过滤掉"与"标签根本没被读出"。
 func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	pub, _ := h.createNode(t, "pub")
@@ -329,6 +338,7 @@ func TestPublicSnapshotCarriesTagsOfPublicNodesOnly(t *testing.T) {
 // 页面不复刻 TagFold。名字选成码元序与折叠序不同的一组（'Z' < '_' < 'a'，而折叠后 "ALPHA" < "ZETA" < "_X"），
 // 按码元排序的实现在这里红；私有节点独有的标签不在其中。
 func TestPublicSnapshotTagsFollowTagFoldOrder(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	p1, _ := h.createNode(t, "p1")

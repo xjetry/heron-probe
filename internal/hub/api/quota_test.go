@@ -16,6 +16,7 @@ import (
 )
 
 func TestUpdateNodeTrafficQuotaValidation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "quota")
@@ -58,8 +59,10 @@ func TestUpdateNodeTrafficQuotaValidation(t *testing.T) {
 }
 
 func TestTrafficQuotaImmediateRecoveryInputs(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"adjust", "quota", "mode", "clear", "threshold", "change"} {
 		t.Run(action, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t, "")
 			h.login(t)
 			id, _ := h.createNode(t, "quota")
@@ -109,6 +112,7 @@ func TestTrafficQuotaImmediateRecoveryInputs(t *testing.T) {
 }
 
 func TestTrafficQuotaCrashBeforeFlushKeepsCommittedFiring(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, tok := h.createNode(t, "quota")
@@ -163,6 +167,7 @@ func TestTrafficQuotaCrashBeforeFlushKeepsCommittedFiring(t *testing.T) {
 }
 
 func TestTrafficQuotaSuccessfulResetEditSequence(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.clk.SetWall(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC))
 	h.login(t)
@@ -188,6 +193,7 @@ func TestTrafficQuotaSuccessfulResetEditSequence(t *testing.T) {
 }
 
 func TestTrafficQuotaCommitFailureSkipsImmediateEvaluation(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "quota")
@@ -246,6 +252,7 @@ func quotaEvents(t *testing.T, h *harness) []store.AlertEvent {
 }
 
 func TestTrafficQuotaReportCommitAndAllResponses(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		mode heronv1.TrafficQuotaMode
 		used uint64
@@ -326,6 +333,7 @@ func TestTrafficQuotaReportCommitAndAllResponses(t *testing.T) {
 }
 
 func TestTrafficQuotaResetEditsAndCommitFailure(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	h.clk.SetWall(time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC))
 	h.login(t)

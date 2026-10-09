@@ -56,6 +56,7 @@ type loadSample struct {
 // TestLoadHammerChild 只在父测试用环境变量点名时跑：按计划发重请求，逐条写出
 // [发起时刻, 完成时刻, 结果]；在飞期间 = 从发起到完成的闭区间。
 func TestLoadHammerChild(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(envChild) != "hammer" {
 		t.Skip("child runner")
 	}
@@ -64,6 +65,7 @@ func TestLoadHammerChild(t *testing.T) {
 
 // TestLoadReaderChild 同上：两个读者交替每 200ms 一个 ① 形状请求。
 func TestLoadReaderChild(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(envChild) != "reader" {
 		t.Skip("child runner")
 	}

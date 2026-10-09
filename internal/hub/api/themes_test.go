@@ -32,6 +32,7 @@ func newThemeHarness(t *testing.T) *harness {
 }
 
 func TestThemeWithoutContentCannotEnable(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	if _, err := h.upload(t, Minimal(t, "a"), ""); err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestThemeWithoutContentCannotEnable(t *testing.T) {
 }
 
 func TestLegacyThemeCannotExecute(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	pkg := Minimal(t, "legacy")
 	meta, err := h.upload(t, pkg, "")
@@ -131,6 +133,7 @@ func (h *harness) themeRows(t *testing.T) [2]int64 {
 
 // 上传 → 列出 → 启用 → 预览 → 删除 → 回落：删掉启用中的主题后没有启用的主题，库里不留它的任何行。
 func TestThemeRoundTrip(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	ctx := t.Context()
 	h.clk.Advance(time.Hour)
@@ -226,6 +229,7 @@ func TestThemeRoundTrip(t *testing.T) {
 
 // 每种被拒的包：InvalidArgument，错误写明位置与原因，库里的主题与文件行数不变（校验先于写入，写入是单事务）。
 func TestUploadThemeRejectsBadPackagesWithoutResidue(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	if _, err := h.upload(t, Minimal(t, "kept", File("kept.js", "1")), ""); err != nil {
 		t.Fatal(err)
@@ -273,6 +277,7 @@ func TestUploadThemeRejectsBadPackagesWithoutResidue(t *testing.T) {
 // 重叠的中央目录记录经 UploadTheme 同样在读任何内容之前被拒（theme.Parse 的注释写了推导）：InvalidArgument 写明
 // 声明的压缩字节总量与包长，库里不留行。2 秒的上限只用来区分"没有读内容"与"读了"（后者要把 1 MiB 的流解 2000 遍）。
 func TestUploadThemeRejectsOverlappingEntriesBeforeReadingThem(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	before := h.themeRows(t)
 	pkg := Overlapping(theme.MaxEntries, 1<<20)
@@ -294,6 +299,7 @@ func TestUploadThemeRejectsOverlappingEntriesBeforeReadingThem(t *testing.T) {
 // 贴着每条上限的合法包（展开 64 MiB、最大文件 16 MiB、包接近 8 MiB 且压缩字节之和接近包长）经 UploadTheme 装得上，
 // 每个普通文件一行。
 func TestUploadThemeAcceptsAPackageAtEveryLimit(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	pkg := AtLimits(t)
 	parsed, err := theme.Parse(pkg)
@@ -314,6 +320,7 @@ func TestUploadThemeAcceptsAPackageAtEveryLimit(t *testing.T) {
 
 // 同 ID 的新产物独立保留，安装与启用不可耦合。
 func TestUploadThemeExpectIDAndVersions(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	first, err := h.upload(t, Minimal(t, "a", File("old.js", "old")), "")
 	if err != nil {
@@ -364,6 +371,7 @@ func TestUploadThemeExpectIDAndVersions(t *testing.T) {
 // 先等第一个上传占住名额再探测：探测若赶在它前面，会短暂占住名额，让第一个上传反被拒绝。探测带 5 秒期限：名额
 // 被占时若改成排队，探测会一直停在信号量上，期限让用例当场以断言失败，而不是拖到 go test 的全局超时。
 func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	parked, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -418,6 +426,7 @@ func TestUploadThemeAdmitsOneAtATime(t *testing.T) {
 
 // 至多 20 个主题；第 21 个 id 被拒且不留行，已装的 id 仍可替换。
 func TestUploadThemeLimit(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	for i := range theme.MaxThemes {
 		if _, err := h.upload(t, Minimal(t, fmt.Sprintf("t%02d", i)), ""); err != nil {
@@ -438,6 +447,7 @@ func TestUploadThemeLimit(t *testing.T) {
 
 // 启用至多一个：启用 B 之后 A 不再启用；空 id 不启用任何主题；不存在的 id 被拒且不改状态。
 func TestEnableThemeIsExclusive(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	ctx := t.Context()
 	for _, id := range []string{"a", "b"} {
@@ -475,6 +485,7 @@ func TestEnableThemeIsExclusive(t *testing.T) {
 // 解码预算装得下满额的包在 JSON 里的 base64 与最坏转义的 expect_id：请求到得了方法体（包的校验给出 InvalidArgument），
 // 而不是在解码时被 ResourceExhausted 截下。多一个字节的包同样解码得到，由包的上限拒绝并写明字节数。
 func TestUploadThemeBudgetFitsAFullPackage(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	cookie := map[string][]string{"Cookie": {sessionCookieHeader(t, h)}}
 	for _, c := range []struct {
@@ -507,6 +518,7 @@ func TestUploadThemeBudgetFitsAFullPackage(t *testing.T) {
 // 给出 unauthenticated，其余过程在解码时就以 resource_exhausted（HTTP 429）拒绝并写明 maxSettingsBody；UploadTheme
 // 自己的上限是 maxThemeBody，多一字节同样被拒。1 MiB 的匿名 ListNodes 是这条界要挡的场景：借一个未知字段把请求撑大。
 func TestDecodeBudgetIsPerProcedure(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "")
 	// body 恰为 n 字节：{"package":"AAAA…"} 对 UploadTheme 是合法的 bytes 字段（A 解出零字节），对其余过程是未知字段；
 	// base64 取 4 的倍数个字符，余数用 JSON 允许的前导空白补齐。

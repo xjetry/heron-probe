@@ -14,6 +14,7 @@ import (
 )
 
 func TestAdminHTTPRejectsOpaqueAndCrossOriginBeforeSideEffects(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	for _, origin := range []string{"null", "https://elsewhere.test", h.srv.URL + ".evil", ""} {
 		headers := map[string][]string{"Cookie": {sessionCookieHeader(t, h)}}
@@ -40,6 +41,7 @@ func TestAdminHTTPRejectsOpaqueAndCrossOriginBeforeSideEffects(t *testing.T) {
 }
 
 func TestThemePreviewCapabilitiesExpireRevokeAndDoNotPublish(t *testing.T) {
+	t.Parallel()
 	h := newThemeHarness(t)
 	a, err := h.upload(t, themetest.Minimal(t, "a"), "")
 	if err != nil {
@@ -83,6 +85,7 @@ func TestThemePreviewCapabilitiesExpireRevokeAndDoNotPublish(t *testing.T) {
 }
 
 func TestPublicDirectoryCannotPretendToEnableHostedTheme(t *testing.T) {
+	t.Parallel()
 	h := newZonedHarness(t, "", time.UTC, store.DefaultRetention, withConfig(func(c *Config) { c.PublicDir = true }))
 	h.login(t)
 	a, err := h.upload(t, themetest.Minimal(t, "a"), "")
@@ -99,6 +102,7 @@ func TestPublicDirectoryCannotPretendToEnableHostedTheme(t *testing.T) {
 }
 
 func TestSecurityUsesTrustedCurrentHTTPSWithoutFlag(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t, "127.0.0.1/32")
 	h.login(t)
 	r, err := http.NewRequest("POST", h.srv.URL+"/heron.v1.AdminService/GetSecurity", strings.NewReader("{}"))
