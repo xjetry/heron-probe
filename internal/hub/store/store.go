@@ -200,12 +200,8 @@ func (s *Store) inTx(fn func(*sql.Tx) error) error {
 // write 返回错误意味着事务未应用，返回 nil 意味着已提交；入队后必须等到
 // runWriter 给出最终结果。中途放弃等待会让调用方在事务照常提交时误以为失败，
 // 据此不更新内存映射就会造成映射与库分叉。取消只阻止尚未开始的事务。
+// write 不看 ctx 里的类型化变更：它永不消费、永不审计，类型化变更的主写只经 writeChange（change.go）。
 func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
-	change, _ := ctx.Value(changeKey{}).(*Change)
-	activeChange := change != nil && !change.completed
-	if activeChange {
-		fn = s.changeWrite(ctx, change, fn)
-	}
 	s.closeMu.RLock()
 	if s.closed {
 		s.closeMu.RUnlock()
@@ -221,14 +217,7 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) error {
 		return ctx.Err()
 	}
 	s.closeMu.RUnlock()
-	err := <-req.res
-	if activeChange && err == nil {
-		change.completed = true
-	}
-	if activeChange && err != nil && !errors.Is(err, ErrReplay) {
-		change.CommittedAt = 0
-	}
-	return err
+	return <-req.res
 }
 
 // writeAsync 投递后立即返回；done 在写协程里被调用。队列满时丢弃并报告，

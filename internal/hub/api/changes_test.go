@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1043,4 +1045,316 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 			}
 		})
 	}
+}
+
+// changeExpectations 是 ExecuteChangeRequest.change 每个 oneof 分支期望映射到的操作，以及一份能被预览执行的请求。
+// 新增分支时这里没有条目，TestExecuteChangeCoversEveryOneofField 直接失败。
+type changeFixture struct {
+	node, other, probe, rule int64
+}
+
+var changeExpectations = map[string]struct {
+	action store.ChangeAction
+	build  func(f changeFixture) *heronv1.ExecuteChangeRequest
+}{
+	"create_node": {store.ActionCreateNode, func(changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_CreateNode{CreateNode: &heronv1.CreateNodeRequest{Name: "new"}}}
+	}},
+	"update_node": {store.ActionUpdateNode, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"note"}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: &heronv1.UpdateNodeRequest{Id: f.node, Note: "edited"}}}
+	}},
+	"delete_node": {store.ActionDeleteNode, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_DeleteNode{DeleteNode: &heronv1.DeleteNodeRequest{Id: f.node}}}
+	}},
+	"rotate_node_token": {store.ActionRotateNodeToken, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_RotateNodeToken{RotateNodeToken: &heronv1.RotateNodeTokenRequest{Id: f.node}}}
+	}},
+	"open_register_window": {store.ActionOpenRegisterWindow, func(changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_OpenRegisterWindow{OpenRegisterWindow: &heronv1.OpenRegisterWindowRequest{TtlS: 600, MaxNodes: 1}}}
+	}},
+	"close_register_window": {store.ActionCloseRegisterWindow, func(changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_CloseRegisterWindow{CloseRegisterWindow: &heronv1.CloseRegisterWindowRequest{}}}
+	}},
+	"save_probe_task": {store.ActionSaveProbeTask, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_SaveProbeTask{SaveProbeTask: &heronv1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{f.node}}}}
+	}},
+	"delete_probe_task": {store.ActionDeleteProbeTask, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_DeleteProbeTask{DeleteProbeTask: &heronv1.DeleteProbeTaskRequest{Id: uint64(f.probe)}}}
+	}},
+	"save_alert_rule": {store.ActionSaveAlertRule, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_SaveAlertRule{SaveAlertRule: &heronv1.SaveAlertRuleRequest{Rule: &heronv1.AlertRule{Name: "new-rule", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, NodeIds: []int64{f.node}}}}}
+	}},
+	"delete_alert_rule": {store.ActionDeleteAlertRule, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_DeleteAlertRule{DeleteAlertRule: &heronv1.DeleteAlertRuleRequest{Id: f.rule}}}
+	}},
+	"start_update": {store.ActionStartUpdate, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_StartUpdate{StartUpdate: &heronv1.StartUpdateRequest{NodeId: f.node, Version: "v0.2.0"}}}
+	}},
+	"cancel_update": {store.ActionCancelUpdate, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_CancelUpdate{CancelUpdate: &heronv1.CancelUpdateRequest{NodeId: f.other, Id: "queued-task"}}}
+	}},
+	"delete_tag": {store.ActionDeleteTag, func(changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_DeleteTag{DeleteTag: &heronv1.DeleteTagRequest{Name: "fixture-tag"}}}
+	}},
+}
+
+// TestExecuteChangeCoversEveryOneofField 按描述符枚举 change 的每个分支：prepareChange 必须把它映射到期望的操作，
+// 操作必须在 store 的登记表里（动作名与分支名相同、有种类），预览执行的回执以种类名为快照主键、资源身份正确，
+// 且不写回执。
+func TestExecuteChangeCoversEveryOneofField(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	var f changeFixture
+	f.node, _ = h.createNode(t, "target")
+	f.other, _ = h.createNode(t, "queued")
+	h.update(t, &heronv1.UpdateNodeRequest{Id: f.node, Name: "target", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Tags: []string{"fixture-tag"}})
+	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{f.node}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.probe = int64(saved.Msg.Task.Task.Id)
+	f.rule = saveRule(t, h, &heronv1.AlertRule{Name: "rule", Kind: heronv1.AlertKind_ALERT_KIND_OFFLINE, NodeIds: []int64{f.node}}).Id
+	if err := h.store.SaveNodeUpdate(t.Context(), f.node, &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SaveNodeUpdate(t.Context(), f.other, &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "queued-task", Version: "v0.2.0", State: "queued", ExpiresAt: h.clk.Now().Add(time.Hour).Unix()}}); err != nil {
+		t.Fatal(err)
+	}
+	manager := updates.New(h.store, h.clk, slog.Default(), "v0.2.0")
+	if err := manager.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.cfg.Updates = manager
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	receipts := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM operation").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	fields := (&heronv1.ExecuteChangeRequest{}).ProtoReflect().Descriptor().Oneofs().ByName("change").Fields()
+	if fields.Len() != len(changeExpectations) {
+		t.Errorf("change oneof has %d fields, expectations list %d", fields.Len(), len(changeExpectations))
+	}
+	for i := 0; i < fields.Len(); i++ {
+		field := fields.Get(i)
+		name := string(field.Name())
+		t.Run(name, func(t *testing.T) {
+			want, ok := changeExpectations[name]
+			if !ok {
+				t.Fatalf("ExecuteChangeRequest.%s has no expectation: register it in store's changeActions, prepareChange and changeExpectations", name)
+			}
+			m := want.build(f)
+			if got := m.ProtoReflect().WhichOneof(field.ContainingOneof()); got == nil || got.Name() != field.Name() {
+				t.Fatalf("expectation for %s builds a different branch: %v", name, got)
+			}
+			c, _, _, err := h.svc.prepareChange(t.Context(), proto.Clone(m).(*heronv1.ExecuteChangeRequest))
+			if err != nil {
+				t.Fatalf("prepareChange: %v", err)
+			}
+			if c.Action != want.action {
+				t.Fatalf("prepareChange mapped %s to %s, want %s", name, c.Action, want.action)
+			}
+			if c.Action.String() != name || c.Action.Kind() == 0 || c.Action.Permission() == "" {
+				t.Fatalf("action %d is not registered for %s: name=%q kind=%d permission=%q", c.Action, name, c.Action.String(), c.Action.Kind(), c.Action.Permission())
+			}
+			before := receipts()
+			m.Preview = true
+			r, err := h.admin.ExecuteChange(t.Context(), connect.NewRequest(m))
+			if err != nil {
+				t.Fatalf("preview: %v", err)
+			}
+			op := r.Msg.Operation
+			if r.Msg.ExpectedVersion == "" || op.CommittedAt != 0 || op.Action != name {
+				t.Fatalf("not a preview receipt: %v", r.Msg)
+			}
+			wantResource := c.ResourceID
+			if wantResource == 0 && (name == "create_node" || name == "save_probe_task" || name == "save_alert_rule") {
+				if op.ResourceId == 0 {
+					t.Fatalf("preview of %s did not allocate an identity", name)
+				}
+				wantResource = op.ResourceId
+			}
+			if op.ResourceId != wantResource {
+				t.Fatalf("receipt resource %d, want %d", op.ResourceId, wantResource)
+			}
+			for side, raw := range map[string]string{"before": op.BeforeJson, "after": op.AfterJson} {
+				var snapshot map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+					t.Fatalf("%s snapshot: %v", side, err)
+				}
+				if _, ok := snapshot[c.Action.Kind().String()]; !ok {
+					t.Fatalf("%s snapshot lacks the %s row: %s", side, c.Action.Kind(), raw)
+				}
+			}
+			if after := receipts(); after != before {
+				t.Fatalf("preview wrote %d receipts", after-before)
+			}
+		})
+	}
+}
+
+// stagedChange 按 ExecuteChange 的步骤装好一次变更（映射、字段补全、版本），把执行留给用例：用例用替身 handler
+// 驱动 runChange，覆盖真实 handler 走不到的接线错误。
+func stagedChange(t *testing.T, h *harness, m *heronv1.ExecuteChangeRequest, preview bool) (*store.Change, changeCall) {
+	t.Helper()
+	c, call, patch, err := h.svc.prepareChange(t.Context(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch != nil {
+		if err := patch(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.RequestID, c.RequestHash, c.Preview = "staged", "staged", preview
+	if c.ExpectedVersion, err = h.store.ChangeVersion(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+	return c, call
+}
+
+type nodeTrace struct {
+	name      string
+	tokenHash []byte
+	receipts  int
+}
+
+func traceNode(t *testing.T, h *harness, id int64) nodeTrace {
+	t.Helper()
+	db, err := sql.Open("sqlite", h.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var out nodeTrace
+	if err := db.QueryRow("SELECT name, token_hash FROM node WHERE id=?", id).Scan(&out.name, &out.tokenHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM operation").Scan(&out.receipts); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// 轮换 token 的 handler 若在主写之前接错线、先做一次同一节点上改节点目标的写，整次变更必须失败且不留任何痕迹：
+// 名字、凭据哈希、回执与内存里的凭据映射都不变。预览与正式各一遍。
+func TestChangeSiblingFirstWriteLeavesNoTrace(t *testing.T) {
+	for _, preview := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
+			h := newHarness(t, "")
+			h.login(t)
+			node, token := h.createNode(t, "original")
+			before := traceNode(t, h, node)
+			c, rotate := stagedChange(t, h, &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_RotateNodeToken{RotateNodeToken: &heronv1.RotateNodeTokenRequest{Id: node}}}, preview)
+			miswired := func(ctx context.Context) (proto.Message, error) {
+				if _, err := h.store.UpdateNode(ctx, node, store.NodeEdit{Name: "renamed", TrafficResetDay: 1}); !errors.Is(err, store.ErrChangeTarget) {
+					t.Errorf("sibling write: %v, want ErrChangeTarget", err)
+				}
+				return rotate(ctx)
+			}
+			if _, err := h.svc.runChange(t.Context(), c, miswired); connect.CodeOf(err) != connect.CodeInternal {
+				t.Fatalf("miswired rotate: %v, want Internal", err)
+			}
+			if after := traceNode(t, h, node); after.name != before.name || !bytes.Equal(after.tokenHash, before.tokenHash) || after.receipts != 0 {
+				t.Fatalf("refused change left a trace: before=%+v after=%+v", before, after)
+			}
+			if id, ok := h.auth.Authenticate(token); !ok || id != node {
+				t.Fatal("refused rotate revoked the live credential")
+			}
+		})
+	}
+}
+
+func TestRunChangeTerminalStates(t *testing.T) {
+	h := newHarness(t, "")
+	h.login(t)
+	node, _ := h.createNode(t, "original")
+	var logs bytes.Buffer
+	h.svc.log = slog.New(slog.NewTextHandler(&logs, nil))
+	update := func(note string) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"note"}}, Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: &heronv1.UpdateNodeRequest{Id: node, Note: note}}}
+	}
+	note := func() string {
+		t.Helper()
+		n, err := h.store.GetNode(t.Context(), node)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n.Note
+	}
+
+	t.Run("zero consumption", func(t *testing.T) {
+		logs.Reset()
+		c, _ := stagedChange(t, h, update("never"), false)
+		idle := func(ctx context.Context) (proto.Message, error) {
+			// 一次普通写不消费变更；handler 随后成功返回却没有主写。
+			return nil, h.store.ReorderNodes(ctx, []int64{node})
+		}
+		if _, err := h.svc.runChange(t.Context(), c, idle); connect.CodeOf(err) != connect.CodeInternal {
+			t.Fatalf("handler without primary write: %v, want Internal", err)
+		}
+		if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "without committing its primary write") || !strings.Contains(logs.String(), "action=update_node") {
+			t.Fatalf("zero consumption not logged with the action: %s", logs.String())
+		}
+		if traceNode(t, h, node).receipts != 0 || note() != "" {
+			t.Fatal("zero consumption changed state")
+		}
+	})
+
+	t.Run("business rejection", func(t *testing.T) {
+		c, _ := stagedChange(t, h, update("rejected"), false)
+		rejected := func(context.Context) (proto.Message, error) { return nil, invalid("note: rejected") }
+		if _, err := h.svc.runChange(t.Context(), c, rejected); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("business error was not passed through: %v", err)
+		}
+		if c.Claimed() || traceNode(t, h, node).receipts != 0 {
+			t.Fatal("business rejection used the change or wrote a receipt")
+		}
+	})
+
+	t.Run("preview", func(t *testing.T) {
+		c, call := stagedChange(t, h, update("previewed"), true)
+		r, err := h.svc.runChange(t.Context(), c, call)
+		if err != nil || r.Msg.ExpectedVersion == "" || !strings.Contains(r.Msg.Operation.AfterJson, "previewed") || r.Msg.Operation.CommittedAt != 0 {
+			t.Fatalf("preview: %v %v", r, err)
+		}
+		if traceNode(t, h, node).receipts != 0 || note() != "" {
+			t.Fatal("preview changed state")
+		}
+	})
+
+	t.Run("second primary write", func(t *testing.T) {
+		c, call := stagedChange(t, h, update("first"), false)
+		twice := func(ctx context.Context) (proto.Message, error) {
+			if _, err := call(ctx); err != nil {
+				return nil, err
+			}
+			_, err := h.store.UpdateNode(ctx, node, store.NodeEdit{Name: "original", Note: "second", TrafficResetDay: 1})
+			return nil, err
+		}
+		r, err := h.svc.runChange(t.Context(), c, twice)
+		if err != nil || r.Msg.Operation.CommittedAt == 0 {
+			t.Fatalf("committed receipt lost: %v %v", r, err)
+		}
+		if got := note(); got != "first" || traceNode(t, h, node).receipts != 1 {
+			t.Fatalf("second primary write applied: note=%q", got)
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		c, call := stagedChange(t, h, update("done"), false)
+		c.RequestID = "success"
+		r, err := h.svc.runChange(t.Context(), c, call)
+		if err != nil || r.Msg.Operation.CommittedAt == 0 || r.Msg.Result == nil || note() != "done" {
+			t.Fatalf("success: %v %v", r, err)
+		}
+	})
 }

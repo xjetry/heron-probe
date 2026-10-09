@@ -407,7 +407,7 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 	if r.AllNodes {
 		r.NodeIDs = nil
 	}
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionSaveAlertRule, ResourceID: r.ID}, func(tx *sql.Tx) error {
 		for _, id := range r.NodeIDs {
 			exists, err := nodeExistsTx(tx, id)
 			if err != nil {
@@ -555,7 +555,7 @@ func requireHTTPSProbeTask(tx *sql.Tx, id int64) error {
 }
 
 func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteAlertRule, ResourceID: id}, func(tx *sql.Tx) error {
 		if err := deleteAlertEntity(tx, "alert_rule", ObjectAlertRule, id); err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -107,7 +108,7 @@ func TestAgenticDeferredCommitFailure(t *testing.T) {
 	if _, _, err := s.CreateNode(WithChange(t.Context(), c), "pending", Billing{}, hash(1)); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Fatalf("deferred commit constraint did not fail: %v", err)
 	}
-	if c.ID == "" || c.CommittedAt != 0 || c.completed {
+	if c.ID == "" || c.CommittedAt != 0 || !c.claimed {
 		t.Fatalf("failed commit reported applied change: %+v", c)
 	}
 	for _, table := range []string{"node", "operation", "commit_guard"} {
@@ -153,7 +154,7 @@ func TestQueuedUpdateRevocationAndRegisterOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := &heronv1.UpdateStatus{Supported: true, Task: &heronv1.UpdateTask{Id: "update", State: "queued"}}
-	if err := s.SaveNodeUpdate(WithChange(ctx, c), node, status); err != nil {
+	if err := s.StartNodeUpdate(WithChange(ctx, c), node, status); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DeleteAPIToken(t.Context(), p.ID); err != nil {
@@ -224,5 +225,228 @@ func TestAgenticReceiptsSurviveRestartRestoreAndRetention(t *testing.T) {
 	nodes, err := reopened.ListNodes(ctx)
 	if err != nil || len(nodes) != 1 || nodes[0].Name != "first" {
 		t.Fatalf("retry mutated restored configuration: %+v %v", nodes, err)
+	}
+}
+
+// targetFixture 是一个节点与一个读它原始状态的探针：名字、凭据哈希与回执行数。
+type targetFixture struct {
+	s    *Store
+	node int64
+}
+
+func newTargetFixture(t *testing.T) targetFixture {
+	t.Helper()
+	s, _ := open(t)
+	node, _, err := s.CreateNode(t.Context(), "original", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return targetFixture{s: s, node: node}
+}
+
+func (f targetFixture) state(t *testing.T) (name string, token []byte, receipts int) {
+	t.Helper()
+	if err := f.s.r.QueryRow("SELECT name, token_hash FROM node WHERE id=?", f.node).Scan(&name, &token); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.r.QueryRow("SELECT COUNT(*) FROM operation").Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	return name, token, receipts
+}
+
+func (f targetFixture) change(t *testing.T, action ChangeAction, preview bool) *Change {
+	t.Helper()
+	c := &Change{Operation: Operation{RequestID: action.String(), RequestHash: "h", ResourceID: f.node}, Action: action, Policy: permitPolicy{}, Preview: preview}
+	if action == ActionCreateNode {
+		c.ResourceID = 0
+	}
+	var err error
+	if c.ExpectedVersion, err = f.s.ChangeVersion(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func rename(name string) NodeEdit { return NodeEdit{Name: name, TrafficResetDay: 1} }
+
+// 同一节点上的兄弟操作：轮换 token 的变更下先来一次改节点目标的写。只比种类与资源时它会被当成主写审计提交，
+// 节点快照不含凭据哈希，回执差异为空，随后的凭据写绕过审计。按操作比对时它在开事务之前被拒绝，库里没有任何
+// 行变化，主写机会随之用掉，后面真正的凭据写也被拒绝。
+func TestChangeTargetRejectsSiblingFirstWrite(t *testing.T) {
+	for _, preview := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preview=%t", preview), func(t *testing.T) {
+			f := newTargetFixture(t)
+			c := f.change(t, ActionRotateNodeToken, preview)
+			ctx := WithChange(t.Context(), c)
+			if _, err := f.s.UpdateNode(ctx, f.node, rename("renamed")); !errors.Is(err, ErrChangeTarget) {
+				t.Fatalf("sibling write under rotate: %v, want ErrChangeTarget", err)
+			}
+			if !errors.Is(c.Err, ErrChangeTarget) || !c.claimed {
+				t.Fatalf("mismatched first write not recorded on the change: err=%v claimed=%t", c.Err, c.claimed)
+			}
+			if err := f.s.SetTokenHash(ctx, f.node, hash(2)); !errors.Is(err, ErrChangeTarget) {
+				t.Fatalf("primary write after a mismatched one: %v, want ErrChangeTarget", err)
+			}
+			if name, token, receipts := f.state(t); name != "original" || !slices.Equal(token, hash(1)) || receipts != 0 {
+				t.Fatalf("refused writes changed rows: name=%q token=%x receipts=%d", name, token, receipts)
+			}
+		})
+	}
+}
+
+func TestChangeTargetMatchesActionAndResource(t *testing.T) {
+	f := newTargetFixture(t)
+	other, _, err := f.s.CreateNode(t.Context(), "other", Billing{}, hash(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := f.change(t, ActionUpdateNode, false)
+	if _, err := f.s.UpdateNode(WithChange(t.Context(), c), other, rename("wrong")); !errors.Is(err, ErrChangeTarget) {
+		t.Fatalf("write on another resource: %v", err)
+	}
+	create := f.change(t, ActionCreateNode, false)
+	create.ResourceID = f.node
+	if _, _, err := f.s.CreateNode(WithChange(t.Context(), create), "x", Billing{}, hash(4)); !errors.Is(err, ErrChangeTarget) {
+		t.Fatalf("create carrying a resource id: %v", err)
+	}
+	if _, err := f.s.GetNode(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	if name, _, receipts := f.state(t); name != "original" || receipts != 0 {
+		t.Fatalf("refused writes changed rows: name=%q receipts=%d", name, receipts)
+	}
+	// 没有变更的 ctx：目标写方法就是普通写。
+	if _, err := f.s.UpdateNode(t.Context(), f.node, rename("direct")); err != nil {
+		t.Fatal(err)
+	}
+	if name, _, receipts := f.state(t); name != "direct" || receipts != 0 {
+		t.Fatalf("direct write: name=%q receipts=%d", name, receipts)
+	}
+}
+
+// 普通写永不消费变更：主写之前的普通写照常提交、不审计，主写仍是被审计的那一次；主写之后的派生写同样照常。
+func TestPlainWritesNeverConsumeTheChange(t *testing.T) {
+	f := newTargetFixture(t)
+	c := f.change(t, ActionUpdateNode, false)
+	ctx := WithChange(t.Context(), c)
+	if err := f.s.ReorderNodes(ctx, []int64{f.node}); err != nil {
+		t.Fatal(err)
+	}
+	if c.claimed {
+		t.Fatal("plain write consumed the change")
+	}
+	if _, err := f.s.UpdateNode(ctx, f.node, rename("audited")); err != nil || c.CommittedAt == 0 || !strings.Contains(c.AfterJSON, "audited") {
+		t.Fatalf("primary write after a plain one: receipt=%+v err=%v", c.Operation, err)
+	}
+	if err := f.s.ReorderNodes(ctx, []int64{f.node}); err != nil {
+		t.Fatalf("derived plain write after commit: %v", err)
+	}
+	if name, _, receipts := f.state(t); name != "audited" || receipts != 1 {
+		t.Fatalf("name=%q receipts=%d", name, receipts)
+	}
+}
+
+func TestChangeTargetPreviewRollsBack(t *testing.T) {
+	f := newTargetFixture(t)
+	c := f.change(t, ActionUpdateNode, true)
+	if _, err := f.s.UpdateNode(WithChange(t.Context(), c), f.node, rename("previewed")); !errors.Is(err, ErrPreview) {
+		t.Fatalf("preview: %v", err)
+	}
+	if c.Version == "" || c.Version != c.ExpectedVersion || c.BeforeJSON == c.AfterJSON || !strings.Contains(c.AfterJSON, "previewed") || c.Operation.Action != "update_node" || c.CommittedAt != 0 {
+		t.Fatalf("preview receipt: version=%q expected=%q op=%+v", c.Version, c.ExpectedVersion, c.Operation)
+	}
+	if name, _, receipts := f.state(t); name != "original" || receipts != 0 {
+		t.Fatalf("preview changed rows: name=%q receipts=%d", name, receipts)
+	}
+}
+
+// 一次变更只有一个主写：第二次 writeChange 被拒绝，第一次已提交的业务写与回执保留。
+func TestChangeTargetRejectsSecondPrimaryWrite(t *testing.T) {
+	f := newTargetFixture(t)
+	c := f.change(t, ActionUpdateNode, false)
+	ctx := WithChange(t.Context(), c)
+	if _, err := f.s.UpdateNode(ctx, f.node, rename("first")); err != nil {
+		t.Fatal(err)
+	}
+	committed := c.Operation
+	if _, err := f.s.UpdateNode(ctx, f.node, rename("second")); !errors.Is(err, ErrChangeTarget) {
+		t.Fatalf("second primary write: %v", err)
+	}
+	if c.Err != nil || c.Operation != committed || c.CommittedAt == 0 {
+		t.Fatalf("refused second write disturbed the committed change: err=%v op=%+v", c.Err, c.Operation)
+	}
+	if name, _, receipts := f.state(t); name != "first" || receipts != 1 {
+		t.Fatalf("name=%q receipts=%d", name, receipts)
+	}
+	o, err := f.s.FindOperation(t.Context(), 0, c.RequestID)
+	if err != nil || o.ID != committed.ID || !strings.Contains(o.AfterJSON, "first") {
+		t.Fatalf("committed receipt: %+v %v", o, err)
+	}
+}
+
+// 业务拒绝发生在主写之前：变更没有被使用，库与回执都不变。
+func TestBusinessRejectionLeavesChangeUnclaimed(t *testing.T) {
+	f := newTargetFixture(t)
+	c := &Change{Operation: Operation{RequestID: "probe", RequestHash: "h"}, Action: ActionSaveProbeTask, Policy: permitPolicy{}}
+	var err error
+	if c.ExpectedVersion, err = f.s.ChangeVersion(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.s.SaveProbeTask(WithChange(t.Context(), c), &heronv1.ProbeTask{}, NodeSelector{AllNodes: true, NodeIDs: []int64{f.node}}); err == nil {
+		t.Fatal("contradictory selector accepted")
+	}
+	if c.claimed || c.Err != nil || c.CommittedAt != 0 {
+		t.Fatalf("rejected request used the change: %+v", c)
+	}
+	if _, _, receipts := f.state(t); receipts != 0 {
+		t.Fatalf("receipts=%d", receipts)
+	}
+}
+
+func TestWithChangeRejectsMisassembly(t *testing.T) {
+	for name, c := range map[string]*Change{
+		"nil policy":          {Action: ActionDeleteTag},
+		"unregistered action": {Policy: permitPolicy{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("misassembled change accepted")
+				}
+			}()
+			WithChange(t.Context(), c)
+		})
+	}
+}
+
+// 开始与取消更新共用 saveNodeUpdate，但各自声明目标：取消的变更下调用开始更新的写被拒绝，节点更新状态不变；
+// 后台对账的 SaveNodeUpdate 不声明目标，不会用掉变更。
+func TestNodeUpdateSiblingsDeclareDistinctTargets(t *testing.T) {
+	f := newTargetFixture(t)
+	initial := &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "queued", State: "queued"}}
+	if err := f.s.SaveNodeUpdate(t.Context(), f.node, initial); err != nil {
+		t.Fatal(err)
+	}
+	c := f.change(t, ActionCancelUpdate, false)
+	ctx := WithChange(t.Context(), c)
+	if err := f.s.SaveNodeUpdate(ctx, f.node, initial); err != nil || c.claimed {
+		t.Fatalf("reconcile write under a change: claimed=%t err=%v", c.claimed, err)
+	}
+	started := &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "other", State: "queued"}}
+	if err := f.s.StartNodeUpdate(ctx, f.node, started); !errors.Is(err, ErrChangeTarget) {
+		t.Fatalf("start under cancel: %v, want ErrChangeTarget", err)
+	}
+	states, err := f.s.NodeUpdates(t.Context())
+	if err != nil || states[f.node].GetTask().GetId() != "queued" {
+		t.Fatalf("refused start changed the update state: %v %v", states[f.node], err)
+	}
+	if _, _, receipts := f.state(t); receipts != 0 {
+		t.Fatalf("receipts=%d", receipts)
+	}
+	cancel := f.change(t, ActionCancelUpdate, false)
+	cancelled := &heronv1.UpdateStatus{Supported: true, Version: "v0.1.0", Task: &heronv1.UpdateTask{Id: "queued", State: "cancelled"}}
+	if err := f.s.CancelNodeUpdate(WithChange(t.Context(), cancel), f.node, cancelled); err != nil || cancel.CommittedAt == 0 {
+		t.Fatalf("matching cancel: receipt=%+v err=%v", cancel.Operation, err)
 	}
 }

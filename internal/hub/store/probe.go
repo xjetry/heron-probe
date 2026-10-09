@@ -212,7 +212,7 @@ func (s *Store) SaveProbeTask(ctx context.Context, t *heronv1.ProbeTask, selecto
 	saved := &heronv1.ProbeTask{Id: t.GetId(), Kind: t.GetKind(), Target: t.GetTarget(), IntervalS: t.GetIntervalS(), TimeoutMs: t.GetTimeoutMs(), DnsServer: t.GetDnsServer()}
 	rec := ProbeTaskRecord{Task: saved, AllNodes: allNodes}
 	var version int64
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionSaveProbeTask, ResourceID: int64(saved.Id)}, func(tx *sql.Tx) error {
 		var stored *heronv1.ProbeTask
 		if saved.Id != 0 {
 			existing, err := loadProbeTaskTx(tx, saved.Id)
@@ -419,7 +419,7 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 // 被证书到期规则引用的任务由 checkAlertReferences 拦下，删不掉，probe_cert 行不会因删任务而成为孤儿。
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionDeleteProbeTask, ResourceID: int64(id)}, func(tx *sql.Tx) error {
 		if err := checkAlertReferences(ctx, tx, "SELECT id, name FROM alert_rule WHERE task_id = ? ORDER BY id", ObjectProbeTask, int64(id)); err != nil {
 			return err
 		}

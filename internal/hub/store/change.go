@@ -1,3 +1,29 @@
+// 类型化变更（ExecuteChange）在 store 一侧的写边界。
+//
+// handler 照常调用 store 的写方法，变更经 ctx 携带（WithChange）。每个作为类型化变更目标的写方法经 writeChange
+// 声明自己的目标 ChangeTarget{Action, ResourceID}，其余写经 write。writeChange 在执行任何 SQL 之前裁决：
+//   - ctx 没有变更：等同 write（直接 RPC 路径）；
+//   - 变更尚未用过它唯一的一次主写，Action 相同，且建资源的操作 ResourceID 为 0、其它操作 ResourceID 相同：
+//     这是主写，按 changeWrite 在同一事务里完成授权、重放、版本比对、业务写、回执；
+//   - 否则返回 ErrChangeTarget，不开事务。
+//
+// 比对带 Action 而不只是种类与资源：改节点与轮换 token 是同一节点上的兄弟操作，开始与取消更新同理。只比种类与
+// 资源时，轮换的 handler 若先做了一次改节点目标的写，那次写会被当成主写审计提交并用掉变更，真正的凭据写随后作为
+// 普通写绕过审计；节点快照不含凭据哈希，回执上看不出凭据被换过，那次写若没改快照列，回执差异就是空的。
+//
+// 一次变更只有一次主写机会：主写（无论成败）或一次不匹配的 writeChange 都会用掉它，之后的 writeChange 一律
+// 返回 ErrChangeTarget；提交之后的派生写走 write，不受影响。write 永不消费变更、永不审计。
+//
+// 各状态的结果：
+//   - 成功：主写提交并写回执，派生写照常提交；
+//   - 预览：主写在回执前以 ErrPreview 回滚，Change 带回写前写后快照与版本，库无变化；
+//   - 重放：同键回执已存在，主写以 ErrReplay 返回、不执行业务写，Change 带回原回执；
+//   - 业务拒绝：handler 在主写之前返回错误，变更未被使用，ExecuteChange 原样返回该错误，operation 无行；
+//   - 零消费：handler 成功返回却没有提交主写，ExecuteChange 回答 Internal 并记 Error 日志点名操作；
+//   - 错误首写：第一次 writeChange 与目标不符，返回 ErrChangeTarget 并记进 Change.Err，这次与之后的 writeChange
+//     都不开事务，ExecuteChange 回答 Internal；
+//   - 重复主写：主写之后再来一次 writeChange，返回 ErrChangeTarget，已提交的主写与回执保留。
+
 package store
 
 import (
@@ -11,10 +37,12 @@ import (
 )
 
 var (
-	ErrPreview   = errors.New("change preview rolled back")
-	ErrReplay    = errors.New("change already committed")
-	ErrConflict  = errors.New("resource changed; preview again")
-	ErrRequestID = errors.New("request_id was used for a different change")
+	// ErrChangeTarget 是写方法声明的目标与 ctx 里的变更不符，或变更的主写已被用掉；它总是 handler 接线错误。
+	ErrChangeTarget = errors.New("write does not match the change it runs under")
+	ErrPreview      = errors.New("change preview rolled back")
+	ErrReplay       = errors.New("change already committed")
+	ErrConflict     = errors.New("resource changed; preview again")
+	ErrRequestID    = errors.New("request_id was used for a different change")
 )
 
 type Operation struct {
@@ -97,7 +125,7 @@ type changeActionSpec struct {
 	// creates 的操作在写之前没有资源身份：ResourceID 必须为 0，写后由种类的 sequence 填入。
 	creates bool
 	// authorizeAfterWrite 的操作在写后、ResourceID 已知时再做一次资源授权：保存可能新建资源或改变它的作用域，
-	// 写前只能裁决旧状态与请求里的选择器。
+	// 写前只能裁决旧状态与请求里的选择器。删除同样登记，写后读不到资源即放行（见 RuleInScope）。
 	authorizeAfterWrite bool
 }
 
@@ -203,9 +231,10 @@ type Change struct {
 	ExpectedVersion string
 	Version         string
 	Err             error
-	completed       bool
-	Selector        *NodeSelector
-	ReferenceTask   int64
+	// claimed 记录唯一的主写机会是否已用掉，只由 claim 置位。
+	claimed       bool
+	Selector      *NodeSelector
+	ReferenceTask int64
 }
 
 // ChangeReader 是策略在写事务内（或 ChangeVersion 的读事务内）可做的全部读取。策略只经它读库，裁决与写
@@ -282,6 +311,72 @@ func WithChange(ctx context.Context, c *Change) context.Context {
 	return context.WithValue(ctx, changeKey{}, c)
 }
 
+// ChangeTarget 是写方法声明的类型化变更目标。建资源的操作没有写前身份，ResourceID 不参与比对。
+type ChangeTarget struct {
+	Action     ChangeAction
+	ResourceID int64
+}
+
+// Claimed 报告这次变更是否已用掉它唯一的主写机会。
+func (c *Change) Claimed() bool { return c.claimed }
+
+// claim 在执行任何 SQL 之前裁决 target 是否是 c 的主写，规则见包注释。第一次 writeChange 就不符时把错误记进
+// c.Err：此时没有提交任何东西，ExecuteChange 据 c.Err 回答，handler 吞掉这个错误也改变不了结果。
+func (c *Change) claim(target ChangeTarget) error {
+	action, _, err := c.spec()
+	if err != nil {
+		return err
+	}
+	var mismatch string
+	switch {
+	case c.claimed:
+		mismatch = "the change has already used its primary write"
+	case target.Action != c.Action:
+		mismatch = fmt.Sprintf("the write targets %s", target.Action)
+	case action.creates && c.ResourceID != 0:
+		mismatch = fmt.Sprintf("a create carries resource %d", c.ResourceID)
+	case !action.creates && target.ResourceID != c.ResourceID:
+		mismatch = fmt.Sprintf("the write targets resource %d", target.ResourceID)
+	}
+	if mismatch == "" {
+		c.claimed = true
+		return nil
+	}
+	err = fmt.Errorf("%w: change %s on resource %d: %s", ErrChangeTarget, c.Action, c.ResourceID, mismatch)
+	if !c.claimed {
+		c.claimed = true
+		c.Err = err
+	}
+	return err
+}
+
+// writeChange 是类型化变更目标的写入口：ctx 没有变更时等同 write，有变更时先经 claim 裁决，再把 fn 包进
+// changeWrite。write 的契约不变：错误（含预览、重放）表示事务未应用。
+func (s *Store) writeChange(ctx context.Context, target ChangeTarget, fn func(*sql.Tx) error) error {
+	c, _ := ctx.Value(changeKey{}).(*Change)
+	if c == nil {
+		return s.write(ctx, fn)
+	}
+	if err := c.claim(target); err != nil {
+		s.log.Error("typed change write refused", "err", err)
+		return err
+	}
+	err := s.write(ctx, s.changeWrite(ctx, c, fn))
+	// changeWrite 在事务内填好 CommittedAt；提交失败时回执并未落库，不能留给调用方当作已提交。重放带回的是库里
+	// 已提交的原回执，保留。
+	if err != nil && !errors.Is(err, ErrReplay) {
+		c.CommittedAt = 0
+	}
+	return err
+}
+
+// changeTarget 把 writeChange 绑定到一个固定目标，供共用实现的写方法按操作各自声明目标。
+func (s *Store) changeTarget(action ChangeAction, id int64) func(context.Context, func(*sql.Tx) error) error {
+	return func(ctx context.Context, fn func(*sql.Tx) error) error {
+		return s.writeChange(ctx, ChangeTarget{Action: action, ResourceID: id}, fn)
+	}
+}
+
 // changeWrite 包住一个业务提交，不包住提交后的后台派生工作。错误（含预览、重放）仍按
 // write 的契约表示本次事务没有应用，auth、探测和告警缓存因此不会发布回滚后的状态。
 func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) error) func(*sql.Tx) error {
@@ -329,7 +424,8 @@ func (s *Store) changeWrite(ctx context.Context, c *Change, fn func(*sql.Tx) err
 		if err := fn(tx); err != nil {
 			return err
 		}
-		// ResourceID 为 0 的成功写只能是建资源（建节点，或不带 id 的保存探测任务、告警规则）：身份在写里才分配。
+		// 带 sequence 的种类（节点、探测任务、告警规则）由 AUTOINCREMENT 分配身份，0 不是任何现存行的身份，这些种类上
+		// ResourceID 为 0 的成功写只能是新建（建节点，或不带 id 的保存）：身份在写里才分配。
 		if c.ResourceID == 0 && kind.sequence != "" {
 			if err := tx.QueryRow(kind.sequence).Scan(&c.ResourceID); err != nil {
 				return err

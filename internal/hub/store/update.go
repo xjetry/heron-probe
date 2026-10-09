@@ -33,9 +33,24 @@ func (s *Store) NodeUpdates(ctx context.Context) (map[int64]*heronv1.UpdateStatu
 	return out, rows.Err()
 }
 
+// SaveNodeUpdate 落下后台对账得出的更新状态（下发、确认、超时），不是任何类型化变更的目标。
 func (s *Store) SaveNodeUpdate(ctx context.Context, id int64, status *heronv1.UpdateStatus) error {
+	return s.saveNodeUpdate(ctx, id, status, s.write)
+}
+
+// StartNodeUpdate 把节点排进一次更新，是开始更新的类型化变更目标。
+func (s *Store) StartNodeUpdate(ctx context.Context, id int64, status *heronv1.UpdateStatus) error {
+	return s.saveNodeUpdate(ctx, id, status, s.changeTarget(ActionStartUpdate, id))
+}
+
+// CancelNodeUpdate 撤回一次排队中的更新，是取消更新的类型化变更目标。
+func (s *Store) CancelNodeUpdate(ctx context.Context, id int64, status *heronv1.UpdateStatus) error {
+	return s.saveNodeUpdate(ctx, id, status, s.changeTarget(ActionCancelUpdate, id))
+}
+
+func (s *Store) saveNodeUpdate(ctx context.Context, id int64, status *heronv1.UpdateStatus, commit func(context.Context, func(*sql.Tx) error) error) error {
 	saved := proto.Clone(status).(*heronv1.UpdateStatus)
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := commit(ctx, func(tx *sql.Tx) error {
 		var owner int64
 		var oldData string
 		if err := tx.QueryRow("SELECT owner_id,data FROM node_update WHERE node_id=?", id).Scan(&owner, &oldData); err != nil && !errors.Is(err, sql.ErrNoRows) {

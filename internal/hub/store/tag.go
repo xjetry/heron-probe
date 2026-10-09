@@ -210,15 +210,22 @@ func (s *Store) TagID(ctx context.Context, name string) (int64, error) {
 }
 
 // DeleteTag 删除按 TagFold 与 name 相同的标签并解除它的全部关联，节点本身不动。没有这个标签时返回 ErrNotFound。
+//
+// 它是删标签的类型化变更目标，目标要在写事务之前声明，所以标签身份先从读连接解析；写事务只删这个身份，
+// 并核对它仍叫这个名字：两次读取之间标签被删掉或换了身份时按不存在回答，不会删掉另一个同名的新标签。
 func (s *Store) DeleteTag(ctx context.Context, name string) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		var id int64
-		err := tx.QueryRow("SELECT id FROM tag WHERE name_fold = ?", TagFold(name)).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
+	fold := TagFold(name)
+	id, err := s.TagID(ctx, name)
+	if err != nil {
+		return err
+	}
+	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteTag, ResourceID: id}, func(tx *sql.Tx) error {
+		var same bool
+		if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM tag WHERE id = ? AND name_fold = ?)", id, fold).Scan(&same); err != nil {
 			return err
+		}
+		if !same {
+			return ErrNotFound
 		}
 		rows, err := tx.Query(`SELECT 'probe task', p.id, p.target FROM probe_task_tag st JOIN probe_task p ON p.id = st.task_id WHERE st.tag_id = ?
 UNION ALL SELECT 'alert rule', r.id, r.name FROM alert_rule_tag st JOIN alert_rule r ON r.id = st.rule_id WHERE st.tag_id = ?

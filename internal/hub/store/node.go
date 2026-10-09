@@ -303,7 +303,7 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 	if e.TrafficQuotaBytes == 0 {
 		e.TrafficQuotaMode = "sum"
 	}
-	err = s.write(ctx, func(tx *sql.Tx) error {
+	err = s.writeChange(ctx, ChangeTarget{Action: ActionUpdateNode, ResourceID: id}, func(tx *sql.Tx) error {
 		var old Billing
 		var oldQuota uint64
 		var oldMode string
@@ -527,7 +527,7 @@ func (s *Store) MoveNodes(ctx context.Context, ids []int64, position uint32) err
 // DeleteNode 在同一写事务中显式删除节点及从属行；schema 未声明级联外键，
 // 因而清理必须由本函数完成，不依赖连接是否开启外键约束。
 func (s *Store) DeleteNode(ctx context.Context, id int64) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteNode, ResourceID: id}, func(tx *sql.Tx) error {
 		res, err := tx.Exec("DELETE FROM node WHERE id = ?", id)
 		if err != nil {
 			return err
@@ -557,7 +557,7 @@ type NewNodeTasks struct {
 func (s *Store) CreateNode(ctx context.Context, name string, billing Billing, tokenHash []byte) (int64, NewNodeTasks, error) {
 	var id int64
 	var tasks NewNodeTasks
-	err := s.write(ctx, func(tx *sql.Tx) error {
+	err := s.writeChange(ctx, ChangeTarget{Action: ActionCreateNode}, func(tx *sql.Tx) error {
 		var err error
 		id, tasks, err = insertNode(tx, name, billing, tokenHash, s.clk.Now().Unix(), true)
 		if err != nil {
@@ -606,8 +606,9 @@ func insertNode(tx *sql.Tx, name string, billing Billing, tokenHash []byte, crea
 	return id, tasks, nil
 }
 
+// SetTokenHash 换发节点凭据，是轮换 token 的类型化变更目标；安装凭据被认领时也经这里，那条路径不带变更。
 func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionRotateNodeToken, ResourceID: id}, func(tx *sql.Tx) error {
 		res, err := tx.Exec("UPDATE node SET token_hash = ? WHERE id = ?", hash, id)
 		if err != nil {
 			return err

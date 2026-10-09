@@ -56,7 +56,8 @@ func (g TokenGrant) AllowsSelector(all bool, tags []string, ids []int64) bool {
 // RuleInScope 报告 grant 是否覆盖探测任务或告警规则 id 当前作用域里的每一个节点：全部节点与标签选择器只有
 // 全部节点的 grant 覆盖，显式节点必须逐个在 grant 内，空显式集合不归任何主体（同 AllowsSelector）；告警规则
 // 还要求它引用的探测任务同样被覆盖。资源不存在时没有未被覆盖的节点，结果为真——写侧在删除之前已按资源存在时
-// 的作用域裁决过，删除之后的写后授权读到无行即放行；读侧只对事务里读到的现存行调用它。
+// 的作用域裁决过，删除之后的写后授权读到无行即放行；读侧只对事务里读到的现存行调用它。告警规则的 task_id 没有
+// 外键，引用的探测任务不存在时同样为真。
 // 变更策略与读侧可见性过滤（告警规则列表、引用错误里的隐藏规则）共用这一个判定，二者口径不会分叉。
 func RuleInScope(r ChangeReader, g TokenGrant, kind ChangeKind, id int64) (bool, error) {
 	if g.AllNodes {

@@ -13,7 +13,7 @@ type Window struct {
 
 // SetRegisterWindow 只替换当前主体的窗口；owner_id=0 是面板会话共享的窗口。
 func (s *Store) SetRegisterWindow(ctx context.Context, keyHash []byte, expiresAt time.Time, maxNodes int) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionOpenRegisterWindow, ResourceID: OwnerID(ctx)}, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO register_window (owner_id, key_hash, expires_at, remaining) VALUES (?, ?, ?, ?)
 			ON CONFLICT (owner_id) DO UPDATE SET key_hash = excluded.key_hash, expires_at = excluded.expires_at, remaining = excluded.remaining`,
 			OwnerID(ctx), keyHash, expiresAt.Unix(), maxNodes)
@@ -22,7 +22,7 @@ func (s *Store) SetRegisterWindow(ctx context.Context, keyHash []byte, expiresAt
 }
 
 func (s *Store) ClearRegisterWindow(ctx context.Context) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionCloseRegisterWindow, ResourceID: OwnerID(ctx)}, func(tx *sql.Tx) error {
 		_, err := tx.Exec("DELETE FROM register_window WHERE owner_id = ?", OwnerID(ctx))
 		return err
 	})

@@ -129,7 +129,7 @@ func (m *Manager) Start(ctx context.Context, id int64, version string) (*heronv1
 	}
 	r := NewRequest(version, m.clk.Now())
 	s.Task = update.TaskProto(&update.Job{Request: r, State: "queued", UpdatedAt: m.clk.Now().Unix()})
-	if err := m.st.SaveNodeUpdate(ctx, id, s); err != nil {
+	if err := m.st.StartNodeUpdate(ctx, id, s); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
@@ -147,7 +147,7 @@ func (m *Manager) Cancel(ctx context.Context, id int64, taskID string) error {
 	}
 	s.Task.State = "cancelled"
 	s.Task.UpdatedAt = m.clk.Now().Unix()
-	if err := m.st.SaveNodeUpdate(ctx, id, s); err != nil {
+	if err := m.st.CancelNodeUpdate(ctx, id, s); err != nil {
 		return err
 	}
 	m.mu.Lock()

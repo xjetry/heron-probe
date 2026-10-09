@@ -43,6 +43,9 @@ func changeError(err error) error {
 		return connect.NewError(connect.CodeAborted, err)
 	case errors.Is(err, store.ErrRequestID):
 		return connect.NewError(connect.CodeAlreadyExists, err)
+	case errors.Is(err, store.ErrChangeTarget):
+		// handler 接线错误，store 已记下声明的目标与变更；事务未开，库无变化。
+		return internalError("change did not reach its declared write")
 	default:
 		return err
 	}
@@ -122,6 +125,12 @@ func (s *Service) ExecuteChange(ctx context.Context, req *connect.Request[heronv
 		c.Selector = &store.NodeSelector{AllNodes: q.AllNodes, NodeIDs: q.NodeIds, Tags: q.SelectorTags}
 		c.ReferenceTask = int64(q.TaskId)
 	}
+	return s.runChange(ctx, c, call)
+}
+
+// runChange 在 ctx 里携带 c 执行 handler，并按 c 的终态回答（状态机见 store 的 change.go）：预览与重放以 c.Err
+// 的哨兵为准，其余 c.Err 是策略或写边界的拒绝；handler 的错误只在主写没有提交时原样返回。
+func (s *Service) runChange(ctx context.Context, c *store.Change, call changeCall) (*connect.Response[heronv1.ExecuteChangeResponse], error) {
 	result, err := call(store.WithChange(ctx, c))
 	switch {
 	case errors.Is(c.Err, store.ErrPreview):
@@ -136,6 +145,12 @@ func (s *Service) ExecuteChange(ctx context.Context, req *connect.Request[heronv
 			return nil, err
 		}
 		return connect.NewResponse(&heronv1.ExecuteChangeResponse{Operation: operationProto(c.Operation)}), nil
+	}
+	// handler 成功返回只说明它没有报错；变更生效的唯一依据是主写提交并写下回执。没有用掉主写（目标写方法
+	// 没经 writeChange、或 handler 根本没写）与用掉了却没提交（handler 吞掉了主写的错误）都不能回答成功。
+	if c.CommittedAt == 0 {
+		s.log.Error("ExecuteChange handler returned without committing its primary write", "action", c.Action.String(), "resource", c.ResourceID, "claimed", c.Claimed())
+		return nil, internalError("change was not applied")
 	}
 	out := &heronv1.ExecuteChangeResponse{Operation: operationProto(c.Operation)}
 	if result != nil {
