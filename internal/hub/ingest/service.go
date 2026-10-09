@@ -524,7 +524,8 @@ func (s *Service) reconcileFacts(id int64, token string, hash uint64, f *heronv1
 // Forget 在 auth 移除 token 后清理节点状态。stateMu 等待已鉴权上报退出，
 // pendingMu 将 live 桶移交与重试队列清理串行化，因此返回后两处都不再持有该节点。
 func (s *Service) Forget(nodeID int64) {
-	// api.DeleteNode 在 auth.DeleteNode 返回 nil 后才清理状态，保证库删除与 token 撤销已经完成。
+	// 唯一的调用方 nodeops.Service.Forget 的前提是库删除已提交、token 已撤销（在线删除由 nodeops.Service.Delete 在
+	// auth.DeleteNode 返回 nil 之后调用它保证）。
 	// Registry.Forget 会等在途管理写入完成整个 store 往返；写协程 facts 回调会取 mu，
 	// 持 mu 等待可能形成等待环，持 stateMu 或 mu 会挡住其他节点的 Report，
 	// 持 pendingMu 会挡住全体节点的分钟刷出，因此必须在所有 ingest 锁之外调用。
