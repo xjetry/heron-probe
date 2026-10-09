@@ -1,11 +1,10 @@
 // @vitest-environment node
-// @ts-nocheck 读文件需要 node 类型，tsconfig.app 只给了 vite/client（与 importScan.test.ts 同一原因）。
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
 const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const root = /:root\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-const token = (name) => new RegExp(`${name}:\\s*([^;]+);`).exec(root)?.[1].trim();
+const token = (name: string): string | undefined => new RegExp(`${name}:\\s*([^;]+);`).exec(root)?.[1].trim();
 
 // 运行时 token 由 styles.css 定义；这张表独立核对设计规范，避免色值漂移。
 it.each([

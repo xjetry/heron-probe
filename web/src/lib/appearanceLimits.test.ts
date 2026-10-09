@@ -1,4 +1,3 @@
-// @ts-nocheck -- 这个测试读仓库文件，app tsconfig 只带 vite/client，没有 node 类型。
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -10,13 +9,13 @@ import { MAX_NOTIFY_CHANNELS } from "./alerts";
 const settingsGo = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../internal/hub/api/settings.go"), "utf8");
 
 // 常量写成 N 或 N << S；找不到就让用例红，而不是比对 undefined。
-function goConst(name) {
+function goConst(name: string): number {
   const m = settingsGo.match(new RegExp(`\\b${name}\\s*=\\s*(\\d+)(?:\\s*<<\\s*(\\d+))?`));
   if (!m) throw new Error(`${name} not found in settings.go`);
   return Number(m[1]) * 2 ** Number(m[2] ?? 0);
 }
 
-function goStrings(name) {
+function goStrings(name: string): string[] {
   const m = settingsGo.match(new RegExp(`\\b${name}\\s*=\\s*\\[\\]string\\{([^}]*)\\}`));
   if (!m) throw new Error(`${name} not found in settings.go`);
   return [...m[1].matchAll(/"([^"]*)"/g)].map((s) => s[1]);

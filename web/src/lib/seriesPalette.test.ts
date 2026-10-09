@@ -1,13 +1,12 @@
 // @vitest-environment node
-// @ts-nocheck 读 styles.css 需要 node 类型（与 styles.test.ts 同一原因）。
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { SERIES_PALETTE, seriesColors } from "./seriesPalette";
 
 const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const statusColors = [...css.matchAll(/--status-[a-z]+:\s*(#[0-9a-f]{6});/g)].map((m) => m[1]);
-const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-const distance = (a, b) => Math.hypot(...rgb(a).map((v, i) => v - rgb(b)[i]));
+const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const distance = (a: string, b: string): number => Math.hypot(...rgb(a).map((v, i) => v - rgb(b)[i]));
 
 // 系列色不与五个状态色混淆（设计 §5）：按 RGB 欧氏距离至少 70。先冒烟状态色真的读到了五个，空集合会让下面的 every 恒真。
 it("五个状态色都读到了", () => {
