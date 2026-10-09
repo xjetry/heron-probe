@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xjetry/heron-probe/internal/hub/outbound"
 )
 
 // healthTimeout 是 health 子命令的请求总时限。它覆盖连接、请求与读响应体：Docker 的 HEALTHCHECK
@@ -26,11 +28,10 @@ func runHealthWith(args []string, out io.Writer) error {
 		return err
 	}
 	base := strings.TrimSuffix(*url, "/")
-	client := &http.Client{
-		Timeout: healthTimeout,
-		// 不跟随重定向：一个 3xx 必须是探测失败，探测的是"这个候选 hub 自己在不在服务"。
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	// 不跟随重定向：一个 3xx 必须是探测失败，探测的是"这个候选 hub 自己在不在服务"。outbound.NewClient 保证三件事：
+	// 总时限 healthTimeout、3xx 原样交回不跟随、连接池只属于这个客户端（进程里别处对 http.DefaultTransport 的
+	// CloseIdleConnections 打断不了它，见 outbound 的说明）。
+	client := outbound.NewClient(healthTimeout)
 	resp, err := client.Get(base + "/healthz")
 	if err != nil {
 		return fmt.Errorf("GET %s/healthz: %w", base, err)
