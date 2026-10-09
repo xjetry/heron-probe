@@ -61,6 +61,17 @@ var migrations = map[int]func(*sql.Tx) error{
 	34: migrateV34,
 	35: migrateV35,
 	36: execAll(migrationV36Config),
+	37: execAll(migrationV37),
+}
+
+// 离线变更代数只对读它的那个 hub 进程有意义（hub 启动时先读起点，再加载缓存，见 coordination.go），起点取多少
+// 都不影响判定，所以迁移与新建库一样种子为 0。
+var migrationV37 = []string{
+	`CREATE TABLE hub_coordination (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  offline_generation INTEGER NOT NULL CHECK (offline_generation >= 0)
+)`,
+	`INSERT INTO hub_coordination (id, offline_generation) VALUES (1, 0)`,
 }
 
 var migrationV36Config = []string{

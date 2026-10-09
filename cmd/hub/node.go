@@ -34,15 +34,18 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	// 库被新建的信号就是这一行；建立状态的子命令（passwd、node create、window open）因此
 	// 必须放出它，否则退出码与其余输出跟"库已存在、操作在原库上完成"完全一样。
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema)
+	// 离线子命令是 hub 进程之外的写者：每个提交的写事务都推进离线变更代数，运行中的 hub 据此重载（见 store.ExternalWriter）。
+	// 除 restore（要求 hub 已停止，见 store.Restore）外，离线入口都经这个函数打开库，这里是它们共同的声明处。
+	st, err := store.Open(db, clock.Real(), log, store.RequireCurrentSchema, store.ExternalWriter())
 	if err != nil {
 		return nil, nil, err
 	}
 	// 离线进程只需要注册表的落库入口：建节点经它进入 store 的建节点事务，继承任务的上限检查与任务版本的推进都在
 	// 那个事务里，与运行中的 hub 走同一段代码，不因注册表未 Load 而跳过。注册表的内存发布随进程退出丢弃，本进程
-	// 里也没有读它的调用方，所以不 Load；运行中的 hub 重启时从库里重建自己的缓存（见 restartNotice）。离线子命令
-	// 不经过 Login，不写登录通知：发送者给 nil（nil 只写库、不入队，见 auth.New），时区用不到，给 UTC 只为满足
-	// auth.New 的非 nil 要求。
+	// 里也没有读它的调用方，所以不 Load；运行中的 hub 由重载循环发现这次写入并重载自己的缓存（nodeops.Reloader）。
+	// token 映射要 Load：换发以映射里的当前凭据为期望值做比较并换发（auth.Auth.RotateToken），映射就是此刻的库。
+	// 离线子命令不经过 Login，不写登录通知：发送者给 nil（nil 只写库、不入队，见 auth.New），时区用不到，给 UTC 只为
+	// 满足 auth.New 的非 nil 要求。
 	a := auth.New(st, probe.New(st, log), nil, clock.Real(), time.UTC, log)
 	if err := a.Load(context.Background()); err != nil {
 		st.Close()
@@ -50,8 +53,6 @@ func openOffline(db string, create bool) (*store.Store, *auth.Auth, error) {
 	}
 	return st, a, nil
 }
-
-const restartNotice = "note: if the hub is running, restart it for this change to take effect (the token map and the probe task lists are rebuilt at startup)"
 
 func runNode(args []string) error {
 	if len(args) < 1 {
@@ -81,7 +82,6 @@ func runNode(args []string) error {
 		}
 		fmt.Printf("id: %d\ntoken: %s\n", nid, tok)
 		fmt.Fprintln(os.Stderr, "one-time installation credential: use as heron-agent register --key, not as a reporting token")
-		fmt.Fprintln(os.Stderr, restartNotice)
 	case "list":
 		nodes, err := st.ListNodes(ctx)
 		if err != nil {
@@ -104,7 +104,6 @@ func runNode(args []string) error {
 		if err := a.DeleteNode(ctx, *id); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, restartNotice)
 	case "rotate-token":
 		if *id == 0 {
 			return errors.New("--id is required")
@@ -115,7 +114,6 @@ func runNode(args []string) error {
 		}
 		fmt.Printf("token: %s\n", tok)
 		fmt.Fprintln(os.Stderr, "old credential revoked; use the installation script with --re-register --hub URL --key TOKEN on the agent host")
-		fmt.Fprintln(os.Stderr, restartNotice)
 	default:
 		return fmt.Errorf("unknown node command %q", args[0])
 	}

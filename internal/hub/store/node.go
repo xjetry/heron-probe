@@ -606,15 +606,33 @@ func insertNode(tx *sql.Tx, name string, billing Billing, tokenHash []byte, crea
 	return id, tasks, nil
 }
 
-// SetTokenHash 换发节点凭据，是轮换 token 的类型化变更目标；安装凭据被认领时也经这里，那条路径不带变更。
-func (s *Store) SetTokenHash(ctx context.Context, id int64, hash []byte) error {
+// ErrCredentialChanged 表示节点的凭据已不是调用方以为的那一个：调用方读到它之后，库里的 token_hash 已被换过（通常是
+// 另一个进程——离线子命令——换发的，调用方的 token 映射还没重载）。语义是"资源已变，请重试"。
+var ErrCredentialChanged = errors.New("node credential changed; retry")
+
+// SetTokenHash 把节点凭据从 expected 换成 hash（比较并换发），是轮换 token 的类型化变更目标；安装凭据被认领时也经
+// 这里，那条路径不带变更。expected 是调用方读到的当前凭据（auth 从它的映射里取）：token 映射可能落后于库（库外写者
+// 换发之后、hub 重载之前），无条件覆盖会让已经作废的旧凭据把库外刚换发的新凭据顶掉。节点不存在是 ErrNotFound，
+// 存在但凭据不是 expected 是 ErrCredentialChanged；两者都不改库。
+func (s *Store) SetTokenHash(ctx context.Context, id int64, expected, hash []byte) error {
 	return s.writeChange(ctx, ChangeTarget{Action: ActionRotateNodeToken, ResourceID: id}, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE node SET token_hash = ? WHERE id = ?", hash, id)
+		exists, err := nodeExistsTx(tx, id)
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !exists {
 			return ErrNotFound
+		}
+		res, err := tx.Exec("UPDATE node SET token_hash = ? WHERE id = ? AND token_hash = ?", hash, id, expected)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrCredentialChanged
 		}
 		return nil
 	})

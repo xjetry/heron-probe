@@ -90,7 +90,8 @@ type StateView struct {
 	Flapping bool
 }
 
-// writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。
+// writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。持 writeMu 时会去取的别包的锁与跨包锁序
+// 见 internal/hub 的包注释（doc.go）。
 // 只有存储成功才在 mu 下发布，失败写入不会改变缓存。
 type Engine struct {
 	cfg      Config

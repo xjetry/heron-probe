@@ -139,7 +139,16 @@ type serveOptions struct {
 	// geoMMDBSet 区分 --geo-mmdb 缺席（走 HTTP 后端）与给出（哪怕是空串，也必须打开并在失败时报错）。
 	geoMMDB    string
 	geoMMDBSet bool
+	// offlineReload 是检查离线变更代数的周期（见 offlineReloadEvery）。不是用户输入：parseServeOptions 给生产值，
+	// 测试在 newHub 之前改小。
+	offlineReload time.Duration
 }
+
+// offlineReloadEvery 是运行中的 hub 检查离线变更代数的周期。它是离线子命令生效的延迟上界之一：rotate-token 换发的
+// 安装凭据、node create 建的节点，要等下一次检查重载 token 映射之后 hub 才认得，在那之前拿新凭据注册会被拒绝；
+// 运维从命令输出复制凭据、再到节点上跑安装命令，通常不止一秒。无变更的周期只在读连接池上做一次单行点查，每秒一次
+// 对 hub 可以忽略；有变更的周期才重建 token 映射与探测任务缓存，离线子命令由人手动执行，频率很低。
+const offlineReloadEvery = time.Second
 
 // parseServeOptions 解析并校验 serve 的全部用户输入，不打开数据库、不监听：配置有误时 serve 不留下任何副作用就退出。
 // 每个 flag 都可以由 HERON_<FLAG> 给出（applyFlagEnv），lookupEnv 是它的唯一来源（runServeWith 传 os.LookupEnv）；
@@ -169,7 +178,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	if err := applyFlagEnv(fs, lookupEnv); err != nil {
 		return serveOptions{}, err
 	}
-	opts := serveOptions{db: *db, listen: *listen, adminOrigin: *adminOrigin, publicDir: *publicDir, geoMMDB: *geoMMDB}
+	opts := serveOptions{db: *db, listen: *listen, adminOrigin: *adminOrigin, publicDir: *publicDir, geoMMDB: *geoMMDB, offlineReload: offlineReloadEvery}
 	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。HERON_GEO_MMDB 经 applyFlagEnv
 	// 回填后同样算作给出，设为空串也是显式空路径。
 	fs.Visit(func(f *flag.Flag) {
@@ -218,6 +227,7 @@ type hub struct {
 	geo      *geo.Resolver
 	backups  *backup.Manager
 	hb       *heartbeat.Heartbeat
+	reload   *nodeops.Reloader
 	handler  http.Handler
 	// geoLog 是选定的国家查询后端，追加在启动行末尾。
 	geoLog []any
@@ -306,6 +316,13 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 			}
 		}}, ingest.Deps{Live: l, Store: st, Auth: a, Traffic: book, Tasks: reg, Clock: clk, Log: log})
 	ctx := context.Background()
+	// 先读离线变更代数、后做各缓存的首次加载：此后的任何库外提交都让代数大于 offlineGen，由重载循环补上；反过来，
+	// 夹在加载与读代数之间的库外提交会被计入起点却不在缓存里，永远不被重载（协议见 nodeops.Reloader）。
+	offlineGen, err := st.OfflineGeneration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	log.Debug("offline generation read", "generation", offlineGen)
 	if err := errors.Join(a.Load(ctx), svc.Load(ctx), reg.Load(ctx), updateManager.Load(ctx)); err != nil {
 		return nil, err
 	}
@@ -318,8 +335,10 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	}
 	backups := backup.New(st, notifier, clk, log)
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
+	nodes := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log})
+	reload := nodeops.NewReloader(nodes, nodeops.ReloadDeps{Generation: st, Tokens: a, Tasks: reg, Log: log}, offlineGen, opts.offlineReload)
 	admin := api.New(api.Config{Updates: updateManager, Backups: backups, Heartbeat: hb, TTL: ttl, ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, HubVersion: version, Location: loc, Retention: opts.retention, PublicDir: opts.publicDir != "", Geo: geoBackend},
-		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log}),
+		api.Deps{Store: st, Auth: a, Live: l, Nodes: nodes,
 			Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: log})
 	pub := api.NewPublic(api.PublicConfig{ReportInterval: svc.Interval(), TrustedProxies: opts.trusted, Location: loc},
 		api.PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: log})
@@ -336,7 +355,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 		publicEnabled: st.PublicEnabled,
 	})
 	return &hub{opts: opts, st: st, live: l, ingest: svc, updates: updateManager, relay: relay, book: book, alerts: alerts,
-		notifier: notifier, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, handler: handler, geoLog: geoLog,
+		notifier: notifier, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, reload: reload, handler: handler, geoLog: geoLog,
 		gate: func(ctx context.Context) error { return update.NewClient("hub").Gate(ctx, version) }}, nil
 }
 
@@ -373,6 +392,7 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer startLoop(h.geo.Run)()
 	defer startLoop(h.backups.Run)()
 	defer startLoop(h.hb.Run)()
+	defer startLoop(h.reload.Run)()
 
 	// 监听在 net.Listen 返回时已建立，连接先进内核队列。runServe 装配的文本 handler 在 Info 返回前
 	// 同步写完 stderr，所以先写启动行再开始 Serve，拿到任何响应的调用方都已能在日志里读到它。

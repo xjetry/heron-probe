@@ -1,7 +1,7 @@
 // Package auth 持有节点 token 的内存映射，并裁决注册、管理员密码和会话。
 //
-// Load 完成且没有外部进程直接改表时，byHash 与 node.token_hash 在每次变更
-// 完成后一致。mutMu 保证变更者彼此不交错，Load 也不与变更交错；先写库并
+// 没有库外写入（或库外写入之后已 Reload）时，byHash 与 node.token_hash 在每次变更
+// 完成后一致。mutMu 保证变更者彼此不交错，Load 与 Reload 也不与变更交错；先写库并
 // 等待成功、后改映射则由每个变更者内部的语句顺序保证，写库失败不改映射。
 // 绕开 mutMu 会让提交与映射更新顺序分叉；仅持有它不能代替上述语句顺序。
 //
@@ -17,11 +17,13 @@
 // 这是让 Authenticate 不等待任何事务的代价。映射更新期间由 mu 排除并发读取，
 // 绕开 mu 访问内存会产生数据竞争；崩溃若落在提交与更新之间，启动时由 Load 重建。
 //
-// 管理服务的节点变更必须经当前进程的 Auth 更新映射；另一进程执行节点离线子命令
-// 只会改表，无法通知这里的映射，因此仍要求 hub 重启。
+// 管理服务的节点变更经当前进程的 Auth 同时改库与映射。另一进程（离线子命令）只改库，映射在那之后落后于库，
+// 直到 hub 的重载循环（nodeops.Reloader）调用 Reload；这段时间里 Authenticate 仍按旧映射裁决，库外删除或换发的
+// 旧凭据还能通过鉴权，库外新建或换发的凭据还不被认得。落后期间的换发与认领以映射里的凭据为期望值做比较并换发
+// （store.SetTokenHash）：库里已不是它就拒绝，过期的凭据不会覆盖库外换发的凭据。
 //
 // 建节点（CreateNode、Register）不直接写 store，而经 NodeCreator：新节点会继承全部 all_nodes 探测任务，
-// 落库与探测任务缓存的发布必须由任务注册表串行化（见 probe 包）。锁序 mutMu → 注册表的写锁。
+// 落库与探测任务缓存的发布必须由任务注册表串行化（见 probe 包）。跨包锁序见 internal/hub 的包注释（doc.go）。
 package auth
 
 import (
@@ -29,6 +31,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,17 +88,38 @@ func New(st *store.Store, nodes NodeCreator, sender LoginSender, clk clock.Clock
 	return &Auth{store: st, nodes: nodes, loginSender: sender, clk: clk, loc: loc, log: log, byHash: map[[32]byte]int64{}, register: newFailureTracker(failLimit, failWindow), login: newFailureTracker(failLimit, failWindow)}
 }
 
+// Load 自库整体重建 token 映射。
 func (a *Auth) Load(ctx context.Context) error {
+	_, err := a.Reload(ctx)
+	return err
+}
+
+// Reload 自库整体重建 token 映射，并返回重建前在映射里、重建后不在的节点（升序）：它们已不在库里，是被本进程之外
+// 删除的。删除集合由替换映射所用的那次读库算出，并与替换在同一次 mutMu 持有内完成；本进程的建删、换发与认领都持
+// mutMu，不会插进来，所以返回的恰是库外删除。若另读一次库来算删除集合，夹在那次读与替换所用的读之间的库外删除，
+// 在两次读里一次在场、一次缺席，算不进删除集合，却被替换直接从映射里抹掉，之后再也算不到。返回错误时映射未变。
+func (a *Auth) Reload(ctx context.Context) ([]int64, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	m, err := a.store.TokenHashes(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	kept := make(map[int64]bool, len(m))
+	for _, id := range m {
+		kept[id] = true
 	}
 	a.mu.Lock()
+	var removed []int64
+	for _, id := range a.byHash {
+		if !kept[id] && !slices.Contains(removed, id) {
+			removed = append(removed, id)
+		}
+	}
 	a.byHash = m
 	a.mu.Unlock()
-	return nil
+	slices.Sort(removed)
+	return removed, nil
 }
 
 // Authenticate 只查内存映射，不读库：这是上报路径上唯一的鉴权动作。
@@ -129,12 +153,18 @@ func (a *Auth) CreateNode(ctx context.Context, name string, billing store.Billin
 	return id, plain, nil
 }
 
-// RotateToken 返回前在 mu 下以新 hash 替换旧 hash，读者不会观察到两者同时有效。
+// RotateToken 返回前在 mu 下以新 hash 替换旧 hash，读者不会观察到两者同时有效。换发以映射里的当前凭据为期望值
+// （store.SetTokenHash 比较并换发）：映射落后于库（库外已换发、尚未重载）时得到 store.ErrCredentialChanged，库与映射
+// 都不变，重载之后重试即可；节点在映射里没有凭据而库里有，同样是映射落后，也得到它。节点不存在是 store.ErrNotFound。
+// 离线子命令的映射是打开库时刚从库里加载的，期望值就是它读到的库。
 func (a *Auth) RotateToken(ctx context.Context, id int64) (string, error) {
 	a.mutMu.Lock()
 	defer a.mutMu.Unlock()
 	plain, h := newInstallToken()
-	if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
+	a.mu.RLock()
+	expected := a.hashOfLocked(id)
+	a.mu.RUnlock()
+	if err := a.store.SetTokenHash(ctx, id, expected, h[:]); err != nil {
 		return "", err
 	}
 	a.mu.Lock()
@@ -153,6 +183,17 @@ func (a *Auth) DeleteNode(ctx context.Context, id int64) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.dropLocked(id)
+	return nil
+}
+
+// hashOfLocked 返回映射里节点 id 的凭据 hash，没有则返回 nil（nil 与库里任何 token_hash 都不相等，NOT NULL）。
+// 映射与库一样每个节点至多一个 hash（Load 自库建立，变更者在 mutMu 下先替换库再替换映射）。调用方持 mu。
+func (a *Auth) hashOfLocked(id int64) []byte {
+	for k, v := range a.byHash {
+		if v == id {
+			return k[:]
+		}
+	}
 	return nil
 }
 
@@ -198,7 +239,10 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		return 0, "", ErrDenied
 	}
 	// 只有独立用途的安装凭据能认领；完整前缀参与哈希，不能拿运行 token 自报安装用途。
-	// mutMu 串行化认领和管理员换发，成功后旧凭据从库与映射移除，同一凭据只能消费一次。
+	// mutMu 串行化本进程内的认领和管理员换发，成功后旧凭据从库与映射移除，同一凭据只能消费一次。
+	// 跨进程靠比较并换发：映射可能落后于库（离线子命令已换发或删除、尚未重载），凭据在映射里有效不代表在库里仍有效，
+	// 所以以这个凭据的 hash 为期望值换发；库里已不是它（store.ErrCredentialChanged）或节点已删（store.ErrNotFound），
+	// 这个凭据就已作废，与查无此凭据一样回答 ErrDenied，对外不区分，也不计失败次数（同查无此凭据）。
 	if random, installation := strings.CutPrefix(key, installTokenPrefix); installation {
 		if !isTokenShaped(random) {
 			return 0, "", ErrDenied
@@ -207,8 +251,11 @@ func (a *Auth) Register(ctx context.Context, key, name string, from netip.Addr) 
 		if !ok {
 			return 0, "", ErrDenied
 		}
+		expected := HashToken(key)
 		plain, h := NewToken()
-		if err := a.store.SetTokenHash(ctx, id, h[:]); err != nil {
+		if err := a.store.SetTokenHash(ctx, id, expected[:], h[:]); errors.Is(err, store.ErrCredentialChanged) || errors.Is(err, store.ErrNotFound) {
+			return 0, "", ErrDenied
+		} else if err != nil {
 			return 0, "", err
 		}
 		a.mu.Lock()

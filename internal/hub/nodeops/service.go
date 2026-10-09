@@ -11,11 +11,7 @@
 //   - Delete 提交之后才开始的 Update 在库层得到 ErrNotFound，不会调 SetResetDay，锁外的 Forget 不会被它重建；
 //   - Delete 提交之前已提交的 Update 在放锁前已改完内存，Forget 在 Delete 放锁之后才运行，排在它后面。
 //
-// 锁序：mu → alert.Engine.writeMu（UpdateScope）→ probe.Registry.writeMu（UpdateNode、BatchUpdateNodeTags）→ store；
-// mu → auth.Auth.mutMu（DeleteNode）→ store；mu → traffic.Book 的 mu 与 writeMu（SetResetDay、Commit）。持锁调用
-// 不会成环：alert、auth、probe、traffic 都不 import 本包，它们经构造或 setter 注入的实现（auth 的 NodeCreator 是
-// probe.Registry，告警引擎的 Sender 是 alert.Queue、流量源是 traffic.Book）也都不在本包，任何持这些锁的路径都取不到
-// mu。只看 import 方向不够：注入的实现若来自本包，也能在这些锁之下取到 mu。
+// mu 之下会去取的别包的锁与不成环的依据见 internal/hub 的包注释（doc.go）。
 //
 // Create 与 RotateToken 不取 mu：二者都不写流量账本，与 mu 守护的不变式无关；token 映射与库的一致由 auth.mutMu 保证。
 //
@@ -206,8 +202,9 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 // Forget 清掉一个已不在库里的节点的全部进程内状态，是这份清理的唯一实现。
 //
 // 前提：节点的库删除已提交、token 已从 auth 的映射里撤销（之后不再有该节点的上报能通过鉴权），且库删除不与任何
-// Update 的"库提交 → 改内存"交错。Delete 在 mu 下提交删除，三条都由它保证；库外删除（别的进程改表）的调用方要
-// 自己保证后两条，否则一次在库删除之前提交的 Update 可能在 Forget 之后才调 SetResetDay，重建已删节点的重置日。
+// Update 的"库提交 → 改内存"交错。Delete 在 mu 下提交删除，三条都由它保证；库外删除（离线子命令）由 Reloader
+// 经 forgetRemoved 调用，后两条由那里保证，否则一次在库删除之前提交的 Update 可能在 Forget 之后才调 SetResetDay，
+// 重建已删节点的重置日。
 //
 // 调用方不得持 mu 或任何协作者的锁：上报侧的清理要等在途上报与写协程回调退出，告警侧要等 writeMu（见各自的 Forget）。
 // 先清上报侧、后清告警：上报侧返回后，该节点不再有观测进入在线快照与待刷出队列（见 ingest.Service.Forget），
@@ -216,4 +213,24 @@ func (s *Service) Forget(id int64) {
 	s.state.Forget(id)
 	// 同步清掉告警缓存，列表不能残留已删除节点的作用域与状态。
 	s.alerts.Forget(id)
+}
+
+// forgetRemoved 清掉库外删除的节点的进程内状态，ids 来自 Reloader：token 映射已按库重建、这些节点已不在映射里，
+// Forget 的前两条前提成立。第三条——库删除不与 Update 的"库提交 → 改内存"交错——在这里补上：库外删除不经 mu，
+// 一次在库删除之前提交的 Update 此刻可能仍持着 mu、尚未调 SetResetDay。先取一次 mu 再放：库删除在调用之前已提交
+// （Reloader 已读到它），所以屏障之前持过 mu 的 Update 已改完内存，屏障之后才取得 mu 的 Update 的库写在库删除之后，
+// 在库层得到 ErrNotFound、不改内存；随后的 Forget 不会被任何一个 Update 重建。
+//
+// 屏障取一次而不是让 Forget 每次自取：Delete 调 Forget 时屏障已由它自己的持锁区间给出，Forget 自取只是多一次争用。
+// Forget 不在 mu 之下做，理由见 Forget。
+func (s *Service) forgetRemoved(ids []int64) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	//lint:ignore SA2001 空临界区就是屏障本身：只为等持 mu 的 Update 放锁，理由见函数注释。
+	s.mu.Unlock()
+	for _, id := range ids {
+		s.Forget(id)
+	}
 }

@@ -1,8 +1,9 @@
 // heron-hub：serve 起服务；其余子命令直接操作数据库，供 serve 之外的运维动作。
 //
-// 直接改表的子命令绕过了 auth 的内存映射：token 映射在 hub 启动时自库重建，
-// 所以 node create / delete / rotate-token 在 hub 运行期间需要重启才生效。
-// passwd 与 token 不需要重启：登录与 API token 每次读库，改密事务同时撤销旧会话。
+// 离线子命令是库外写者（store.ExternalWriter，见 openOffline）：它们的每个提交的写事务推进库里的离线变更代数。运行中的
+// hub 每 offlineReloadEvery 读一次代数，有变化就重载 token 映射与探测任务缓存、清理库外删除的节点（nodeops.Reloader），
+// 所以 node create / delete / rotate-token 不需要重启，在下一次重载之后生效；重载前后各缓存独立发布，最终一致。
+// passwd 与 token 本就立即生效：登录与 API token 每次读库，改密事务同时撤销旧会话。
 package main
 
 import (

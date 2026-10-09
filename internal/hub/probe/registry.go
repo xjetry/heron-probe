@@ -6,8 +6,10 @@
 // 建节点也改变清单（新节点继承全部 all_nodes 任务），所以两个建节点入口（CreateNode、RegisterNode）经本包落库，
 // 由 store 在同一事务内读出新节点的覆盖并推进版本，本包在 writeMu 下按这份覆盖把新节点加进内存索引；
 // auth 经 auth.NodeCreator 调用它们。
-// 离线 CLI 建节点同样推进库里的版本，但运行中的 hub 与删除一样要重启才刷新缓存（auth 的 token 映射也是如此）。
-// 进程内删除由 nodeops.Service.Delete 编排：auth.DeleteNode 撤销 token，再经 ingest.Forget 等待在途上报退出；离线 CLI 删除需重启运行中的 hub 才刷新缓存。
+// 离线 CLI 建节点同样推进库里的版本、删节点同样删分配行，但不经本进程的写入口；运行中的 hub 由重载循环
+// （nodeops.Reloader）发现库外写入后 Load，在那之前缓存落后于库（auth 的 token 映射同样如此）。
+// 进程内删除由 nodeops.Service.Delete 编排：auth.DeleteNode 撤销 token，再经 ingest.Forget 等待在途上报退出；库外删除
+// 由重载循环在重建 token 映射之后走同一条 Forget。
 // Forget 与 Save 互斥且 Save 从提交到发布全程持 writeMu；DeleteNode 提交后调用 Forget，才能清掉较早保存发布的分配。
 package probe
 
@@ -40,7 +42,7 @@ type Registry struct {
 	store *store.Store
 	log   *slog.Logger
 
-	writeMu sync.Mutex // 锁序 auth.mutMu → writeMu → mu：auth 持 mutMu 调建节点入口
+	writeMu sync.Mutex // 包内 writeMu → mu；跨包锁序见 internal/hub 的包注释（doc.go）
 	mu      sync.RWMutex
 	version uint64
 	tasks   map[uint64]*heronv1.ProbeTask

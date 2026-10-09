@@ -131,7 +131,7 @@ func TestTokenHashesAndRotate(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	id, _, _ := s.CreateNode(ctx, "a", Billing{}, hash(1))
-	if err := s.SetTokenHash(ctx, id, hash(9)); err != nil {
+	if err := s.SetTokenHash(ctx, id, hash(1), hash(9)); err != nil {
 		t.Fatal(err)
 	}
 	m, err := s.TokenHashes(ctx)
@@ -143,8 +143,43 @@ func TestTokenHashesAndRotate(t *testing.T) {
 	if m[k] != id || len(m) != 1 {
 		t.Fatalf("hashes = %v", m)
 	}
-	if err := s.SetTokenHash(ctx, id+100, hash(3)); !errors.Is(err, ErrNotFound) {
+	if err := s.SetTokenHash(ctx, id+100, hash(9), hash(3)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rotate on missing node: err = %v, want ErrNotFound", err)
+	}
+}
+
+// 比较并换发：期望值不是库里的当前凭据（调用方的映射落后于库）时不改库，与节点不存在区分开。
+func TestSetTokenHashComparesAndSwaps(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := func() []byte {
+		t.Helper()
+		var h []byte
+		if err := s.r.QueryRow("SELECT token_hash FROM node WHERE id = ?", id).Scan(&h); err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	for _, expected := range [][]byte{hash(7), nil} {
+		if err := s.SetTokenHash(ctx, id, expected, hash(2)); !errors.Is(err, ErrCredentialChanged) {
+			t.Fatalf("swap from stale credential %x: err = %v, want ErrCredentialChanged", expected, err)
+		}
+		if got := stored(); !slices.Equal(got, hash(1)) {
+			t.Fatalf("stale swap changed the credential to %x", got)
+		}
+	}
+	if err := s.SetTokenHash(ctx, id, hash(1), hash(2)); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); !slices.Equal(got, hash(2)) {
+		t.Fatalf("credential = %x after swap, want %x", got, hash(2))
+	}
+	if err := s.SetTokenHash(ctx, id, hash(1), hash(3)); !errors.Is(err, ErrCredentialChanged) {
+		t.Fatalf("replaying the consumed credential: err = %v, want ErrCredentialChanged", err)
 	}
 }
 

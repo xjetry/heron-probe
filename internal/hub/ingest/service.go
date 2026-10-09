@@ -125,7 +125,8 @@ type Service struct {
 	registerLimit *ratelimit.Buckets[netip.Addr]
 
 	// stateMu 将 Report 的鉴权及内存写入与 Forget 排他，防止已放行的在途请求重建状态。
-	// 同持时锁序为 pendingMu → stateMu → mu；上报不取 pendingMu，不等待刷盘。
+	// 同持时锁序为 pendingMu → stateMu → mu；上报不取 pendingMu，不等待刷盘。持这些锁时会去取的别包的锁，以及持 mu
+	// 时不得同步等待 store 写的理由，见 internal/hub 的包注释（doc.go）。
 	stateMu sync.RWMutex
 	mu      sync.Mutex
 	// factsHash 是 hub 已持久化的各节点 facts 摘要；只在写库成功后更新，
