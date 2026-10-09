@@ -406,22 +406,10 @@ func (c *readCountConn) BeginTx(ctx context.Context, opts driver.TxOptions) (dri
 // countReads 换掉读连接池，包一层只观察查询文本的驱动；查询语义不变。
 func countReads(t *testing.T, s *Store) *readCounter {
 	t.Helper()
-	var seq int
-	var name, path string
-	if err := s.r.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.r.Close(); err != nil {
-		t.Fatal(err)
-	}
 	counter := &readCounter{}
 	driverName := fmt.Sprintf("read-count-sqlite-%d", traceID.Add(1))
 	sql.Register(driverName, readCountDriver{counter})
-	var err error
-	s.r, err = sql.Open(driverName, dsn(path, "&_pragma=query_only(1)"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	reopenReadPools(t, s, driverName)
 	return counter
 }
 

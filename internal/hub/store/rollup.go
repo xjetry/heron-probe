@@ -412,7 +412,8 @@ func queryFamily[T any](ctx context.Context, s *Store, f *family, shape querySha
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	tx, err := s.r.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	// 按预计扫描量选池（见 readPoolFor）；scan 与 summarize 只用这个事务，持着它再取别的读连接会违反两池不互等的约束。
+	tx, err := s.readPoolFor(scanEstimate(from, to, lv, shape.seriesLimit)).BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
