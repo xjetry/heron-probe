@@ -112,6 +112,7 @@ type fakeHub struct {
 	interval   uint32
 	tasks      *heronv1.ProbeTasks
 	probeError connect.Code
+	detection  *heronv1.NetworkDetection
 }
 
 func (f *fakeHub) Register(context.Context, *connect.Request[heronv1.RegisterRequest]) (*connect.Response[heronv1.RegisterResponse], error) {
@@ -139,7 +140,7 @@ func (f *fakeHub) Report(_ context.Context, req *connect.Request[heronv1.ReportR
 		want = req.Msg.FactsHash != f.factsHash
 	}
 	f.wantNext = false
-	return connect.NewResponse(&heronv1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks}), nil
+	return connect.NewResponse(&heronv1.ReportResponse{ReportIntervalMs: f.interval, WantFacts: want, Tasks: f.tasks, Detection: f.detection}), nil
 }
 
 // Runner 的上报路径不调 GetRelease；补上方法只是满足 AgentServiceHandler 接口，与 Register 同样拒绝。

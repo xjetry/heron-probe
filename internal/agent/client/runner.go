@@ -32,8 +32,12 @@ type Runner struct {
 	Results *prober.Queue
 	// Interval 是收到第一个响应之前使用的间隔；之后用 hub 下发的，经 agentwire.ClampReportInterval 限定。
 	Interval time.Duration
-	// Network 只读后台检测结果；为空时不做出口探测，保持采集循环无额外网络依赖。
-	Network interface{ Snapshot() *heronv1.NetworkInfo }
+	// Network 是后台的出口探测：每轮读它的结果进 Facts，每次成功应答后把 hub 给的逐族开关（detection）交给它。
+	// 为空时不做出口探测，保持采集循环无额外网络依赖。
+	Network interface {
+		Snapshot() *heronv1.NetworkInfo
+		Skip(*heronv1.NetworkDetection)
+	}
 	Updates interface {
 		Snapshot() *heronv1.UpdateStatus
 		Reported(*heronv1.UpdateTask)
@@ -154,6 +158,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 		if err == nil && r.Updates != nil {
 			r.Updates.Reported(resp.Msg.Update)
+		}
+		// 每次成功应答都交出去，缺失也交（nil 即两族照常探测）：hub 清空手填后的应答不再要求停用，agent 据此恢复。
+		if err == nil && r.Network != nil {
+			r.Network.Skip(resp.Msg.GetDetection())
 		}
 		if total := r.Results.Dropped(); total > dropped {
 			r.Log.Warn("probe results dropped", "dropped", total-dropped)

@@ -30,8 +30,16 @@ const (
 )
 
 type Detector struct {
-	mu         sync.RWMutex
-	current    *heronv1.NetworkInfo
+	mu      sync.RWMutex
+	current *heronv1.NetworkInfo
+	// skip 是 hub 最近一次应答要求停用探测的族，下标同 endpoints；只由 Skip 改写。refresh 在发探测之前读它决定
+	// 拨哪些族，写回结果时再读一次：探测在途时 hub 可能刚要求停用，Skip 已写下的 DISABLED 不能被迟到的结果盖掉。
+	skip [2]bool
+	// resumed 是由停用转为恢复、还没探测过的族；wake 让 Run 不等 ticker 立即探测它们。refresh 开始探测某族时清掉
+	// 它的标记，所以 ticker 先到时不会再多探一次。
+	resumed    [2]bool
+	wake       chan struct{}
+	interval   time.Duration
 	interfaces func() ([]netip.Addr, error)
 	clients    [2]*http.Client
 	now        func() time.Time
@@ -43,7 +51,7 @@ func New() *Detector {
 }
 
 func newDetector(addresses func() ([]netip.Addr, error), dial func(context.Context, string, string) (net.Conn, error)) *Detector {
-	d := &Detector{interfaces: addresses, now: time.Now, current: &heronv1.NetworkInfo{}}
+	d := &Detector{interfaces: addresses, now: time.Now, current: &heronv1.NetworkInfo{}, wake: make(chan struct{}, 1), interval: interval}
 	for i, family := range []string{"tcp4", "tcp6"} {
 		transport := &http.Transport{
 			// 不继承环境代理；代理回显的是代理的出口，不能代表节点的地址族能力。
@@ -56,50 +64,123 @@ func newDetector(addresses func() ([]netip.Addr, error), dial func(context.Conte
 	return d
 }
 
-// Snapshot 返回独立副本；Run 在锁内整体替换，调用方修改 Facts 不会改变探测器的状态。
+// Snapshot 返回独立副本；Run 与 Skip 在锁内整体替换，调用方修改 Facts 不会改变探测器的状态。
 func (d *Detector) Snapshot() *heronv1.NetworkInfo {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return proto.Clone(d.current).(*heronv1.NetworkInfo)
 }
 
-// Run 由入口单独启动，首次立即检测；网络等待不占用 Runner 的采集循环。
-func (d *Detector) Run(ctx context.Context) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		if ctx.Err() != nil {
-			return
+// Skip 采纳 hub 在一次应答里给出的逐族开关，由 client.Runner 在每次成功应答后调用；nil 与各项为 false 相同，都是
+// 两族照常探测（旧 hub 不带这个字段）。某族由探测转为停用时，立即把它换成 DISABLED（没有地址，checked_at 是此刻），
+// 此后 refresh 不再拨它；由停用转为探测时，立即把它退回缺失并唤醒 Run 探测一次。退回缺失而不是留着 DISABLED 到
+// 探测完成：不认识 DISABLED 的旧 hub 会整次拒收带它的 facts，只有最近一次应答仍要求停用时才该报它。
+//
+// 进程启动后的第一轮探测与第一次上报并行，那一轮可能已拨出了 hub 随后要求停用的族；停用状态不落盘，这一轮是
+// 每次启动唯一的例外。
+func (d *Detector) Skip(detection *heronv1.NetworkDetection) {
+	want := [2]bool{detection.GetSkipIpv4(), detection.GetSkipIpv6()}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if want == d.skip {
+		return
+	}
+	next := proto.Clone(d.current).(*heronv1.NetworkInfo)
+	wake := false
+	for i := range want {
+		switch {
+		case want[i] && !d.skip[i]:
+			setFamily(next, i, &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_DISABLED, CheckedAt: d.now().Unix()})
+			d.resumed[i] = false
+		case !want[i] && d.skip[i]:
+			setFamily(next, i, nil)
+			d.resumed[i] = true
+			wake = true
 		}
-		d.refresh(ctx)
+	}
+	d.skip, d.current = want, next
+	if wake {
 		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+		case d.wake <- struct{}{}:
+		default: // 已有一个未取的唤醒，Run 取到它时按 resumed 一并探测。
 		}
 	}
 }
 
-func (d *Detector) refresh(ctx context.Context) {
+func setFamily(n *heronv1.NetworkInfo, family int, result *heronv1.AddressDetection) {
+	if family == 0 {
+		n.Ipv4 = result
+	} else {
+		n.Ipv6 = result
+	}
+}
+
+// Run 由入口单独启动，首次立即检测；网络等待不占用 Runner 的采集循环。此后每个周期探测未停用的族，Skip 恢复某族时
+// 立即探测那一族。
+func (d *Detector) Run(ctx context.Context) {
+	ticker := time.NewTicker(d.interval)
+	defer ticker.Stop()
+	families := [2]bool{true, true}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		d.refresh(ctx, families)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			families = [2]bool{true, true}
+		case <-d.wake:
+			d.mu.RLock()
+			families = d.resumed
+			d.mu.RUnlock()
+		}
+	}
+}
+
+// refresh 探测 want 里未被停用的族，把结果写进快照，其余族保持原样。
+func (d *Detector) refresh(ctx context.Context, want [2]bool) {
+	var probe [2]bool
+	d.mu.Lock()
+	for i := range probe {
+		probe[i] = want[i] && !d.skip[i]
+		if probe[i] {
+			d.resumed[i] = false
+		}
+	}
+	d.mu.Unlock()
+	if !probe[0] && !probe[1] {
+		return
+	}
 	addresses, err := d.interfaces()
 	var results [2]*heronv1.AddressDetection
 	var wg sync.WaitGroup
 	for i := range results {
+		if !probe[i] {
+			continue
+		}
 		wg.Add(1)
 		go func() { defer wg.Done(); results[i] = d.detect(ctx, i, addresses, err) }()
 	}
 	wg.Wait()
-	for _, result := range results {
-		// 一轮快照必须由两个地址族的完整结果构成：调用方取消上下文说明本轮被中止，
-		// detect 返回 nil。此时保留上一轮快照，否则 shutdown/reload 触发的取消会把
-		// 已知的能力结论覆盖成失败。
-		if result == nil {
+	for i, result := range results {
+		// 一轮的结果整体写入或整体丢弃：调用方取消上下文说明本轮被中止，detect 返回 nil。此时保留上一轮快照，
+		// 否则 shutdown/reload 触发的取消会把已知的能力结论覆盖成失败。
+		if probe[i] && result == nil {
 			return
 		}
 	}
 	d.mu.Lock()
-	d.current = &heronv1.NetworkInfo{Ipv4: results[0], Ipv6: results[1]}
-	d.mu.Unlock()
+	defer d.mu.Unlock()
+	next := proto.Clone(d.current).(*heronv1.NetworkInfo)
+	for i, result := range results {
+		// 探测在途时被停用的族：Skip 已写下 DISABLED，迟到的结果不覆盖它。
+		if probe[i] && !d.skip[i] {
+			setFamily(next, i, result)
+		}
+	}
+	d.current = next
 }
 
 func (d *Detector) detect(ctx context.Context, family int, addresses []netip.Addr, interfaceErr error) *heronv1.AddressDetection {

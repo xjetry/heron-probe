@@ -17,6 +17,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func testAddresses() ([]netip.Addr, error) {
@@ -126,7 +127,7 @@ func TestRefreshClearsOldAddressAndSnapshotsAreIndependent(t *testing.T) {
 			io.WriteString(w, "8.8.8.8")
 		}
 	})
-	d.refresh(t.Context())
+	d.refresh(t.Context(), [2]bool{true, true})
 	first := d.Snapshot()
 	if first.GetIpv4().GetAddress() != "8.8.8.8" || first.GetIpv6().GetState() != 3 {
 		t.Fatalf("first=%v", first)
@@ -138,7 +139,7 @@ func TestRefreshClearsOldAddressAndSnapshotsAreIndependent(t *testing.T) {
 	mu.Lock()
 	fail = true
 	mu.Unlock()
-	d.refresh(t.Context())
+	d.refresh(t.Context(), [2]bool{true, true})
 	if got := d.Snapshot().Ipv4; got.State != 3 || got.Address != "" {
 		t.Fatalf("stale address after failure=%v", got)
 	}
@@ -260,5 +261,160 @@ func TestTLSVerificationFailureIsFailed(t *testing.T) {
 	addresses, _ := testAddresses()
 	if got := d.detect(t.Context(), 0, addresses, nil); got.State != 3 || got.Address != "" {
 		t.Fatalf("TLS error=%v", got)
+	}
+}
+
+// countingDial 按拨号族计数，立即以网络不可达返回（该族判为 UNSUPPORTED），不发出任何真实连接。
+type countingDial struct {
+	mu    sync.Mutex
+	calls map[string]int
+	seen  chan string
+}
+
+func newCountingDial() *countingDial {
+	return &countingDial{calls: map[string]int{}, seen: make(chan string, 64)}
+}
+
+func (c *countingDial) dial(_ context.Context, network, _ string) (net.Conn, error) {
+	c.mu.Lock()
+	c.calls[network]++
+	c.mu.Unlock()
+	select {
+	case c.seen <- network:
+	default:
+	}
+	return nil, syscall.ENETUNREACH
+}
+
+func (c *countingDial) count(network string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[network]
+}
+
+func disabled(at int64) *heronv1.AddressDetection {
+	return &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_DISABLED, CheckedAt: at}
+}
+
+// 被停用的族一次都不拨，另一族照常按周期探测；停用的族报 DISABLED，没有地址，checked_at 是停用生效的时刻。
+func TestSkippedFamilyIsNeverDialed(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	dial := newCountingDial()
+	d := newDetector(testAddresses, dial.dial)
+	d.now = func() time.Time { return time.Unix(123, 0) }
+	d.interval = time.Millisecond
+	d.Skip(&heronv1.NetworkDetection{SkipIpv4: true})
+	done := make(chan struct{})
+	go func() { d.Run(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for dial.count("tcp6") < 5 {
+		if time.Now().After(deadline) {
+			t.Fatalf("IPv6 probed %d times, want at least 5 rounds", dial.count("tcp6"))
+		}
+		runtime.Gosched()
+	}
+	cancel()
+	<-done
+	if n := dial.count("tcp4"); n != 0 {
+		t.Fatalf("skipped IPv4 dialed %d times", n)
+	}
+	got := d.Snapshot()
+	if !proto.Equal(got.GetIpv4(), disabled(123)) || got.GetIpv6().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED {
+		t.Fatalf("snapshot = %v, want IPv4 disabled at 123 and IPv6 probed", got)
+	}
+}
+
+// 停用立即生效：不等下一轮，快照里该族马上换成 DISABLED，另一族不动；重复同一开关不改 checked_at。
+func TestSkipReplacesFamilyAtOnce(t *testing.T) {
+	d := newDetector(testAddresses, newCountingDial().dial)
+	now := int64(100)
+	d.now = func() time.Time { return time.Unix(now, 0) }
+	v6 := &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "2606:4700::1111", CheckedAt: 50}
+	d.current = &heronv1.NetworkInfo{Ipv4: &heronv1.AddressDetection{State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE, Address: "8.8.8.8", CheckedAt: 50}, Ipv6: v6}
+	d.Skip(&heronv1.NetworkDetection{SkipIpv4: true})
+	if got := d.Snapshot(); !proto.Equal(got.GetIpv4(), disabled(100)) || !proto.Equal(got.GetIpv6(), v6) {
+		t.Fatalf("after skip: %v", got)
+	}
+	now = 200
+	d.Skip(&heronv1.NetworkDetection{SkipIpv4: true})
+	if got := d.Snapshot().GetIpv4(); !proto.Equal(got, disabled(100)) {
+		t.Fatalf("repeated skip rewrote the family: %v", got)
+	}
+}
+
+// 恢复不等周期：hub 不再要求停用时，该族立即退回缺失（旧 hub 不认识 DISABLED），并马上探测一次——周期设成一小时，
+// 拨号只可能来自恢复；另一族不跟着重探。
+func TestResumedFamilyIsProbedImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	dial := newCountingDial()
+	d := newDetector(testAddresses, dial.dial)
+	d.now = func() time.Time { return time.Unix(123, 0) }
+	d.interval = time.Hour
+	d.Skip(&heronv1.NetworkDetection{SkipIpv4: true})
+	done := make(chan struct{})
+	go func() { d.Run(ctx); close(done) }()
+	select {
+	case network := <-dial.seen:
+		if network != "tcp6" {
+			t.Fatalf("first round dialed %s", network)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first round did not run")
+	}
+	waitFor(t, func() bool { return d.Snapshot().GetIpv6().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED })
+	d.Skip(nil)
+	if got := d.Snapshot().GetIpv4(); got != nil {
+		t.Fatalf("resumed family still reported %v before its probe", got)
+	}
+	select {
+	case network := <-dial.seen:
+		if network != "tcp4" {
+			t.Fatalf("resume dialed %s, want only the resumed family", network)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("resumed family was not probed before the next period")
+	}
+	waitFor(t, func() bool { return d.Snapshot().GetIpv4().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED })
+	cancel()
+	<-done
+	if dial.count("tcp6") != 1 || dial.count("tcp4") != 1 {
+		t.Fatalf("dials tcp4=%d tcp6=%d, want one each", dial.count("tcp4"), dial.count("tcp6"))
+	}
+}
+
+// 探测在途时被停用的族：结果迟到也不覆盖 Skip 写下的 DISABLED。
+func TestLateResultDoesNotOverwriteSkip(t *testing.T) {
+	release := make(chan struct{})
+	dialed := make(chan struct{}, 2)
+	d := newDetector(testAddresses, func(ctx context.Context, network, address string) (net.Conn, error) {
+		dialed <- struct{}{}
+		<-release
+		return nil, syscall.ENETUNREACH
+	})
+	d.now = func() time.Time { return time.Unix(123, 0) }
+	finished := make(chan struct{})
+	go func() { d.refresh(t.Context(), [2]bool{true, true}); close(finished) }()
+	for range 2 {
+		<-dialed
+	}
+	d.Skip(&heronv1.NetworkDetection{SkipIpv4: true})
+	close(release)
+	<-finished
+	got := d.Snapshot()
+	if !proto.Equal(got.GetIpv4(), disabled(123)) || got.GetIpv6().GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED {
+		t.Fatalf("late result overwrote the skip: %v", got)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached")
+		}
+		runtime.Gosched()
 	}
 }

@@ -9,11 +9,16 @@ import (
 	"time"
 )
 
-type networkSnapshot struct{ value *heronv1.NetworkInfo }
+type networkSnapshot struct {
+	value *heronv1.NetworkInfo
+	skips []*heronv1.NetworkDetection
+}
 
 func (n *networkSnapshot) Snapshot() *heronv1.NetworkInfo {
 	return proto.Clone(n.value).(*heronv1.NetworkInfo)
 }
+
+func (n *networkSnapshot) Skip(d *heronv1.NetworkDetection) { n.skips = append(n.skips, d) }
 
 func TestNetworkChangesReconcileWithoutRestart(t *testing.T) {
 	hub := &fakeHub{interval: 5000, reconcile: true}
@@ -43,5 +48,35 @@ func TestNetworkChangesReconcileWithoutRestart(t *testing.T) {
 	}
 	if got := reports[2].Facts.GetNetwork().GetIpv4(); got.GetState() != 3 || got.GetAddress() != "" || got.GetCheckedAt() != 200 {
 		t.Fatalf("requested network=%v", got)
+	}
+}
+
+// hub 的逐族开关每次成功应答都交给探测器，缺失（旧 hub、或清空手填之后）也交 nil：探测器靠它恢复探测。
+// 失败的上报没有应答，不交。
+func TestRunnerHandsDetectionToNetworkAfterEverySuccessfulReport(t *testing.T) {
+	hub := &fakeHub{interval: 5000, detection: &heronv1.NetworkDetection{SkipIpv4: true}}
+	r, _ := newRunner(t, hub)
+	n := &networkSnapshot{value: &heronv1.NetworkInfo{}}
+	r.Network = n
+	round := 0
+	r.Sleep = func(context.Context, time.Duration) error {
+		round++
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		switch round {
+		case 1:
+			hub.detection = nil
+		case 2:
+			hub.fail = true
+		case 3:
+			return context.Canceled
+		}
+		return nil
+	}
+	if err := r.Run(t.Context()); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if len(n.skips) != 2 || !n.skips[0].GetSkipIpv4() || n.skips[0].GetSkipIpv6() || n.skips[1] != nil {
+		t.Fatalf("detections handed to network = %v, want [skip_ipv4, nil] and nothing for the failed report", n.skips)
 	}
 }

@@ -31,7 +31,9 @@ func ValidateNetwork(n *heronv1.NetworkInfo) error {
 			if _, valid := netaddr.ParsePublicFamily(result.Address, i == 0); !valid {
 				return fmt.Errorf("network.%s: available address must be a public address of this family", name)
 			}
-		case heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED, heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_FAILED:
+		// DISABLED 是 agent 按 hub 的要求停用了该族探测：同样没有地址，checked_at 是停用生效的时刻。
+		case heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED, heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_FAILED,
+			heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_DISABLED:
 			if result.Address != "" {
 				return fmt.Errorf("network.%s: unavailable state must have no address", name)
 			}
