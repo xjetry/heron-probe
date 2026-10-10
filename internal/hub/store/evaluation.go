@@ -7,7 +7,7 @@ import (
 )
 
 // EvaluationReader 是 hub 自己的告警评估读历史的唯一入口：读走评估池 ev，不与请求驱动的读共用 r / hr（原则见
-// readPoolFor）。额度、分级与水位拼接与 Store 的同名方法相同，只有选池不同；它不看预计扫描量，评估窗口再长也留在 ev。
+// readPoolFor）。额度、分级与水位拼接与 Store 的同名方法相同，只有选池不同：它不看预计扫描量、不封顶重跑，评估窗口再长也留在 ev。
 type EvaluationReader struct{ s *Store }
 
 // Evaluation 返回评估读者。调用方只应是告警引擎：评估池的上限按引擎的评估互斥论证（见 evaluationPoolSize），

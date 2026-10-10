@@ -406,18 +406,32 @@ type queryShape struct {
 // 每级计数的 LIMIT 是剩余额度 + 1，命中即超额返回，不必数完全表；未超额时每级计数恰为该级
 // 实际行数。计数只约束实际要读的源行，不从窗口跨度或水位落后时长推算：未来时刻没有数据，
 // 空库与新库不会被拒，维护长期停滞或细级尾巴过长则按实际行数被拒（ReadQuotaError）。
+//
+// 请求驱动的读在轻池上执行时，计数另按 lightScanRows 封顶（见 readFamily 的 scanCap）：预计扫描量只决定首次选池，
+// 估计偏小（任务更替留下的历史序列、过长的细级尾巴）时，计数在读到第 lightScanRows+1 行时停下，readFamily 回滚
+// r 上的事务、归还连接后返回 errScanCapped，这里再到 hr 上按原额度重跑。所以在 r 上完成的查询，实测源行数不超过
+// lightScanRows。重跑的额外代价有界：r 上的计数在累计读到 lightScanRows+1 行时停下，这一次尝试至多多读这么多行，
+// 且只发生在被误分进 r 的查询上。
 func queryFamily[T any](ctx context.Context, s *Store, route readRoute, f *family, shape queryShape, from, to int64, lv Level, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	i, err := checkStep(lv, step)
 	if err != nil {
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	db := s.ev
-	if route == requestRead {
-		db = s.readPoolFor(scanEstimate(from, to, lv, shape.seriesLimit))
+	if route == evaluationRead {
+		return readFamily(ctx, s.ev, 0, f, shape, i, from, to, step, scan, summarize)
 	}
-	return readFamily(ctx, db, f, shape, i, from, to, step, scan, summarize)
+	db, scanCap := s.readPoolFor(scanEstimate(from, to, lv, shape.seriesLimit))
+	out, err := readFamily(ctx, db, scanCap, f, shape, i, from, to, step, scan, summarize)
+	if errors.Is(err, errScanCapped) {
+		// readFamily 返回前已回滚 r 上的事务、归还连接：先还 r 再取 hr，不持一个读连接等另一个（见 readPoolFor）。
+		return readFamily(ctx, s.hr, 0, f, shape, i, from, to, step, scan, summarize)
+	}
+	return out, err
 }
+
+// errScanCapped 是 readFamily 在封顶池上计数触顶的信号，只在 queryFamily 内部流转，不返回给调用方。
+var errScanCapped = errors.New("scan cap reached on the light read pool")
 
 // readRoute 是 queryFamily 的选池方式，两条原则见 readPoolFor。
 type readRoute int
@@ -431,7 +445,11 @@ const (
 
 // readFamily 在 db 上的一个只读事务里完成 queryFamily 的计数与聚合，i 是已校验的级别下标，窗口已对齐。
 // scan 与 summarize 只用这个事务，持着它再取别的读连接会违反读池不互等的约束（见 readPoolFor）。
-func readFamily[T any](ctx context.Context, db *sql.DB, f *family, shape queryShape, i int, from, to, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
+//
+// scanCap 为正时，各级计数累计读到的源行数不得超过它：每级 LIMIT 取 min(剩余额度, 剩余封顶)+1，两个余量都随层递减，
+// 累计超过即返回 errScanCapped。事务由本函数帧的 defer 回滚，返回即归还连接；调用方据此在返回之后才去取另一个池，
+// 所以封顶重跑不能与这次尝试同在一个持事务的函数帧里。scanCap 为 0 不封顶。
+func readFamily[T any](ctx context.Context, db *sql.DB, scanCap int64, f *family, shape queryShape, i int, from, to, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
@@ -442,6 +460,7 @@ func readFamily[T any](ctx context.Context, db *sql.DB, f *family, shape querySh
 	// watermarks 记录参与本次查询的各粗级水位，只在超额时随错误带出。
 	var watermarks []LevelWatermark
 	remaining := quotaRowsPerSeries * shape.seriesLimit
+	capLeft := scanCap
 	for ; i >= 0; i-- {
 		query := f.rangeSQL(i, shape)
 		levelArgs := append(append([]any{}, shape.keyArgs...), from, to)
@@ -463,14 +482,25 @@ func readFamily[T any](ctx context.Context, db *sql.DB, f *family, shape querySh
 		if i > 0 {
 			count += " AND ts < ?"
 		}
-		countArgs := append(append([]any{}, levelArgs...), remaining+1)
+		limit := remaining
+		if scanCap > 0 {
+			limit = min(limit, capLeft)
+		}
+		countArgs := append(append([]any{}, levelArgs...), limit+1)
 		var n int64
 		if err := tx.QueryRowContext(ctx, count+" LIMIT ?)", countArgs...).Scan(&n); err != nil {
 			return nil, err
 		}
+		// 先判额度：剩余额度不大于剩余封顶时，命中 LIMIT 即已超额，换池重跑读到的是同样的行，照样被拒。
 		remaining -= n
 		if remaining < 0 {
 			return nil, ReadQuotaError{Quota: quotaRowsPerSeries * shape.seriesLimit, Series: shape.seriesLimit, Watermarks: watermarks}
+		}
+		if scanCap > 0 {
+			capLeft -= n
+			if capLeft < 0 {
+				return nil, errScanCapped
+			}
 		}
 	}
 	union := strings.Join(sources, " UNION ALL ")

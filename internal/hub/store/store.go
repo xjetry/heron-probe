@@ -199,10 +199,11 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 // 104ms，拆池后 4.8ms、轻池零排队；只有大扫描时，大扫描池的吞吐与单池不限相近（1118 vs 1182 次）。
 //
 // 哪个读走哪个池，按两条原则：
-//   - 请求驱动的读按查询自身的扫描量分 r / hr，不按入口或调用方：queryFamily 按 scanEstimate 判定，预计扫描量超过
-//     lightScanRows 的走 hr，其余以及所有不经 queryFamily 的读走 r。同一个 QueryProbes，面板的一小时窗口留在 r，
-//     公开页的长窗口进 hr。新加的查询若读取与时间窗口成正比的行数，要经 queryFamily 或同样按 scanEstimate 选池，
-//     否则它就是轻池里的大扫描。
+//   - 请求驱动的读按查询自身的扫描量分 r / hr，不按入口或调用方：queryFamily 按 scanEstimate 选首次池，预计扫描量
+//     超过 lightScanRows 的走 hr，其余以及所有不经 queryFamily 的读走 r。同一个 QueryProbes，面板的一小时窗口留在 r，
+//     公开页的长窗口进 hr。估计只定首次池，r 上的实测上界由封顶计数保证：queryFamily 在 r 上计数累计超过
+//     lightScanRows 即放弃 r 上的事务、改在 hr 重跑（见 queryFamily）。新加的查询若读取与时间窗口成正比的行数，
+//     要经 queryFamily，否则它就是轻池里没有上界的大扫描。
 //   - hub 自己的告警评估读按调用方进 ev，只经 Evaluation 返回的读者：评估的时效是告警承诺的一部分，不该随请求负载
 //     变化。r 与 hr 的排队长度都由外部请求决定，评估读排在哪个池里，告警判定就随那个池的负载变慢。
 //
@@ -212,12 +213,13 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 // （ListMonitoringNodes、ProbeTaskNodeIDs）在 r 上读完、归还之后才经评估读者读历史；queryFamily 的 scan 与 summarize
 // 回调只用它自己的事务。三个池都设为 1 个连接跑 store、api、cmd/hub 的全部测试可以复核这一点：违反它的路径会挂住。
 //
-// readPoolFor 给出请求驱动、预计扫描量为 estimate 的查询该用的池，分界见 lightScanRows。
-func (s *Store) readPoolFor(estimate int64) *sql.DB {
+// readPoolFor 给出请求驱动、预计扫描量为 estimate 的查询首次该用的池，以及在那个池上的计数封顶（0 为不封顶），
+// 分界见 lightScanRows。
+func (s *Store) readPoolFor(estimate int64) (*sql.DB, int64) {
 	if estimate > lightScanRows {
-		return s.hr
+		return s.hr, 0
 	}
-	return s.r
+	return s.r, lightScanRows
 }
 
 // readPoolSize 是轻池上限：2×GOMAXPROCS，至少 4。轻池里最重的是 lightScanRows 以内的扫描（同机一次约 16ms），
@@ -258,9 +260,9 @@ const readConnMaxIdle = 5 * time.Minute
 const lightScanRows = 4096
 
 // scanEstimate 是 queryFamily 一次查询预计读取的源行数：请求级每桶一行、至多 seriesLimit 条序列。按桶长而不按 step 算，
-// 因为 step 是桶长的整数倍、源行按桶长存，输出点数会低估读量。探测族的 seriesLimit 是每节点任务上限而不是实际任务数，
-// 估计偏大，任务少的节点也可能被分进大扫描池，只多排队、不会让大扫描漏进轻池。不计细级尾巴：水位正常推进时尾巴在
-// RollupLag 量级；维护停滞时实际读量会超过估计，那时读量由额度（ReadQuotaError）显式拒绝，不靠这里约束。
+// 因为 step 是桶长的整数倍、源行按桶长存，输出点数会低估读量。估计只定首次池：偏大只多排队；偏小（任务更替留下的
+// 历史序列，或不计入的细级尾巴在维护停滞时变长）由 queryFamily 在 r 上的封顶计数兜住，r 上完成的扫描不超过
+// lightScanRows。读量本身由额度（ReadQuotaError）按实际行数裁决，与估计无关。
 func scanEstimate(from, to int64, lv Level, seriesLimit int64) int64 {
 	return ceilDiv(to-from, lv.Bucket) * seriesLimit
 }
