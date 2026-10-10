@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -164,6 +165,63 @@ func TestRenewedExpiry(t *testing.T) {
 	} {
 		if got, ok := renewedExpiry(c.b, date("2026-09-24")); ok {
 			t.Errorf("%s: renewed to %s", c.name, got)
+		}
+	}
+}
+
+// "已续费"至少推后一个周期，再按自动续期的规则步进到不早于今天；不看自动续期开关。
+func TestRenewedExpiryForManualRenewal(t *testing.T) {
+	monthly := store.Billing{Cycle: store.CycleMonthly}
+	with := func(b store.Billing, expiresOn string) store.Billing { b.ExpiresOn = expiresOn; return b }
+	for _, c := range []struct {
+		name  string
+		b     store.Billing
+		today string
+		want  string
+	}{
+		{"in the future: exactly one cycle", with(monthly, "2026-10-10"), "2026-09-24", "2026-11-10"},
+		{"due today: one cycle", with(monthly, "2026-09-24"), "2026-09-24", "2026-10-24"},
+		{"in the future, clamped to month end", with(monthly, "2026-01-31"), "2026-01-20", "2026-02-28"},
+		{"expired: keeps the billing day", with(monthly, "2026-09-10"), "2026-09-24", "2026-10-10"},
+		{"expired several cycles: clamped then drifting", with(monthly, "2026-01-31"), "2026-04-01", "2026-04-28"},
+		{"expired, a step lands on today", store.Billing{Cycle: store.CycleQuarterly, ExpiresOn: "2026-06-24"}, "2026-09-24", "2026-09-24"},
+		{"auto renew on does not matter", store.Billing{Cycle: store.CycleYearly, AutoRenew: true, ExpiresOn: "2026-12-01"}, "2026-09-24", "2027-12-01"},
+	} {
+		got, err := RenewedExpiry(c.b, date(c.today))
+		if err != nil || got != c.want {
+			t.Errorf("%s: RenewedExpiry = %q %v, want %q", c.name, got, err, c.want)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		b    store.Billing
+		want error
+	}{
+		{"no cycle", store.Billing{ExpiresOn: "2026-09-10"}, ErrRenewNoCycle},
+		{"unknown cycle", store.Billing{Cycle: "weekly", ExpiresOn: "2026-09-10"}, ErrRenewNoCycle},
+		{"no date", with(monthly, ""), ErrRenewNoExpiry},
+	} {
+		if got, err := RenewedExpiry(c.b, date("2026-09-24")); !errors.Is(err, c.want) {
+			t.Errorf("%s: RenewedExpiry = %q %v, want %v", c.name, got, err, c.want)
+		}
+	}
+	if got, err := RenewedExpiry(with(monthly, "2026-09-31"), date("2026-09-24")); err == nil || errors.Is(err, ErrRenewNoExpiry) {
+		t.Errorf("unreadable date: RenewedExpiry = %q %v, want a parse error", got, err)
+	}
+}
+
+// 已过期的节点手动续期与自动续期落在同一天：两条路径共用一套步进，不是两份各自正确的规则。逐个周期、跨月末与闰年
+// 枚举到期日，凡早于今天的都比对。
+func TestManualRenewalMatchesAutoRenewalWhenExpired(t *testing.T) {
+	today := date("2028-03-01")
+	for _, cycle := range store.BillingCycles() {
+		for d := date("2023-01-28"); d.Before(today); d = d.AddDate(0, 0, 1) {
+			b := store.Billing{Cycle: cycle, ExpiresOn: d.Format(time.DateOnly), AutoRenew: true}
+			auto, ok := renewedExpiry(b, today)
+			manual, err := RenewedExpiry(b, today)
+			if !ok || err != nil || auto != manual {
+				t.Fatalf("%s from %s: auto %q %v, manual %q %v", cycle, b.ExpiresOn, auto, ok, manual, err)
+			}
 		}
 	}
 }
