@@ -862,6 +862,25 @@ enum ProbeMetric {
   PROBE_METRIC_LOSS_PCT = 1;
   PROBE_METRIC_RTT_MS = 2;
 }
+// 往返时延规则（metric 为 PROBE_METRIC_RTT_MS）的判定方式。
+enum RttMode {
+  // 只对 rtt 规则有含义：保存时按 RTT_MODE_THRESHOLD 收，回显为 RTT_MODE_THRESHOLD（不带这个字段的旧客户端
+  // 保存的就是固定阈值规则）。其余规则必须是它。
+  RTT_MODE_UNSPECIFIED = 0;
+  // 逐分钟均值 ≥ threshold 即越限。
+  RTT_MODE_THRESHOLD = 1;
+  // 逐分钟均值落在基线带 [基线×(1−lower_deviation_pct/100), 基线×(1+upper_deviation_pct/100)] 之外（含边界）即越限。
+  RTT_MODE_RELATIVE = 2;
+}
+// 相对判定的基线来源。
+enum BaselineMode {
+  // 只允许出现在非相对判定的规则上；相对判定必须显式选择。
+  BASELINE_MODE_UNSPECIFIED = 0;
+  // 基线窗口内（不含判定窗口）各个有 rtt 样本的 5 分钟桶的桶均值，取中位数，桶等权；hub 每小时重算一次并缓存。
+  BASELINE_MODE_ADAPTIVE = 1;
+  // 基线就是 fixed_baseline_ms。
+  BASELINE_MODE_FIXED = 2;
+}
 message AlertRule {
   // 0 表示创建。
   int64 id = 1;
@@ -879,9 +898,9 @@ message AlertRule {
   uint64 task_id = 7;
   // 探测规则必须选择丢包百分比或往返毫秒数。
   ProbeMetric metric = 8;
-  // 丢包百分比 0–100；往返毫秒数 > 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
+  // 丢包百分比 0–100；往返毫秒数在 RTT_MODE_THRESHOLD 下 > 0、RTT_MODE_RELATIVE 下必须为 0；流量为配额百分比 (0,100]；资源指标按 proto ResourceMetric 各值的范围（百分比 (0,100]、每核负载 (0,64]、字节速率 (0,2^40]）。
   double threshold = 9;
-  // 1–60：连续多少个已闭合分钟达到阈值才触发。
+  // 1–60：连续多少个已闭合分钟达到阈值（相对判定时为越出基线带）才触发；也是相对判定的判定窗口长度。
   uint32 for_minutes = 10;
   // 创建墙钟，Unix 秒；保存请求中的值忽略。
   int64 created_at = 11;
@@ -898,6 +917,24 @@ message AlertRule {
   double recovery_threshold = 15;
   // 动态标签交集，与 all_nodes 和显式 node_ids 互斥。
   repeated string selector_tags = 16;
+  // 以下八个字段只属于 rtt 规则（kind 为探测、metric 为 PROBE_METRIC_RTT_MS），其余规则必须全部为零值；rtt 规则在
+  // RTT_MODE_THRESHOLD 下除 rtt_mode 外的七个也必须为零值。RTT_MODE_RELATIVE 下 threshold 必须为 0，
+  // upper_deviation_pct、lower_deviation_pct、cooldown_s 与 baseline_mode 必填。
+  RttMode rtt_mode = 17;
+  BaselineMode baseline_mode = 18;
+  // 仅 BASELINE_MODE_ADAPTIVE：基线窗口秒数，不小于 for_minutes×60、不大于 2592000（30 天）；固定基线时必须为 0。
+  // 5 分钟级的保留期短于窗口时，基线只覆盖保留期内的部分。
+  uint32 baseline_window_s = 19;
+  // 仅 BASELINE_MODE_ADAPTIVE：至少 1；基线所用的桶数少于它时基线无效，规则既不触发也不恢复。固定基线时必须为 0。
+  uint32 baseline_min_samples = 20;
+  // 上偏差百分比，(0, 1000]。
+  double upper_deviation_pct = 21;
+  // 下偏差百分比，(0, 100)。
+  double lower_deviation_pct = 22;
+  // 进入 firing 之后这么多秒内不再产生新的 firing 转换（恢复照常），[60, 604800]。
+  uint32 cooldown_s = 23;
+  // 仅 BASELINE_MODE_FIXED：基线毫秒数，(0, 60000]，与 threshold 无关；自适应基线时必须为 0。
+  double fixed_baseline_ms = 24;
 }
 message ListAlertRulesRequest {}
 message ListAlertRulesResponse {
