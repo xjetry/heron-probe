@@ -24,7 +24,7 @@ const (
 	// 在该速率下约 160 秒；连接不再前进时由 stallTimeout 更早结束，不必等到这里。
 	DownloadLimit = 35 * time.Minute
 	// stallTimeout 是读正文时连续收不到任何字节即判失败的时长。minDownloadRate 的链路每秒都有字节到达，几十秒一个字节
-	// 都没有说明连接已不再前进（对端停发、中间设备丢了连接状态），继续等只会把失败推迟到 DownloadLimit、且分不出慢与停。
+	// 都没有说明连接已不再前进（对端停发、中间设备丢了连接状态），继续等至多把失败推迟到 DownloadLimit，且分不出慢与停。
 	// 取 60 秒而不更短，是给短暂断流（链路切换、重传退避）留余量：它只决定"停了多久才认定"，不影响慢而不停的取回。
 	stallTimeout = 60 * time.Second
 )
@@ -44,8 +44,8 @@ func timeLimit(ctx context.Context) (time.Duration, error) {
 }
 
 // watchedBody 包装一次请求的正文：每次 Read 收到字节就把停滞计时器推回 stall，计时器到点时以 errStalled 取消这次
-// 请求的 ctx。阻塞在 Read 里的连接只有 ctx 取消才会返回（net/http 在请求 ctx 结束时关闭连接、让 Read 返回错误），
-// 所以停滞判定必须落在取消 ctx 上，不能只在 Read 返回后比较时间。
+// 请求的 ctx。停滞时 Read 正阻塞着、不会自己返回，判定必须能结束它：请求 ctx 结束时 net/http 关闭连接、让 Read
+// 返回错误，所以判定落在取消 ctx 上，不能只在 Read 返回后比较时间。
 type watchedBody struct {
 	r     io.Reader
 	timer *time.Timer

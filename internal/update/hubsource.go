@@ -20,8 +20,9 @@ const maxRelayResponse = maxFetchBytes + 64<<10
 // （updates.Relay，总上限 DownloadLimit，停滞判定在 hub 读 GitHub 正文时做），节点这一侧先是一段没有字节的长等待，
 // 再收 hub 的应答正文；应答正文就是那三份文件，按同一个最低速率传完同样要一个 DownloadLimit。所以取两个
 // DownloadLimit：hub 侧的取回先于节点到期，节点收到的是 hub 的错误文案（含停滞或超时的进度），而不是自己的
-// "context deadline exceeded"；反过来节点先放弃会让 hub 白取一次。hub 上的验签按秒计，落在 DownloadLimit
-// 向上取整留下的余量里。旧 hub 的取回期限更短，只会更早应答，不影响这条先后。
+// "context deadline exceeded"；反过来节点先放弃会让 hub 白取一次。hub 上的验签不经网络、耗时不随链路速率变化；
+// 两段推导值之外还有两次向上取整留下的约 72 秒（TestDownloadLimitDerivation 从常量重算推导值）。旧 hub 的取回
+// 期限更短，只会更早应答，不影响这条先后。
 const hubFetchLimit = 2 * DownloadLimit
 
 // HubSource 经 hub 的 GetRelease 取产物（spec §4.10），不做接受判定（见 Accept）。hub 地址、token 与明文许可在
