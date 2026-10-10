@@ -222,6 +222,19 @@ func (s *Store) readPoolFor(estimate int64) (*sql.DB, int64) {
 	return s.r, lightScanRows
 }
 
+// ReadPoolStats 是三个读池各自的连接池统计，取值时刻各池分别读取、彼此不是同一瞬间。每个字段的含义由
+// database/sql 的 DBStats 保证：MaxOpenConnections 是池的上限，OpenConnections / InUse / Idle 是当下的连接数，
+// WaitCount / WaitDuration 是自打开以来因池满排队的次数与累计时长，MaxIdleClosed / MaxIdleTimeClosed 是因空闲保留
+// 上限与空闲时长被关掉的连接数。它是读池的可观测面：负载对照与存储统计据此看各池是否排队、连接是否被关掉重开。
+type ReadPoolStats struct {
+	Light, History, Evaluation sql.DBStats
+}
+
+// ReadPoolStats 返回 r、hr、ev 三个读池的统计，分工见 readPoolFor。
+func (s *Store) ReadPoolStats() ReadPoolStats {
+	return ReadPoolStats{Light: s.r.Stats(), History: s.hr.Stats(), Evaluation: s.ev.Stats()}
+}
+
 // readPoolSize 是轻池上限：2×GOMAXPROCS，至少 4。轻池里最重的是 lightScanRows 以内的扫描（同机一次约 16ms），
 // 上限越大，面板轮询读排在它们后面的机会越小：单池混合负载下上限 2P 的轻读 p50 是上限 P 的约三分之一
 // （31.9 vs 104ms）。至少 4：单核机器上 2P 只有 2 个，两条中等扫描就能占满；同机 1 核、两个一天分钟行扫描者与轻读者

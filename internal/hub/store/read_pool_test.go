@@ -730,3 +730,34 @@ func percentile(d []time.Duration, q float64) time.Duration {
 	slices.Sort(s)
 	return s[int(math.Ceil(q*float64(len(s))))-1]
 }
+
+// ReadPoolStats 的每个字段对应自己的池：占满哪个池，只有那个字段的 InUse 等于上限，其余字段的 InUse 为 0。
+func TestReadPoolStatsReportsEachPool(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	field := func(st ReadPoolStats, name string) sql.DBStats {
+		switch name {
+		case "light":
+			return st.Light
+		case "history":
+			return st.History
+		}
+		return st.Evaluation
+	}
+	for _, pc := range readPoolCases() {
+		release := holdReadConns(t, pc.db(s), pc.limit)
+		st := s.ReadPoolStats()
+		release()
+		for _, other := range readPoolCases() {
+			got := field(st, other.name)
+			wantInUse := 0
+			if other.name == pc.name {
+				wantInUse = pc.limit
+			}
+			if got.MaxOpenConnections != other.limit || got.InUse != wantInUse {
+				t.Errorf("with the %s pool held: ReadPoolStats.%s max=%d in use=%d, want max=%d in use=%d",
+					pc.name, other.name, got.MaxOpenConnections, got.InUse, other.limit, wantInUse)
+			}
+		}
+	}
+}
