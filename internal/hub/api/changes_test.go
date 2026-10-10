@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1386,3 +1387,42 @@ func TestRunChangeTerminalStates(t *testing.T) {
 		}
 	})
 }
+
+// 预览与重放不是失败：主写按变更的要求回滚（ErrPreview）或跳过（ErrReplay），handler 经 operationError 退出时不记 Error 日志。
+// 记成 Error 会让每次预览都在日志里留下一条"updating node failed"。
+func TestPreviewAndReplayDoNotLogErrors(t *testing.T) {
+	t.Parallel()
+	var logs syncBuffer
+	h := newHarness(t, "", withLog(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))))
+	h.login(t)
+	a, _ := h.createNode(t, "a")
+	edit := func(requestID string, preview bool, expected string) string {
+		t.Helper()
+		m := &heronv1.ExecuteChangeRequest{RequestId: requestID, Preview: preview, ExpectedVersion: expected, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"note"}},
+			Change: &heronv1.ExecuteChangeRequest_UpdateNode{UpdateNode: &heronv1.UpdateNodeRequest{Id: a, Note: "changed"}}}
+		resp, err := h.admin.ExecuteChange(t.Context(), connect.NewRequest(m))
+		if err != nil {
+			t.Fatalf("ExecuteChange(preview=%v): %v", preview, err)
+		}
+		return resp.Msg.GetExpectedVersion()
+	}
+	version := edit("edit", true, "")
+	edit("edit", false, version)
+	edit("edit", false, version) // 同一 request_id 重放：返回原回执，不再写。
+	if out := logs.String(); strings.Contains(out, "level=ERROR") {
+		t.Fatalf("preview or replay of a change logged an error:\n%s", out)
+	}
+}
+
+// syncBuffer 是 handler 协程写、用例读的日志缓冲：写发生在请求处理协程里，读在应答返回之后，锁让两者有明确的先后。
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+func (b *syncBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }

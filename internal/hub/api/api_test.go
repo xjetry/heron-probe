@@ -113,6 +113,7 @@ type harnessOption func(*harnessDeps)
 
 type harnessDeps struct {
 	authLog      *slog.Logger
+	log          *slog.Logger
 	telegramBase string
 	// config 在装配前改 api.Config 里与 serve 的 flag 对应的项。
 	config func(*Config)
@@ -121,6 +122,11 @@ type harnessDeps struct {
 // withAuthLog 给 Auth 换 logger，用例借它的日志语句位置暂停登录。
 func withAuthLog(l *slog.Logger) harnessOption {
 	return func(d *harnessDeps) { d.authLog = l }
+}
+
+// withLog 给 api.Service 换 logger，用例借它断言哪些路径不该记错误。
+func withLog(l *slog.Logger) harnessOption {
+	return func(d *harnessDeps) { d.log = l }
 }
 
 // withConfig 让用例在装配前改 api.Config 里与 serve 的 flag 对应的项。
@@ -139,7 +145,7 @@ func withTelegramBase(base string) harnessOption {
 // 默认测试用 store.DefaultRetention，需要钉住"判定用的是配置保留期"的用例可以传入不同的值。
 func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention store.Retention, opts ...harnessOption) *harness {
 	t.Helper()
-	deps := harnessDeps{authLog: slog.Default(), config: func(*Config) {}}
+	deps := harnessDeps{authLog: slog.Default(), log: slog.Default(), config: func(*Config) {}}
 	for _, o := range opts {
 		o(&deps)
 	}
@@ -176,7 +182,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	cfg := Config{Backups: backup.New(st, notifier, clk, slog.Default()), Heartbeat: hb, TTL: 30 * time.Second, ReportInterval: 10 * time.Second, TrustedProxies: prefixes, HubVersion: "test-hub-version", Location: loc, Retention: retention, Geo: geo.NewHTTP(client)}
 	deps.config(&cfg)
 	ops := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: in, Log: slog.Default()})
-	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: ops, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: slog.Default()})
+	svc := New(cfg, Deps{Store: st, Auth: a, Live: l, Nodes: ops, Traffic: book, Probes: reg, Alerts: alerts, Notifier: notifier, Clock: clk, Log: deps.log})
 	pub := NewPublic(PublicConfig{ReportInterval: 10 * time.Second, TrustedProxies: prefixes, Location: loc},
 		PublicDeps{Store: st, Live: l, Traffic: book, Probes: reg, Clock: clk, Log: slog.Default()})
 	mux := http.NewServeMux()

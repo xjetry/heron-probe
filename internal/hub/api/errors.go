@@ -120,6 +120,10 @@ func (s *Service) operationError(err error, root, operation string) error {
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s: %w", root, err))
 	case errors.Is(err, store.ErrNodeLimit):
 		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%s: %w", missingField(root, store.ObjectNode), err))
+	case errors.Is(err, store.ErrPreview), errors.Is(err, store.ErrReplay):
+		// 预览与重放不是失败：主写按变更的要求回滚或跳过，handler 经这里退出，runChange 按 Change.Err 回答预览结果或原回执。
+		// 原样返回、不记日志；记成 Error 会让每次预览都在日志里留下一条"操作失败"。
+		return err
 	}
 	s.log.Error(operation, "err", err)
 	return internalError(operation)
