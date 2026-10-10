@@ -76,8 +76,8 @@ func (d *Detector) Snapshot() *heronv1.NetworkInfo {
 // 此后 refresh 不再拨它；由停用转为探测时，立即把它退回缺失并唤醒 Run 探测一次。退回缺失而不是留着 DISABLED 到
 // 探测完成：不认识 DISABLED 的旧 hub 会整次拒收带它的 facts，只有最近一次应答仍要求停用时才该报它。
 //
-// 进程启动后的第一轮探测与第一次上报并行，那一轮可能已拨出了 hub 随后要求停用的族；停用状态不落盘，这一轮是
-// 每次启动唯一的例外。
+// 停用状态不落盘，只来自应答：进程启动后到第一次成功应答之前，探测器不知道哪些族被停用，照常探测（第一轮立即
+// 开始，与第一次上报并行；hub 不可达时按周期继续）。
 func (d *Detector) Skip(detection *heronv1.NetworkDetection) {
 	want := [2]bool{detection.GetSkipIpv4(), detection.GetSkipIpv6()}
 	d.mu.Lock()
