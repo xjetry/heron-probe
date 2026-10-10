@@ -232,6 +232,7 @@ type hub struct {
 	book     *traffic.Book
 	alerts   *alert.Engine
 	notifier *alert.Queue
+	reports  *alert.Reporter
 	geo      *geo.Resolver
 	backups  *backup.Manager
 	hb       *heartbeat.Heartbeat
@@ -344,6 +345,8 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 		return nil, err
 	}
 	backups := backup.New(st, notifier, clk, log)
+	// 流量报告与告警共用投递队列（§9.3），读的是 loadTrafficAlerts 已装入的同一本账的已提交观测。
+	reports := alert.NewReporter(alert.ReportDeps{Store: st, Traffic: book, Sender: notifier, Location: loc, Clock: clk, Log: log})
 	hb := heartbeat.New(heartbeatSource{st: st, live: l}, client, version, clk, log)
 	nodes := nodeops.New(nodeops.Deps{Credentials: a, Nodes: reg, Alerts: alerts, Traffic: book, State: svc, Log: log})
 	reload := nodeops.NewReloader(nodes, nodeops.ReloadDeps{Generation: st, Tokens: a, Tasks: reg, Log: log}, offlineGen, opts.offlineReload)
@@ -365,7 +368,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 		publicEnabled: st.PublicEnabled,
 	})
 	return &hub{opts: opts, st: st, live: l, ingest: svc, updates: updateManager, relay: relay, book: book, alerts: alerts,
-		notifier: notifier, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, reload: reload, handler: handler, geoLog: geoLog,
+		notifier: notifier, reports: reports, geo: geo.New(st, geoBackend, clk, log), backups: backups, hb: hb, reload: reload, handler: handler, geoLog: geoLog,
 		gate: func(ctx context.Context) error { return update.NewClient("hub").Gate(ctx, version) }}, nil
 }
 
@@ -399,6 +402,7 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	defer startLoop(h.alerts.RunProbeEvaluation)()
 	defer startLoop(h.alerts.RunExpirySweep)()
 	defer startLoop(h.notifier.Run)()
+	defer startLoop(h.reports.Run)()
 	defer startLoop(h.geo.Run)()
 	defer startLoop(h.backups.Run)()
 	defer startLoop(h.hb.Run)()
