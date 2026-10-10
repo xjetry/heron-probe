@@ -95,6 +95,12 @@ func currentWebAuthnOrigin(ctx context.Context) (string, string) {
 	return current.origin, current.reason
 }
 
+// ParsePasskeyOrigin 是旧 --admin-origin 的格式校验，返回规范化的 Origin 与由它推出的 RP ID。导出给装配方在用到之前
+// 校验配置；ConfigureWebAuthn 在无持久绑定时也经它校验导入来源，两处是同一个判定，非法值的错误文案只有这一份。
+func ParsePasskeyOrigin(origin string) (normalized, rpID string, err error) {
+	return normalizePasskeyOrigin(origin)
+}
+
 func normalizePasskeyOrigin(origin string) (string, string, error) {
 	normalized, host, err := normalizeHTTPOrigin(origin)
 	if err != nil {

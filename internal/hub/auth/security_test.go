@@ -517,6 +517,38 @@ func TestPasskeyLegacyOriginMigration(t *testing.T) {
 	}
 }
 
+// 旧来源只导入一次：无绑定、有旧凭据时合法来源落成绑定；此后再给另一个合法来源，绑定不变也不报错——换域名只能走
+// 重新认证后的显式改绑，启动参数改不动它。
+func TestConfigureWebAuthnImportsOnceThenKeepsTheBinding(t *testing.T) {
+	a, st, _ := setup(t)
+	ctx := context.Background()
+	if err := st.SetAdminPassword(ctx, cheapPHC(goodPassword)); err != nil {
+		t.Fatal(err)
+	}
+	b, s, err := a.readSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Passkeys = []Passkey{{Name: "legacy", Credential: webauthn.Credential{ID: []byte("legacy-key")}}}
+	if err = a.commitSecurity(ctx, b, s, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.ConfigureWebAuthn("https://admin.example"); err != nil {
+		t.Fatal(err)
+	}
+	_, s, err = a.readSecurity(ctx)
+	if err != nil || s.Origin != "https://admin.example" || s.RPID != "admin.example" {
+		t.Fatalf("legacy origin not imported: origin %q, rp %q, %v", s.Origin, s.RPID, err)
+	}
+	if err = a.ConfigureWebAuthn("https://other.example"); err != nil {
+		t.Fatal("a different legacy origin was rejected despite the persistent binding", err)
+	}
+	_, s, err = a.readSecurity(ctx)
+	if err != nil || s.Origin != "https://admin.example" || s.RPID != "admin.example" || len(s.Passkeys) != 1 {
+		t.Fatalf("a different legacy origin changed the persistent binding: origin %q, rp %q, %d passkeys, %v", s.Origin, s.RPID, len(s.Passkeys), err)
+	}
+}
+
 func TestPasskeyRebindingRequiresPasswordAndCommitsAtomically(t *testing.T) {
 	a, st, _ := setup(t)
 	ctx := WithWebAuthnOrigin(context.Background(), "https://old.example")

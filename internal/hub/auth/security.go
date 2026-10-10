@@ -95,7 +95,8 @@ type SecurityResult struct {
 	RecoveryCodes                                             []string
 }
 
-// ConfigureWebAuthn 只导入已有凭据的可信原始来源；持久绑定存在后，旧参数不再影响认证或启动。
+// ConfigureWebAuthn 只导入已有凭据的可信原始来源；持久绑定存在后数据库是唯一来源，旧参数既不覆盖绑定、也不在这一层
+// 报错（绑定短路先于格式校验）。
 func (a *Auth) ConfigureWebAuthn(origin string) error {
 	ctx := context.Background()
 	b, s, readErr := a.readSecurity(ctx)
@@ -108,7 +109,7 @@ func (a *Auth) ConfigureWebAuthn(origin string) error {
 	if origin == "" {
 		return nil
 	}
-	normalized, rpID, err := normalizePasskeyOrigin(origin)
+	normalized, rpID, err := ParsePasskeyOrigin(origin)
 	if err != nil {
 		return err
 	}

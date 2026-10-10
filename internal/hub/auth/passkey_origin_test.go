@@ -18,7 +18,7 @@ func TestPasskeyOriginNormalization(t *testing.T) {
 		{"https://admin.example:8443", "https://admin.example:8443", "admin.example"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
-			origin, rp, err := normalizePasskeyOrigin(tc.input)
+			origin, rp, err := ParsePasskeyOrigin(tc.input)
 			if err != nil || origin != tc.origin || rp != tc.rp {
 				t.Fatalf("normalization = (%q,%q,%v), want (%q,%q)", origin, rp, err, tc.origin, tc.rp)
 			}
@@ -26,7 +26,7 @@ func TestPasskeyOriginNormalization(t *testing.T) {
 	}
 	for _, input := range []string{"http://admin.example", "https://192.0.2.1", "https://[2001:db8::1]", "https://127.1", "https://0x7f.0.0.1", "https://127.000.0.1", "https://admin.example.123", "https://admin.example.0xff", "https://bad_host.example", "https://-bad.example", "https://bad..example", "https://admin.example:0", "https://admin.example:65536", "https://admin.example:", "https://admin.example?", "https://admin.example#", "https://[admin.example]", "https://admin.example/x", "https://user@admin.example", "null"} {
 		t.Run(input, func(t *testing.T) {
-			if _, _, err := normalizePasskeyOrigin(input); err == nil {
+			if _, _, err := ParsePasskeyOrigin(input); err == nil {
 				t.Fatalf("invalid origin accepted: %s", input)
 			}
 		})
