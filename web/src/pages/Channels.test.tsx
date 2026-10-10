@@ -122,10 +122,16 @@ it("删除登录通知的接收渠道之一时，确认写明不再发到它", a
   expect(await deleteNoteOf("tg（#1）")).toBe("删除后登录通知不再发到这个渠道。");
 });
 
+it("删除流量报告的接收渠道时，确认按它是不是唯一的接收渠道写明影响", async () => {
+  render({ getSettings: async () => ({ settings: { theme: "dark", trafficReport: { enabled: true, daily: true, channelIds: [1n] }, loginNotify: { channelIds: [1n, 2n] } } }) });
+  expect(await deleteNoteOf("tg（#1）")).toBe("删除后登录通知不再发到这个渠道。它是流量报告唯一的接收渠道，删除后流量报告关闭。");
+});
+
 it("设置没读到时删除确认照最坏的情况提醒", async () => {
   render({ getSettings: async () => { throw new ConnectError("settings unavailable", Code.Unavailable); } });
-  await screen.findByText(/settings unavailable/);
-  expect(await deleteNoteOf("tg（#1）")).toBe("通知设置未读到：它若是登录通知或备份失败通知的接收渠道，删除后不再发到它。");
+  // 登录通知与流量报告两个表单各报一次读设置失败。
+  expect(await screen.findAllByText(/settings unavailable/)).toHaveLength(2);
+  expect(await deleteNoteOf("tg（#1）")).toBe("通知设置未读到：它若是登录通知或备份失败通知或流量报告的接收渠道，删除后不再发到它。");
 });
 
 it("登录通知选满上限后未选的渠道不可再选", async () => {

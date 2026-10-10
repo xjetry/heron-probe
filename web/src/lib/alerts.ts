@@ -131,22 +131,25 @@ export const TRANSITIONS: Readonly<Record<string, string>> = {
   firing: "触发", recovered: "恢复", login_success: "登录成功", login_locked: "登录锁定",
   backup_failed: "备份失败", backup_recovered: "备份恢复", backup_disabled: "备份停用",
   login_failed: "登录失败", auth_changed: "认证方式变更", backup_success: "备份成功", backup_restored: "手动恢复",
+  traffic_report: "流量报告",
 };
 export const transitionLabel = (t: string): string => TRANSITIONS[t] ?? t;
 // 要人立即注意的变化，事件页标红：规则触发；登录锁定——有人在猜管理员密码；配置层备份失败——RPO 正在无声变长。
 export const alarming = (t: string): boolean => t === "firing" || t === "login_locked" || t === "backup_failed";
 
-// 通知渠道选择列表（备份失败通知、登录通知）的条数上限，与 hub 的 internal/hub/api/settings.go 里 maxNotifyChannels
+// 通知渠道选择列表（备份失败通知、登录通知、流量报告）的条数上限，与 hub 的 internal/hub/api/settings.go 里 maxNotifyChannels
 // 同值，由 appearanceLimits.test.ts 对照；面板据此在提交前就不让多选（Picks 的 max）。
 export const MAX_NOTIFY_CHANNELS = 16;
 
 // 设置里的通知渠道选择列表，逐个与 hub 的 store.NotifyLists 对应：key 是 hub 在 setting 表里的列表键，
 // notifyLists.test.ts 读 internal/hub/store/notify_list.go 双向核对。hub 删渠道时在同一事务里把它从每个列表摘除，
 // 删除确认据此逐个列表写影响（pages/Channels.tsx 的 deleteNote）；这里漏一个列表，删掉它唯一的接收渠道时确认不提示。
-// 登录通知是密码泄漏当下唯一的信号，备份失败通知是 RPO 无声变长时唯一的告警，删掉唯一的接收渠道就关掉了它们。
+// 登录通知是密码泄漏当下唯一的信号，备份失败通知是 RPO 无声变长时唯一的告警，删掉唯一的接收渠道就关掉了它们；
+// 流量报告删掉唯一的接收渠道后只记事件、不再发出。
 export const NOTIFY_LISTS: readonly { key: string; name: string; ids: (s: Settings) => readonly bigint[] }[] = [
   { key: "notify.login_channels", name: "登录通知", ids: (s) => s.loginNotify?.channelIds ?? [] },
   { key: "notify.backup_channels", name: "备份失败通知", ids: (s) => s.backup?.notify?.channelIds ?? [] },
+  { key: "notify.traffic_report_channels", name: "流量报告", ids: (s) => s.trafficReport?.channelIds ?? [] },
 ];
 
 // 与 proto DeliveryFailure 逐值对齐（测试按枚举全集核对）；UNSPECIFIED 表示没有失败，不在表里。

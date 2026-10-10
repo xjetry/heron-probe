@@ -204,7 +204,8 @@ tr:hover .row-menu-trigger, .row-menu-trigger[aria-expanded="true"] { color: var
 .row-menu-popup [role="menuitem"][aria-disabled="true"] { color: var(--faint); cursor: default; }
 .row-menu-note { display: block; padding: 2px 12px 6px; font-size: 12px; color: var(--muted); max-width: 32ch; }
 /* 事件表的说明与投递结果可能很长：这两列允许折行并给出下限宽度，其余列保持单行，表宽不再被一句摘要撑出视口。 */
-.event-summary { display: block; }
+/* 流量报告的摘要是多行的整条报告（hub 的 TrafficReportText 以换行分隔各节点），其余摘要是单行，按原样换行对它们无影响。 */
+.event-summary { display: block; white-space: pre-line; }
 table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-space: normal; min-width: 14em; }
 
 /* 总览首行「需要处理」（pages/Overview.tsx）：四张可点卡，数字大、标签小；手机 2×2（设计 §4.2、§4.7）。 */

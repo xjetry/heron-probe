@@ -14,6 +14,7 @@ import { CHANNEL_KINDS, MAX_NOTIFY_CHANNELS, NOTIFY_LISTS, channelTarget, labelO
 import { withId } from "../lib/ids";
 import { day } from "../lib/format";
 import { EmptyState } from "../components/EmptyState";
+import { TrafficReportSettings } from "./TrafficReportSettings";
 
 const METHODS = ["POST", "PUT", "PATCH"] as const;
 type HeaderRow = { id: number; name: string; value: string };
@@ -99,6 +100,7 @@ export function Channels() {
       <PageHeader title="通知渠道" actions={<button type="button" className="primary-button" disabled={busy} onClick={(event) => { create.reset(); setDrawer({ kind: "create", opener: event.currentTarget }); }}>新建通知渠道</button>} />
       {gate.banner}
       <LoginNotifications channels={channels} deleting={remove.isPending} />
+      <TrafficReportSettings channels={channels} deleting={remove.isPending} />
       {drawer === null && error != null && <p role="alert" className="error">{errorText(error)}</p>}
       <p role="status">{notice ?? ""}</p>
       {channels.length === 0 ? <EmptyState title="还没有通知渠道。" /> : <div className="table-scroll" role="region" aria-label="通知渠道管理" tabIndex={0}>

@@ -5,7 +5,7 @@ import { AdminService, GetSettingsResponseSchema, type Settings } from "../gen/h
 
 // SAVE_SETTINGS 是全部 UpdateSettings 表单共用的 mutationKey，做保存互斥。消费者：外观页的外观表单、国家 / 地区查询表单
 // 与心跳表单（pages/Appearance.tsx、pages/HeartbeatSettings.tsx）、备份表单（components/BackupSettingsForm.tsx）、通知页的
-// 登录通知表单（pages/Channels.tsx）。五者的 useMutation 都带这个键，并用 useSettingsSaving 在任一个在途时禁用自己的编辑
+// 登录通知表单与流量报告表单（pages/Channels.tsx、pages/TrafficReportSettings.tsx）。六者的 useMutation 都带这个键，并用 useSettingsSaving 在任一个在途时禁用自己的编辑
 // 与提交。新增的设置表单同样要带上它，否则互斥对它不成立。
 //
 // 为什么互斥：每个表单保存成功后都把 hub 的回显整份写进 getSettings 的缓存（useAdoptSavedSettings）。回显是那次提交
