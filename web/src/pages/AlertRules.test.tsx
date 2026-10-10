@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { create } from "@bufbuild/protobuf";
 import { createConnectQueryKey } from "@connectrpc/connect-query";
 import { ConnectError, Code } from "@connectrpc/connect";
-import { AdminService, AlertKind, ChannelKind, ListAlertRulesResponseSchema, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, ListProbeTasksResponseSchema, ProbeMetric, type SaveAlertRuleRequest } from "../gen/heron/v1/admin_pb";
+import { AdminService, AlertKind, BaselineMode, ChannelKind, ListAlertRulesResponseSchema, ListNodesResponseSchema, ListNotifyChannelsResponseSchema, ListProbeTasksResponseSchema, ProbeMetric, RttMode, type SaveAlertRuleRequest } from "../gen/heron/v1/admin_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { AlertRules } from "./AlertRules";
@@ -159,7 +159,7 @@ it("显式空作用域不是全部节点，编辑保存仍由 hub 拒绝而不�
 
 const rttRules = create(ListAlertRulesResponseSchema, {
   rules: [{ id: 10n, name: "延迟", kind: AlertKind.PROBE, enabled: true, allNodes: false, nodeIds: [1n],
-    channelIds: [5n, 9n], taskId: 7n, metric: ProbeMetric.RTT_MS, threshold: 75, forMinutes: 4 }],
+    channelIds: [5n, 9n], taskId: 7n, metric: ProbeMetric.RTT_MS, rttMode: RttMode.THRESHOLD, threshold: 75, forMinutes: 4 }],
   states: [{ ruleId: 10n, nodeId: 1n, state: "firing" }],
 });
 const rttTasks = create(ListProbeTasksResponseSchema, { tasks: [{ task: { id: 7n, kind: ProbeKind.ICMP, target: "127.0.0.1" }, nodeIds: [1n] }] });
@@ -224,9 +224,10 @@ it.each(["指标", "离线", "探测"])("主动切换%s发送新身份，刷新�
   }
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
+  // rtt 规则换成别的指标或种类后 rtt_mode 回到未指定：hub 拒绝非 rtt 规则带判定方式。
   const expected = change === "离线"
-    ? { kind: AlertKind.OFFLINE, taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0 }
-    : { kind: AlertKind.PROBE, taskId: 7n, metric: ProbeMetric.LOSS_PCT, threshold: change === "探测" ? 25 : 75, forMinutes: change === "探测" ? 3 : 4 };
+    ? { kind: AlertKind.OFFLINE, taskId: 0n, metric: ProbeMetric.UNSPECIFIED, rttMode: RttMode.UNSPECIFIED, threshold: 0, forMinutes: 0 }
+    : { kind: AlertKind.PROBE, taskId: 7n, metric: ProbeMetric.LOSS_PCT, rttMode: RttMode.UNSPECIFIED, threshold: change === "探测" ? 25 : 75, forMinutes: change === "探测" ? 3 : 4 };
   expect(saved[0].rule).toEqual({ ...original, channelIds: [5n], ...expected });
   await screen.findByRole("button", { name: `更多操作 ${original.name}（#${original.id}）` });
   expect(screen.getByRole("cell", { name: "正常" })).toBeInTheDocument();
@@ -332,8 +333,85 @@ it("探测规则字段随指标切换单位", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "创建" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   const r = saved[0].rule!;
-  expect({ kind: r.kind, taskId: r.taskId, metric: r.metric, threshold: r.threshold, forMinutes: r.forMinutes }).toEqual(
-    { kind: AlertKind.PROBE, taskId: 3n, metric: ProbeMetric.RTT_MS, threshold: 150, forMinutes: 5 });
+  expect({ kind: r.kind, taskId: r.taskId, metric: r.metric, rttMode: r.rttMode, threshold: r.threshold, forMinutes: r.forMinutes }).toEqual(
+    { kind: AlertKind.PROBE, taskId: 3n, metric: ProbeMetric.RTT_MS, rttMode: RttMode.THRESHOLD, threshold: 150, forMinutes: 5 });
+});
+
+async function openRttCreate() {
+  const form = await openCreate();
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "相对延迟" } });
+  fireEvent.change(within(form).getByLabelText("类型"), { target: { value: String(AlertKind.PROBE) } });
+  fireEvent.change(within(form).getByLabelText("探测任务"), { target: { value: "3" } });
+  fireEvent.change(within(form).getByLabelText("指标"), { target: { value: String(ProbeMetric.RTT_MS) } });
+  fireEvent.change(within(form).getByLabelText("判定方式"), { target: { value: String(RttMode.RELATIVE) } });
+  return form;
+}
+
+it("相对基线（自适应）只发自适应字段，分钟换算成秒，阈值为 0", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await openRttCreate();
+  expect(within(form).queryByLabelText("阈值（ms）")).toBeNull();
+  expect(within(form).queryByLabelText("固定基线（ms）")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("基线窗口（分钟）"), { target: { value: "120" } });
+  fireEvent.change(within(form).getByLabelText("最少桶数"), { target: { value: "6" } });
+  fireEvent.change(within(form).getByLabelText("上偏差（%）"), { target: { value: "150" } });
+  fireEvent.change(within(form).getByLabelText("下偏差（%）"), { target: { value: "40" } });
+  fireEvent.change(within(form).getByLabelText("冷却（分钟）"), { target: { value: "15" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const r = saved[0].rule!;
+  expect({ rttMode: r.rttMode, baselineMode: r.baselineMode, threshold: r.threshold, baselineWindowS: r.baselineWindowS, baselineMinSamples: r.baselineMinSamples,
+    upperDeviationPct: r.upperDeviationPct, lowerDeviationPct: r.lowerDeviationPct, cooldownS: r.cooldownS, fixedBaselineMs: r.fixedBaselineMs, forMinutes: r.forMinutes }).toEqual(
+    { rttMode: RttMode.RELATIVE, baselineMode: BaselineMode.ADAPTIVE, threshold: 0, baselineWindowS: 7200, baselineMinSamples: 6,
+      upperDeviationPct: 150, lowerDeviationPct: 40, cooldownS: 900, fixedBaselineMs: 0, forMinutes: 3 });
+});
+
+it("相对基线（固定）只发固定基线，窗口与桶数为 0", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await openRttCreate();
+  fireEvent.change(within(form).getByLabelText("基线来源"), { target: { value: String(BaselineMode.FIXED) } });
+  expect(within(form).queryByLabelText("基线窗口（分钟）")).toBeNull();
+  fireEvent.change(within(form).getByLabelText("固定基线（ms）"), { target: { value: "42.5" } });
+  fireEvent.click(within(form).getByRole("button", { name: "创建" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  const r = saved[0].rule!;
+  expect({ baselineMode: r.baselineMode, fixedBaselineMs: r.fixedBaselineMs, baselineWindowS: r.baselineWindowS, baselineMinSamples: r.baselineMinSamples, threshold: r.threshold, cooldownS: r.cooldownS }).toEqual(
+    { baselineMode: BaselineMode.FIXED, fixedBaselineMs: 42.5, baselineWindowS: 0, baselineMinSamples: 0, threshold: 0, cooldownS: 1800 });
+});
+
+it("基线窗口短于连续分钟时表单不提交", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  const form = await openRttCreate();
+  fireEvent.change(within(form).getByLabelText("连续分钟"), { target: { value: "10" } });
+  fireEvent.change(within(form).getByLabelText("基线窗口（分钟）"), { target: { value: "9" } });
+  fireEvent.submit(form);
+  fireEvent.change(within(form).getByLabelText("下偏差（%）"), { target: { value: "100" } });
+  fireEvent.change(within(form).getByLabelText("基线窗口（分钟）"), { target: { value: "10" } });
+  fireEvent.change(within(form).getByLabelText("冷却（分钟）"), { target: { value: "0.5" } });
+  fireEvent.submit(form);
+  await act(async () => {});
+  expect(saved).toHaveLength(0);
+});
+
+const relativeRules = create(ListAlertRulesResponseSchema, {
+  rules: [{ id: 30n, name: "相对", kind: AlertKind.PROBE, enabled: true, allNodes: true, taskId: 3n, metric: ProbeMetric.RTT_MS, forMinutes: 5,
+    rttMode: RttMode.RELATIVE, baselineMode: BaselineMode.ADAPTIVE, baselineWindowS: 86400, baselineMinSamples: 12, upperDeviationPct: 100, lowerDeviationPct: 50, cooldownS: 1800 }],
+});
+
+it("相对基线规则的条件摘要写出基线来源、偏差与冷却，只改名称保留完整载荷", async () => {
+  const saved: SaveAlertRuleRequest[] = [];
+  render({ listAlertRules: async () => relativeRules, saveAlertRule: async (req) => { saved.push(req); return {}; } });
+  expect(await screen.findByText("TCP 1.1.1.1:443 RTT 均值越出基线 +100% / −50%（近 24 小时的 5 分钟桶均值中位数（至少 12 个桶）），连续 5 分钟，冷却 30 分钟")).toBeInTheDocument();
+  openRowAction("相对（#30）", "编辑");
+  const form = screen.getByRole("form", { name: "编辑 相对（#30）" });
+  expect(within(form).getByLabelText("基线窗口（分钟）")).toHaveValue(1440);
+  fireEvent.change(within(form).getByLabelText("名称"), { target: { value: "相对新名" } });
+  fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].rule).toEqual({ ...relativeRules.rules[0], name: "相对新名" });
 });
 
 it("编辑回填并去掉已删除节点", async () => {
@@ -537,7 +615,7 @@ it("探测规则改成到期时只带提前天数", async () => {
   fireEvent.click(within(form).getByRole("button", { name: "保存" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].rule).toEqual({ ...rttRules.rules[0], channelIds: [5n], kind: AlertKind.EXPIRY,
-    taskId: 0n, metric: ProbeMetric.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
+    taskId: 0n, metric: ProbeMetric.UNSPECIFIED, rttMode: RttMode.UNSPECIFIED, threshold: 0, forMinutes: 0, daysBefore: 7 });
 });
 
 const httpsTasks = create(ListProbeTasksResponseSchema, { tasks: [

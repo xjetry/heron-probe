@@ -9,8 +9,8 @@ import { PageHeader } from "../components/PageHeader";
 import { RowMenu } from "../components/RowMenu";
 import { Picks } from "../components/Picks";
 import { NodeAssignment, assignmentValid, type NodeSelection } from "../components/NodeAssignment";
-import { AdminService, AlertKind, ProbeMetric, ResourceMetric, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
-import { ALERT_KINDS, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RESOURCE_METRICS, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
+import { AdminService, AlertKind, BaselineMode, ProbeMetric, ResourceMetric, RttMode, type AlertRule, type Node, type NotifyChannel, type ProbeTaskDetail } from "../gen/heron/v1/admin_pb";
+import { ALERT_KINDS, BASELINE_MODES, MBPS_TO_BYTES_PER_S, PROBE_METRICS, RELATIVE_LIMITS, RESOURCE_METRICS, RTT_MODES, labelOf, resourceThresholdMax, resourceUnit, ruleCondition, statesOf, taskLabels, type RuleStates } from "../lib/alerts";
 import { liveIds, withId } from "../lib/ids";
 import { isHTTPSTarget } from "../lib/probes";
 import { EmptyState } from "../components/EmptyState";
@@ -20,6 +20,15 @@ type Draft = NodeSelection & {
   name: string; kind: AlertKind; enabled: boolean; allNodes: boolean; nodeIds: Set<bigint>; channelIds: Set<bigint>;
   taskId: string; metric: ProbeMetric; threshold: string; forMinutes: string; daysBefore: string;
   resourceMetric: ResourceMetric; recoveryThreshold: string;
+  // rtt 规则的判定方式与相对判定字段；基线窗口与冷却以分钟输入，提交时换算成秒（relativeFields）。
+  rttMode: RttMode; baselineMode: BaselineMode; baselineWindowMinutes: string; baselineMinSamples: string;
+  upperDeviationPct: string; lowerDeviationPct: string; cooldownMinutes: string; fixedBaselineMs: string;
+};
+
+// 相对判定的默认值：一天的自适应基线、至少 12 个 5 分钟桶（一小时），比基线慢一倍或快一半算越带，冷却 30 分钟。
+const relativeDefaults = {
+  rttMode: RttMode.THRESHOLD, baselineMode: BaselineMode.ADAPTIVE, baselineWindowMinutes: "1440", baselineMinSamples: "12",
+  upperDeviationPct: "100", lowerDeviationPct: "50", cooldownMinutes: "30", fixedBaselineMs: "",
 };
 
 // 种类专用字段里有默认值的是指标（丢包率）、连续分钟 3 与提前天数 7；探测任务与阈值留空，切到探测时由表单的 required
@@ -27,7 +36,7 @@ type Draft = NodeSelection & {
 const emptyDraft = (): Draft => ({
   name: "", kind: AlertKind.OFFLINE, enabled: true, allNodes: true, nodeIds: new Set(), channelIds: new Set(),
   taskId: "", metric: ProbeMetric.LOSS_PCT, threshold: "", forMinutes: "3", daysBefore: "7",
-  selectorTags: [], dynamic: false, resourceMetric: ResourceMetric.MEMORY_USED_PCT, recoveryThreshold: "80",
+  selectorTags: [], dynamic: false, resourceMetric: ResourceMetric.MEMORY_USED_PCT, recoveryThreshold: "80", ...relativeDefaults,
 });
 const draftOf = (r: AlertRule): Draft => {
   const probe = r.kind === AlertKind.PROBE;
@@ -43,8 +52,36 @@ const draftOf = (r: AlertRule): Draft => {
     selectorTags: r.selectorTags, dynamic: r.selectorTags.length > 0,
     resourceMetric: r.kind === AlertKind.RESOURCE ? r.resourceMetric : ResourceMetric.MEMORY_USED_PCT,
     recoveryThreshold: r.kind === AlertKind.RESOURCE ? String(r.recoveryThreshold / scale) : "80",
+    ...relativeDraft(r),
   };
 };
+
+// 相对判定的规则回填自己的值，其余规则取默认值；切换成相对判定时表单从默认值起填。
+function relativeDraft(r: AlertRule): Pick<Draft, keyof typeof relativeDefaults> {
+  if (r.kind !== AlertKind.PROBE || r.metric !== ProbeMetric.RTT_MS || r.rttMode !== RttMode.RELATIVE) return { ...relativeDefaults };
+  const adaptive = r.baselineMode !== BaselineMode.FIXED;
+  return {
+    rttMode: RttMode.RELATIVE, baselineMode: r.baselineMode,
+    baselineWindowMinutes: adaptive ? String(r.baselineWindowS / 60) : relativeDefaults.baselineWindowMinutes,
+    baselineMinSamples: adaptive ? String(r.baselineMinSamples) : relativeDefaults.baselineMinSamples,
+    upperDeviationPct: String(r.upperDeviationPct), lowerDeviationPct: String(r.lowerDeviationPct), cooldownMinutes: String(r.cooldownS / 60),
+    fixedBaselineMs: adaptive ? "" : String(r.fixedBaselineMs),
+  };
+}
+
+// rtt 规则的判定字段。rtt_mode 总是显式发出（hub 对未指定的也按固定阈值收，显式发出让载荷与回显一致）；相对判定下
+// threshold 为 0，只发所选基线来源用到的字段，hub 拒绝带着另一种来源字段的规则（store.checkRttFields）。分钟换算成秒时
+// 四舍五入：回填写的是秒 / 60，整数秒经这一来一回不变，只改名称的保存不会把窗口改掉。
+function relativeFields(d: Draft) {
+  if (d.rttMode !== RttMode.RELATIVE) return { rttMode: RttMode.THRESHOLD, threshold: Number(d.threshold) };
+  const adaptive = d.baselineMode === BaselineMode.ADAPTIVE;
+  return {
+    rttMode: RttMode.RELATIVE, threshold: 0, baselineMode: d.baselineMode,
+    baselineWindowS: adaptive ? Math.round(Number(d.baselineWindowMinutes) * 60) : 0, baselineMinSamples: adaptive ? Number(d.baselineMinSamples) : 0,
+    fixedBaselineMs: adaptive ? 0 : Number(d.fixedBaselineMs),
+    upperDeviationPct: Number(d.upperDeviationPct), lowerDeviationPct: Number(d.lowerDeviationPct), cooldownS: Math.round(Number(d.cooldownMinutes) * 60),
+  };
+}
 
 // 资源阈值在表单里按指标单位输入，协议值统一为 bytes/s 或原值：Mbps 在这里换算回 bytes/s。
 function resourceRule(d: Draft) {
@@ -57,7 +94,7 @@ function resourceRule(d: Draft) {
 // 种类专用字段只发当前类型的：hub 拒绝带着别的种类字段的规则（alert.CheckRule）。
 function toRule(id: bigint, d: Draft, nodes: Node[], channels: NotifyChannel[]) {
   const own = d.kind === AlertKind.PROBE
-    ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes) }
+    ? { taskId: BigInt(d.taskId), metric: d.metric, threshold: Number(d.threshold), forMinutes: Number(d.forMinutes), ...(d.metric === ProbeMetric.RTT_MS ? relativeFields(d) : {}) }
     : d.kind === AlertKind.EXPIRY ? { daysBefore: Number(d.daysBefore) }
       : d.kind === AlertKind.CERT_EXPIRY ? { taskId: BigInt(d.taskId), daysBefore: Number(d.daysBefore) }
         : d.kind === AlertKind.RESOURCE ? resourceRule(d) : d.kind === AlertKind.TRAFFIC ? { threshold: Number(d.threshold) } : {};
@@ -167,6 +204,7 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
   const set = (patch: Partial<Draft>) => setDraft({ ...draft, ...patch });
   const probe = draft.kind === AlertKind.PROBE;
   const loss = draft.metric === ProbeMetric.LOSS_PCT;
+  const relative = !loss && draft.rttMode === RttMode.RELATIVE;
   const handle = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!e.currentTarget.checkValidity()) return;
@@ -225,13 +263,19 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
               {PROBE_METRICS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
-          <label>阈值（{loss ? "%" : "ms"}）<input type="number" required step="any" min={0} max={loss ? 100 : undefined}
-            value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>
+          {!loss && <label>判定方式
+            <select value={draft.rttMode} onChange={(e) => set({ rttMode: Number(e.target.value) })}>
+              {RTT_MODES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>}
+          {!relative && <label>阈值（{loss ? "%" : "ms"}）<input type="number" required step="any" min={0} max={loss ? 100 : undefined}
+            value={draft.threshold} onChange={(e) => set({ threshold: e.target.value })} /></label>}
           <label>连续分钟<input type="number" required min={1} max={60} value={draft.forMinutes} onChange={(e) => set({ forMinutes: e.target.value })} /></label>
         </div>
       ) : (
         <p className="muted">节点超过离线宽限期未上报即触发，收到上报即恢复；宽限期在节点页按节点设置，未设置时取 hub 的 HERON_OFFLINE_AFTER。</p>
       )}
+      {probe && relative && <RelativeFields draft={draft} set={set} />}
       <NodeAssignment nodes={nodes} value={draft} onChange={set} legend="作用域节点" noun="作用域" />
       {probe && <p className="muted">探测规则只在既属于作用域、又分配了该任务的节点上评估。</p>}
       {draft.kind === AlertKind.CERT_EXPIRY && <p className="muted">证书到期规则只在既属于作用域、又分配了该任务的节点上评估；没有证书观测的节点不评估。</p>}
@@ -246,6 +290,35 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
       </footer>
     </form>
     </Drawer>
+  );
+}
+
+// 相对判定的字段与取值提示，范围与 hub 的 store.checkRttFields 一致（RELATIVE_LIMITS）。基线窗口不得短于判定窗口
+// （连续分钟），输入的下限随它变；下偏差必须小于 100%，用 max 减一个最小步长挡不住小数，交给 hub 拒绝并显示原文。
+function RelativeFields({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>) => void }) {
+  const adaptive = draft.baselineMode === BaselineMode.ADAPTIVE;
+  return (
+    <>
+      <div className="row">
+        <label>基线来源<select value={draft.baselineMode} onChange={(e) => set({ baselineMode: Number(e.target.value) })}>
+          {BASELINE_MODES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        {adaptive ? <>
+          <label>基线窗口（分钟）<input type="number" required step="any" min={Number(draft.forMinutes) || 1} max={RELATIVE_LIMITS.windowMaxMinutes} value={draft.baselineWindowMinutes} onChange={(e) => set({ baselineWindowMinutes: e.target.value })} /></label>
+          <label>最少桶数<input type="number" required step={1} min={1} value={draft.baselineMinSamples} onChange={(e) => set({ baselineMinSamples: e.target.value })} /></label>
+        </> : <label>固定基线（ms）<input type="number" required step="any" min={0} max={RELATIVE_LIMITS.fixedMax} value={draft.fixedBaselineMs} onChange={(e) => set({ fixedBaselineMs: e.target.value })} /></label>}
+      </div>
+      <div className="row">
+        <label>上偏差（%）<input type="number" required step="any" min={0} max={RELATIVE_LIMITS.upperMax} value={draft.upperDeviationPct} onChange={(e) => set({ upperDeviationPct: e.target.value })} /></label>
+        <label>下偏差（%）<input type="number" required step="any" min={0} max={RELATIVE_LIMITS.lowerMax} value={draft.lowerDeviationPct} onChange={(e) => set({ lowerDeviationPct: e.target.value })} /></label>
+        <label>冷却（分钟）<input type="number" required step="any" min={RELATIVE_LIMITS.cooldownMinMinutes} max={RELATIVE_LIMITS.cooldownMaxMinutes} value={draft.cooldownMinutes} onChange={(e) => set({ cooldownMinutes: e.target.value })} /></label>
+      </div>
+      <p className="muted">每分钟的 RTT 均值不高于基线 ×（1 + 上偏差）且不低于基线 ×（1 − 下偏差）为正常，越过任一边界（含边界）连续“连续分钟”即触发，回到带内即恢复。
+        {adaptive
+          ? "自适应基线取基线窗口内（不含判定窗口）各个 5 分钟桶的 RTT 均值的中位数，hub 每小时重算一次；桶数少于最少桶数时既不触发也不恢复。任务的类型或目标改了，基线从改动时起重新累积。"
+          : "固定基线直接作为基线，与阈值无关。"}
+        上偏差大于 0、不超过 {RELATIVE_LIMITS.upperMax}%，下偏差大于 0、小于 100%，冷却 1 分钟到 7 天：触发之后冷却期内不再触发，恢复照常通知。</p>
+    </>
   );
 }
 

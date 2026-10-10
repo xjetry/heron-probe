@@ -1,4 +1,4 @@
-import { AlertKind, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, type AlertDelivery, type AlertEvent, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
+import { AlertKind, BaselineMode, ChannelKind, DeliveryFailure, ProbeMetric, ResourceMetric, RttMode, type AlertDelivery, type AlertEvent, type AlertRule, type AlertStateEntry, type NotifyChannel, type ProbeTaskDetail, type Settings } from "../gen/heron/v1/admin_pb";
 import { remainingText } from "./billing";
 import { duration, formatUnit, percent } from "./format";
 import { withId } from "./ids";
@@ -87,6 +87,36 @@ export const PROBE_METRICS: readonly (Entry<ProbeMetric> & { unit: string })[] =
   { value: ProbeMetric.RTT_MS, label: "RTT 均值", unit: "ms" },
 ];
 
+// rtt 规则的判定方式与相对判定的基线来源（proto RttMode、BaselineMode）。rtt 规则的 rtt_mode 由 hub 显式回显，
+// 表单只在这两个值之间选；UNSPECIFIED 只出现在非 rtt 规则上。
+export const RTT_MODES: readonly Entry<RttMode>[] = [
+  { value: RttMode.THRESHOLD, label: "固定阈值" },
+  { value: RttMode.RELATIVE, label: "相对基线" },
+];
+export const BASELINE_MODES: readonly Entry<BaselineMode>[] = [
+  { value: BaselineMode.ADAPTIVE, label: "自适应基线" },
+  { value: BaselineMode.FIXED, label: "固定基线" },
+];
+
+// 相对判定字段的取值界，与 hub 的 store.checkRttFields 同值（proto AlertRule 注释）：基线窗口与冷却在表单里以分钟输入，
+// 上偏差 (0, 1000]、下偏差 (0, 100)、固定基线 (0, 60000] ms、冷却 [1, 10080] 分钟、窗口不超过 30 天。
+export const RELATIVE_LIMITS = { upperMax: 1000, lowerMax: 100, fixedMax: 60000, cooldownMinMinutes: 1, cooldownMaxMinutes: 7 * 24 * 60, windowMaxMinutes: 30 * 24 * 60 } as const;
+
+// 秒数按分钟写：整小时写小时，其余写分钟，摘要里不出现 86400 秒这种读不出量级的数。
+function minutesText(seconds: number): string {
+  return seconds % 3600 === 0 ? `${seconds / 3600} 小时` : `${Number((seconds / 60).toFixed(2))} 分钟`;
+}
+
+// 相对判定的条件摘要：基线来源、上下偏差、持续与冷却，与 hub 的判定（§9.1、§9.2）逐项对应。
+function relativeCondition(rule: AlertRule, task: string): string {
+  const base = rule.baselineMode === BaselineMode.FIXED
+    ? `固定基线 ${rule.fixedBaselineMs} ms`
+    : rule.baselineMode === BaselineMode.ADAPTIVE
+      ? `近 ${minutesText(rule.baselineWindowS)}的 5 分钟桶均值中位数（至少 ${rule.baselineMinSamples} 个桶）`
+      : `基线来源 ${rule.baselineMode}`;
+  return `${task} RTT 均值越出基线 +${rule.upperDeviationPct}% / −${rule.lowerDeviationPct}%（${base}），连续 ${rule.forMinutes} 分钟，冷却 ${minutesText(rule.cooldownS)}`;
+}
+
 // 调用方是告警规则页与 ruleCondition，任务取自管理端的任务列表；列表未到或查询失败时用编号，标签仍可辨认。
 // 被告警规则引用的任务不能删除（store 的 checkAlertReferences），所以这里的编号回退不代表任务已删除。
 // 历史图例不走这里：序列自带标注，用 probes.ts 的 seriesLabels。
@@ -106,6 +136,7 @@ export function ruleCondition(rule: AlertRule, tasks: ProbeTaskDetail[] | undefi
   if (rule.kind === AlertKind.EXPIRY) return `到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
   if (rule.kind === AlertKind.CERT_EXPIRY) return `${taskLabel(rule.taskId, tasks)} 的证书到期日距今不超过 ${rule.daysBefore} 天（含已过期）`;
   if (rule.kind === AlertKind.RESOURCE) return `${labelOf(RESOURCE_METRICS, rule.resourceMetric)} ≥ ${resourceThresholdText(rule.resourceMetric, rule.threshold)}，恢复 ≤ ${resourceThresholdText(rule.resourceMetric, rule.recoveryThreshold)}，各连续 ${rule.forMinutes} 分钟`;
+  if (rule.metric === ProbeMetric.RTT_MS && rule.rttMode === RttMode.RELATIVE) return relativeCondition(rule, taskLabel(rule.taskId, tasks));
   const metric = PROBE_METRICS.find((m) => m.value === rule.metric);
   const threshold = metric ? formatUnit(rule.threshold, metric.unit) : String(rule.threshold);
   return `${taskLabel(rule.taskId, tasks)} ${labelOf(PROBE_METRICS, rule.metric)} ≥ ${threshold}，连续 ${rule.forMinutes} 分钟`;
