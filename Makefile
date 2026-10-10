@@ -70,8 +70,11 @@ lint:
 # -race：hub 的内存缓存、写协程与跨包锁序都靠并发纪律维持，竞态只有检测器照得到，没有它的绿灯证明不了这些不变式。
 # 检测器下各包慢 3–10 倍，store 包在本机实测约 10 分钟，贴着默认的每包超时，所以放宽到 20 分钟。
 # deploy 包是替身脚本测试，没有并发可查，不带 -race。
+# deploy/agent.mk 对所有配方 export CGO_ENABLED=0（产物一律纯 Go 构建），而 -race 在 Linux 上依赖 cgo（Go 1.27.2
+# 的 cmd/go 只对 darwin 豁免，所以 macOS 开发机上看不到这个失败）：go test -race 会以 "requires cgo" 退出。这条命令
+# 因此在自己的命令行上显式 CGO_ENABLED=1，只覆盖这一次 go test 的环境；产物构建仍由 agent.mk 的 export 决定。
 test:
-	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/heron-probe/deploy) && go test -race -count=1 -timeout 20m $$pkgs
+	all=$$(go list ./...) && [ -n "$$all" ] && pkgs=$$(printf '%s\n' "$$all" | grep -vx github.com/xjetry/heron-probe/deploy) && CGO_ENABLED=1 go test -race -count=1 -timeout 20m $$pkgs
 	go test -count=1 -timeout 20m ./deploy/
 
 # 发布规则（版本号守卫、预发布判定）与回读判定的回归检查：只跑 make 的检查、-n 展开与 docker 桩，

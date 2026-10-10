@@ -5,6 +5,8 @@
 
 # 全部 Go 产物以 CGO_ENABLED=0 构建（spec §14）。export 是全局的，hub 与其余目标照样生效；它决定 agent 组的产物，
 # 属于门禁的输入，所以放在这里——主 Makefile 不 export 影响构建的变量，发布规则测试核对这一点。
+# 唯一的例外是 Makefile 的 test 目标：-race 在 Linux 上依赖 cgo，它在自己的命令行上以 CGO_ENABLED=1 覆盖这个
+# export，只影响那一次 go test，不影响任何产物。
 export CGO_ENABLED=0
 
 # 发布产物矩阵：agent 与更新器五个 Linux 架构，agent 两个 darwin 架构（hub 的两个在 Makefile 的 HUB_LINUX_ARCHES）。
