@@ -401,6 +401,7 @@ func (h *hub) run(stopCtx context.Context, log *slog.Logger) (result error) {
 	stopSweep := startLoop(h.alerts.RunOfflineSweep)
 	defer startLoop(h.alerts.RunProbeEvaluation)()
 	defer startLoop(h.alerts.RunExpirySweep)()
+	defer startLoop(h.alerts.RunBaselineRecompute)()
 	defer startLoop(h.notifier.Run)()
 	defer startLoop(h.reports.Run)()
 	defer startLoop(h.geo.Run)()

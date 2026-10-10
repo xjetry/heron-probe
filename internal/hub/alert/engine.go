@@ -77,6 +77,9 @@ type stateEntry struct {
 	firedExpiresOn string
 	// recoveredAt 与库里的 alert_state.recovered_at 同值（含义见 store.StateRow.RecoveredAt），Load 读入，apply 写库成功后发布。
 	recoveredAt time.Time
+	// firedAt 与库里的 alert_state.fired_at 同值（含义见 store.StateRow.FiredAt）：Load 读入；apply 写库成功后按 setAlertState
+	// 的同一规则发布（从非 firing 进入 firing 取这次的 since，其余沿用），冷却判定读它。
+	firedAt time.Time
 	// firedSilenced 与库里的 alert_state.fired_silenced 同值（含义见 store.StateRow.FiredSilenced）：恢复是否投递只看它，
 	// 与恢复时刻的静默状态无关，所以必须在内存里与状态同行记到 Load 之后的下一轮评估。
 	firedSilenced bool
@@ -112,12 +115,17 @@ type Storage interface {
 	RenewExpiry(ctx context.Context, id int64, cycle store.BillingCycle, from, to string) (bool, error)
 	ProbeTaskNodeIDs(ctx context.Context, taskID uint64) ([]int64, error)
 	ProbeCertsByTask(ctx context.Context, taskID uint64) (map[int64]int64, error)
+	// 基线行是配置层的缓存，不是历史读：读写都在这里，算基线所需的历史只经 HistoryReader.ProbeBucketMeans。
+	ReadAlertBaselines(ctx context.Context) (store.Baselines, error)
+	SaveAlertBaseline(ctx context.Context, taskID uint64, b store.AlertBaseline) (bool, error)
+	PruneAlertBaselines(ctx context.Context, ruleID int64, keep []int64) error
 }
 
 // HistoryReader 是引擎读历史的唯一途径；生产装配传 (*store.Store).Evaluation()。
 type HistoryReader interface {
 	QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv store.Level, step int64) ([]metric.Row, error)
 	QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv store.Level, step int64) ([]metric.ProbeRow, error)
+	ProbeBucketMeans(ctx context.Context, nodeID int64, taskID uint64, from, to int64) ([]float64, error)
 }
 
 // writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。持 writeMu 时会去取的别包的锁与跨包锁序
@@ -146,6 +154,9 @@ type Engine struct {
 	sender          Sender
 	traffic         *traffic.Book
 	monitoringNodes func(context.Context) ([]store.Node, error)
+	// baselineDirty 是保存后要在下一轮基线重算里立即重算的规则（基线窗口或最小样本数可能变了），受 mu 保护；
+	// RecomputeBaselines 每轮整体取走。
+	baselineDirty map[int64]bool
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
@@ -153,7 +164,7 @@ func New(cfg Config, st Storage, history HistoryReader, l *live.Live, clk clock.
 	if cfg.Location == nil {
 		panic("alert.Config.Location must be set")
 	}
-	return &Engine{cfg: cfg, st: st, history: history, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
+	return &Engine{cfg: cfg, st: st, history: history, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, baselineDirty: map[int64]bool{}, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
 
@@ -206,7 +217,7 @@ func (e *Engine) Load(ctx context.Context) error {
 	}
 	for _, s := range states {
 		if _, ok := validRules[s.RuleID]; ok {
-			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt, firedSilenced: s.FiredSilenced}
+			e.states[stateKey{s.RuleID, s.NodeID}] = stateEntry{state: s.State, sinceAt: s.SinceAt, firedExpiresOn: s.FiredExpiresOn, recoveredAt: s.RecoveredAt, firedSilenced: s.FiredSilenced, firedAt: s.FiredAt}
 		}
 	}
 	return nil
@@ -242,7 +253,7 @@ func (e *Engine) States() []StateView {
 	defer e.mu.RUnlock()
 	var out []StateView
 	for k, s := range e.states {
-		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt, FiredSilenced: s.firedSilenced}, s.flapping})
+		out = append(out, StateView{store.StateRow{RuleID: k.rule, NodeID: k.node, State: s.state, SinceAt: s.sinceAt, FiredExpiresOn: s.firedExpiresOn, RecoveredAt: s.recoveredAt, FiredSilenced: s.firedSilenced, FiredAt: s.firedAt}, s.flapping})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RuleID != out[j].RuleID {
@@ -279,6 +290,11 @@ func (e *Engine) SaveRule(ctx context.Context, r store.AlertRule) (store.AlertRu
 		return store.AlertRule{}, err
 	}
 	e.publishRule(saved)
+	if saved.AdaptiveBaseline() {
+		e.mu.Lock()
+		e.baselineDirty[saved.ID] = true
+		e.mu.Unlock()
+	}
 	if saved.Enabled && saved.Kind == store.KindTraffic {
 		if err := e.sweepTraffic(context.WithoutCancel(ctx), saved.ID, 0); err != nil {
 			e.log.Error("traffic sweep after saving rule failed", "rule_id", saved.ID, "err", err)
@@ -553,9 +569,14 @@ func (e *Engine) apply(ctx context.Context, cy *cycle, r store.AlertRule, nodeID
 	if err != nil {
 		return err
 	}
+	// 与 setAlertState 推出 fired_at 的规则相同：状态在这里一定变了，进入 firing 即从非 firing 进入。
+	firedAt := cur.firedAt
+	if next == store.StateFiring {
+		firedAt = since
+	}
 	e.mu.Lock()
 	// 与库同事务写下的 fired_silenced 保持一致：只有 firing 携带触发时的静默标记，其余状态恒为假（见 RecordTransition）。
-	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, firedSilenced: next == store.StateFiring && silenced, flapping: flapping}
+	e.states[k] = stateEntry{state: next, sinceAt: since, firedExpiresOn: firedExpiresOn, recoveredAt: recoveredAt, firedSilenced: next == store.StateFiring && silenced, flapping: flapping, firedAt: firedAt}
 	e.mu.Unlock()
 	if tr != nil {
 		// 记下实际所在的批次而不是请求的：请求加入的批次已开始尝试时，store 新开了一批，后续同键的行加入新批。
@@ -701,9 +722,20 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 	}
 	lv, _ := store.LevelByName("1m")
 	var errs []error
+	// 基线行只在有启用的自适应基线规则时读一次，本轮各规则共用同一份快照。
+	var baselines store.Baselines
+	baselinesRead := false
 	for _, r := range e.Rules() {
 		if !r.Enabled || r.Kind != store.KindProbe {
 			continue
+		}
+		if r.AdaptiveBaseline() && !baselinesRead {
+			baselines, err = e.st.ReadAlertBaselines(ctx)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			baselinesRead = true
 		}
 		ids, err := e.st.ProbeTaskNodeIDs(ctx, r.TaskID)
 		if err != nil {
@@ -723,6 +755,8 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 				continue
 			}
 			samples := make([]MinuteSample, r.ForMinutes)
+			// 相对判定的基线无效时整窗没有读数：缺读数既不触发也不恢复（NextProbe），桶数不足、指纹已变与没有基线行都走这条路。
+			band, bandOK := relativeBand(r, baselines, node.ID)
 			for _, row := range rows {
 				if row.TaskID != r.TaskID {
 					continue
@@ -741,12 +775,23 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 					}
 					value = float64(b.RttSumUs) / float64(b.RttN) / 1000
 				}
+				if r.RttMode == store.RttRelative {
+					if bandOK {
+						samples[(row.TS-from)/60] = MinuteSample{Present: true, Exceeds: band.exceeds(value), Value: value}
+					}
+					continue
+				}
 				// 触发含阈值等号，恢复则必须低于阈值。
 				samples[(row.TS-from)/60] = MinuteSample{Present: true, Exceeds: value >= r.Threshold, Value: value}
 			}
-			next, tr := NextProbe(e.current(stateKey{r.ID, node.ID}), samples, r.ForMinutes)
+			cur := e.entry(stateKey{r.ID, node.ID})
+			next, tr := NextProbe(cur.state, samples, r.ForMinutes)
+			next, tr = coolDown(r, cur, e.clk.Now(), next, tr)
 			value := samples[len(samples)-1].Value
 			summary := fmt.Sprintf("节点 %s 规则 %s：%s %.1f", node.Name, r.Name, r.Metric, value)
+			if r.RttMode == store.RttRelative {
+				summary = band.summary(node.Name, r.Name, value)
+			}
 			if err := e.apply(ctx, cy, r, node.ID, next, false, node.Maintenance, "", tr, summary, value); err != nil {
 				errs = append(errs, err)
 			}
