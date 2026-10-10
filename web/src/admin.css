@@ -113,6 +113,7 @@ span.node-subtext { margin-right: 8px; }
 .node-address code { font-size: 11px; overflow-wrap: anywhere; }
 .address-state { color: var(--muted); font-size: 11px; }
 .address-state.failed { color: var(--warn); }
+.address-source { color: var(--accent); font-size: 9px; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; flex: none; }
 .tag-management { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
 .tag-management summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 /* 标签管理：每个标签一枚胶囊，删除默认弱化色。能悬停的设备上删除只在悬停或聚焦该标签时出现，整页不再平铺一排红字；

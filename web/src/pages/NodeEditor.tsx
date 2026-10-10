@@ -24,6 +24,7 @@ const QUOTA_MODE_OPTIONS = [
 // UpdateNode 整体替换全部可编辑字段；每次保存必须保留未编辑字段，不能用缺席表达“不变”。
 const draftOf = (node: Node) => ({
   name: node.name, public: node.public, note: node.note, publicRemark: node.publicRemark, trafficResetDay: node.trafficResetDay, countryPin: node.countryPin,
+  ipv4Pin: node.ipv4Pin, ipv6Pin: node.ipv6Pin,
   tags: [...node.tags], offlineGraceS: String(node.offlineGraceS ?? 0), maintenance: node.maintenance,
   trafficQuotaBytes: node.trafficQuotaBytes, trafficQuotaMode: node.trafficQuotaMode || TrafficQuotaMode.SUM,
   billing: {
@@ -48,7 +49,7 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
   const valid = quotaBytes !== null && draft.name.trim() !== "" && Number.isInteger(draft.trafficResetDay) && draft.trafficResetDay >= 1 && draft.trafficResetDay <= 28 && /^\d+$/.test(draft.offlineGraceS);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!saving && valid && quotaBytes !== null) onSave({ ...draft, trafficQuotaBytes: quotaBytes, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
+    if (!saving && valid && quotaBytes !== null) onSave({ ...draft, ipv4Pin: draft.ipv4Pin.trim(), ipv6Pin: draft.ipv6Pin.trim(), trafficQuotaBytes: quotaBytes, tags: withTag(draft.tags, pendingTag), offlineGraceS: Number(draft.offlineGraceS) });
   };
   return <Drawer title={`编辑节点 · ${label}`} busy={saving} onClose={onClose} opener={opener}>
     <form onSubmit={submit}>
@@ -66,7 +67,10 @@ export function NodeEditor({ node, knownTags, saving, error, listError, onClose,
           <section className="form-section" aria-label="地区">
             <h3>地区</h3>
             {/* 查得值依赖 agent 探测到的出口地址，地址诊断与来源 IP 放在同一组：读者要判断"查得值为什么是这个"时，依据就在旁边。 */}
-            <div className="address-diagnostics"><NodeAddresses network={node.facts?.network} detailed /><p className="muted">agent 探测出口，每 5 分钟更新。无可用地址或路由标记为不支持；超时与服务异常标记为探测失败。</p></div>
+            <div className="address-diagnostics"><NodeAddresses network={node.network} reported={node.facts?.network} detailed /><p className="muted">agent 探测出口，每 5 分钟更新。无可用地址或路由标记为不支持；超时与服务异常标记为探测失败。手填的地址优先显示，并标为手填。</p></div>
+            <label>手填 IPv4 地址<input aria-label={`手填 IPv4 地址 ${label}`} aria-describedby={`pin-hint-${node.id}`} placeholder="例如 8.8.8.8" spellCheck={false} value={draft.ipv4Pin} onChange={(e) => setDraft({ ...draft, ipv4Pin: e.target.value })} /></label>
+            <label>手填 IPv6 地址<input aria-label={`手填 IPv6 地址 ${label}`} aria-describedby={`pin-hint-${node.id}`} placeholder="例如 2606:4700::1111" spellCheck={false} value={draft.ipv6Pin} onChange={(e) => setDraft({ ...draft, ipv6Pin: e.target.value })} /></label>
+            <p className="muted" id={`pin-hint-${node.id}`}>留空用 agent 探测；填入后该族停止探测，清空即恢复。须是该族的公网地址，用于探测不到（出站 HTTPS 受限）或入口与出口不同的主机；不影响国家 / 地区的查询。</p>
             <div><span className="field-label">上报来源 IP</span><p>{node.lastSource ? <code>{node.lastSource}</code> : <span className="muted">尚未记录来源</span>}</p><p className="muted">hub 实际观察到的来源，经过反代时依赖可信代理配置；与 agent 探测结果独立。</p></div>
             <label>手动指定国家 / 地区<input aria-label={`手动指定国家 / 地区 ${label}`} aria-describedby={`country-hint-${node.id}`} placeholder="例如 JP，留空自动查询" value={draft.countryPin} onChange={(e) => setDraft({ ...draft, countryPin: e.target.value.toUpperCase() })} /><span className="muted" id={`country-hint-${node.id}`}>两个字母（ISO 3166-1），优先于查得值；留空用查得值：{node.countryLookup ? lookupText(node) : "尚无查得值"}。</span></label>
             <p className="muted"><NodeCountry node={node} /> · 创建于 {day(node.createdAt)}</p>

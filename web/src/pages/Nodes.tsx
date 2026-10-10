@@ -300,7 +300,7 @@ function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderC
         {node.note && <p className="node-note clip-text muted" title={node.note}>{node.note}</p>}
       </div>}
     </td>
-    <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.facts?.network} /></td>
+    <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.network} reported={node.facts?.network} /></td>
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
     <td data-column="traffic" data-label="本周期">{live?.traffic ? <TwoLine main={trafficParts(live.traffic).amount} note={trafficParts(live.traffic).percent} mono /> : <Missing />}</td>
     <td data-column="billing" data-label="费用"><TwoLine main={priceText(node.billing) || "—"} note={node.billing?.autoRenew ? "自动续期" : undefined} /></td>

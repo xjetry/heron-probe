@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
-import { AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
+import { AddressSource, AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
 import { withId as withIdLabel } from "../lib/ids";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
@@ -59,9 +59,11 @@ describe("Nodes", () => {
   });
 
   it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
+    const detected = AddressSource.DETECTED;
     renderNodes({ listNodes: async () => ({ nodes: [
-      { ...two[0], facts: { network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "8.8.8.8", checkedAt: 1790679000n }, ipv6: { state: AddressDetectionState.UNSUPPORTED, checkedAt: 1790679000n } } } },
-      { ...two[1], facts: { network: { ipv4: { state: AddressDetectionState.FAILED, checkedAt: 1790679000n } } } },
+      { ...two[0], facts: { network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "8.8.8.8", checkedAt: 1790679000n }, ipv6: { state: AddressDetectionState.UNSUPPORTED, checkedAt: 1790679000n } } },
+        network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "8.8.8.8", source: detected }, ipv6: { state: AddressDetectionState.UNSUPPORTED, source: detected } } },
+      { ...two[1], facts: { network: { ipv4: { state: AddressDetectionState.FAILED, checkedAt: 1790679000n } } }, network: { ipv4: { state: AddressDetectionState.FAILED, source: detected }, ipv6: {} } },
     ] }) });
     const a = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
     expect(a.getByLabelText("IPv4")).toHaveTextContent("8.8.8.8");
@@ -72,6 +74,33 @@ describe("Nodes", () => {
     openRowAction("a（#1）", "编辑");
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("IPv4").querySelector("time")).toHaveAttribute("datetime", "2026-09-29T10:50:00.000Z");
+  });
+
+  // 列表按 hub 的显示值渲染：手填的族显示手填地址与标记，不显示 agent 原报（这里是已停用探测）。
+  it("列表显示手填地址与标记", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], ipv4Pin: "1.1.1.1",
+      facts: { network: { ipv4: { state: AddressDetectionState.DISABLED, checkedAt: 1790679000n }, ipv6: { state: AddressDetectionState.FAILED, checkedAt: 1790679000n } } },
+      network: { ipv4: { state: AddressDetectionState.AVAILABLE, address: "1.1.1.1", source: AddressSource.MANUAL }, ipv6: { state: AddressDetectionState.FAILED, source: AddressSource.DETECTED } } }] }) });
+    const row = within((await screen.findByRole("link", { name: "a（#1）" })).closest("tr")!);
+    expect(row.getByLabelText("IPv4")).toHaveTextContent("1.1.1.1手填");
+    expect(row.getByLabelText("IPv6")).toHaveTextContent("探测失败");
+  });
+
+  // UpdateNode 整体替换：没碰过的手填原样带回，改过的去掉首尾空白再提交；清空即提交空串（恢复探测）。
+  it("手填出口地址随保存往返", async () => {
+    const updateNode = vi.fn(async () => ({}));
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...two[0], ipv4Pin: "8.8.8.8", ipv6Pin: "2606:4700::1111" }] }), updateNode });
+    await screen.findByRole("link", { name: "a（#1）" });
+    openRowAction("a（#1）", "编辑");
+    expect(screen.getByLabelText("手填 IPv4 地址 a（#1）")).toHaveValue("8.8.8.8");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1n, ipv4Pin: "8.8.8.8", ipv6Pin: "2606:4700::1111" }), expect.anything()));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    openRowAction("a（#1）", "编辑");
+    fireEvent.change(screen.getByLabelText("手填 IPv4 地址 a（#1）"), { target: { value: " 1.1.1.1 " } });
+    fireEvent.change(screen.getByLabelText("手填 IPv6 地址 a（#1）"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(updateNode).toHaveBeenLastCalledWith(expect.objectContaining({ id: 1n, ipv4Pin: "1.1.1.1", ipv6Pin: "" }), expect.anything()));
   });
 
   it("打开单一弹窗后不能切换节点，取消与 Escape 关闭时不提交", async () => {

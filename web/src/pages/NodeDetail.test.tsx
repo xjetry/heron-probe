@@ -203,7 +203,7 @@ it("状态头显示状态与最近上报、五段元信息、落后徽章及六�
   renderWithAdmin({ ...defaultImpl,
     getSnapshot: async () => ({ now: 1_000n, boundAgentVersion: "v0.8.0", nodes: [{ id: 7n, online: true, lastSeenAt: 990n, metrics: { cpuPct: 42 } }] }),
     listNodes: async () => ({ nodes: [{ ...(await listNodes()).nodes[0], country: "JP", facts: { ...(await listNodes()).nodes[0].facts,
-      agentVersion: "v0.7.0", network: { ipv4: { state: 1, address: "8.8.8.8" } } } }] }),
+      agentVersion: "v0.7.0", network: { ipv4: { state: 1, address: "8.8.8.8" } } }, network: { ipv4: { state: 1, address: "8.8.8.8", source: 1 }, ipv6: {} } }] }),
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   const head = within(await screen.findByRole("group", { name: "节点状态" }));
   expect(await head.findByText("在线 · 最近上报 10 秒前")).toBeInTheDocument();

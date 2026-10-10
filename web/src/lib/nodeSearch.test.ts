@@ -10,8 +10,14 @@ const nodes = [
 
 describe("filterNodes", () => {
   it.each(["8.8.8", "2606:4700", "JP", "1.1.1"])("搜索地址或地区 %s 与名称共用过滤口径", (search) => {
-    const match = { name: "tokyo", country: "JP", lastSource: "1.1.1.1", facts: { hostname: "host", network: { ipv4: { address: "8.8.8.8" }, ipv6: { address: "2606:4700:4700::1111" } } } };
+    const match = { name: "tokyo", country: "JP", lastSource: "1.1.1.1", network: { ipv4: { address: "8.8.8.8" }, ipv6: { address: "2606:4700:4700::1111" } }, facts: { hostname: "host" } };
     expect(filterNodes([...nodes, match], search)).toEqual([match]);
+  });
+  // 地址按显示值搜：手填的地址能搜到；被手填取代的 agent 探测值只留在 facts 里，不参与。
+  it("手填地址可搜，被取代的探测值不参与", () => {
+    const pinned = { name: "edge", network: { ipv4: { address: "9.9.9.9" } }, facts: { hostname: "h", network: { ipv4: { address: "4.4.4.4" } } } };
+    expect(filterNodes([...nodes, pinned], "9.9.9")).toEqual([pinned]);
+    expect(filterNodes([...nodes, pinned], "4.4.4")).toEqual([]);
   });
   it.each([
     ["名称", "aLpHa", [nodes[0]]],

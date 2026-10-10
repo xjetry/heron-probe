@@ -78,7 +78,7 @@ export function NodeDetail() {
         {node.facts && <dl className="card facts">
           {/* 来源地址是 hub 在上报上看到的对端，不是 agent 自报；只在管理端显示，公开页没有这个字段。 */}
           <dt>主机名</dt><dd>{node.facts.hostname}{node.lastSource && <span className="muted">（来源 {node.lastSource}）</span>}</dd>
-          <dt>双栈出口</dt><dd><NodeAddresses network={node.facts.network} detailed /></dd>
+          <dt>双栈出口</dt><dd><NodeAddresses network={node.network} reported={node.facts.network} detailed /></dd>
           <dt>系统</dt><dd>{node.facts.os}</dd><dt>内核</dt><dd>{node.facts.kernel}</dd><dt>架构</dt><dd>{node.facts.arch}</dd>
           <dt>CPU</dt><dd>{node.facts.cpuModel} × {node.facts.cpuCores}</dd><dt>虚拟化</dt><dd>{node.facts.virtualization || "无 / 未知"}</dd>
           <dt>agent</dt><dd>{node.facts.agentVersion}</dd><dt>ICMP 探测</dt><dd>{node.facts.icmpAvailable ? "可用" : "不可用"}</dd>
@@ -101,7 +101,7 @@ export function NodeDetail() {
           {node && <button type="button" className="node-head-edit" disabled={editor !== null} onClick={(event) => { update.reset(); setEditor(event.currentTarget); }}>编辑</button>}
         </div>
         {node?.facts && <p className="node-head-meta num">
-          {[addressText(node.facts.network?.ipv4), addressText(node.facts.network?.ipv6), node.facts.hostname || "—", node.facts.kernel || "—", node.facts.agentVersion || "—"].join(" · ")}
+          {[addressText(node.network?.ipv4), addressText(node.network?.ipv6), node.facts.hostname || "—", node.facts.kernel || "—", node.facts.agentVersion || "—"].join(" · ")}
           {bound !== undefined && olderThan(node.facts.agentVersion, bound) && <> <span className="badge-attention" title={`低于 hub 绑定的 agent 版本 ${bound}`}>agent 低于 {bound}</span></>}
         </p>}
         <NowGrid metrics={live?.metrics} daysLeft={node?.billing?.daysLeft} />
