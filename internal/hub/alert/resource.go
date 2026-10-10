@@ -105,7 +105,7 @@ func (e *Engine) EvaluateResources(ctx context.Context, minuteTS int64) error {
 			}
 			keep[node.ID] = true
 			from := minuteTS - int64(rule.ForMinutes-1)*60
-			rows, err := e.st.QueryMetrics(ctx, node.ID, from, minuteTS+60, lv, 60)
+			rows, err := e.history.QueryMetrics(ctx, node.ID, from, minuteTS+60, lv, 60)
 			if err != nil {
 				errs = append(errs, err)
 				continue

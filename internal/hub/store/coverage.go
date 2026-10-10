@@ -65,7 +65,7 @@ func (s *Store) CoverageStarts(ctx context.Context) (map[int64]int64, error) {
 func (s *Store) QueryMetricsCoverage(ctx context.Context, nodeID, from, to int64, lv Level, step int64) ([]metric.Row, metric.CoverageSummary, error) {
 	var summary metric.CoverageSummary
 	now := alignDown(s.clk.Now().Unix(), 60)
-	rows, err := queryFamily(ctx, s, metricFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, seriesLimit: 1}, from, to, lv, step,
+	rows, err := queryFamily(ctx, s, requestRead, metricFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, seriesLimit: 1}, from, to, lv, step,
 		func(rows *sql.Rows) ([]metric.Row, error) { return scanBucketRows(rows, nodeID) },
 		func(tx *sql.Tx, sources string, args []any) error {
 			var start int64

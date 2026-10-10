@@ -180,6 +180,13 @@ func (r *Registry) CertPolicy(id uint64) (https, pinned bool, configID []byte, o
 	return https, pinned, configID, true
 }
 
+// TaskCount 是节点当前覆盖的全部任务数，不论选择器是直接指定、按标签还是 all_nodes（byNode 是 store 读出的覆盖）。
+func (r *Registry) TaskCount(nodeID int64) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.byNode[nodeID])
+}
+
 func (r *Registry) Assigned(nodeID int64, taskID uint64) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -15,6 +15,7 @@ import (
 
 	"github.com/xjetry/heron-probe/internal/clock"
 	"github.com/xjetry/heron-probe/internal/hub/live"
+	"github.com/xjetry/heron-probe/internal/hub/metric"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/hub/traffic"
 )
@@ -90,12 +91,42 @@ type StateView struct {
 	Flapping bool
 }
 
+// Storage 是引擎对 store 的全部非历史读与写，*store.Store 满足它。历史读（QueryMetrics、QueryProbes）刻意不在其上：
+// 引擎只能经 HistoryReader 读历史，评估读走评估池而不与请求驱动的读排队（store.readPoolFor），这一点由类型承载——
+// 往这里加历史读方法，引擎就又能绕过评估池。
+type Storage interface {
+	ListAlertRules(ctx context.Context) ([]store.AlertRule, error)
+	SaveAlertRule(ctx context.Context, r store.AlertRule) (store.AlertRule, error)
+	DeleteAlertRule(ctx context.Context, id int64) error
+	ListNotifyChannels(ctx context.Context) ([]store.NotifyChannel, error)
+	SaveNotifyChannel(ctx context.Context, c store.NotifyChannel) (store.NotifyChannel, error)
+	DeleteNotifyChannel(ctx context.Context, id int64) error
+	ListAlertStates(ctx context.Context) ([]store.StateRow, error)
+	SetAlertState(ctx context.Context, ruleID, nodeID int64, state store.AlertState, since, recoveredAt time.Time) error
+	DeleteAlertState(ctx context.Context, ruleID, nodeID int64) error
+	RecordTransition(ctx context.Context, ruleID, nodeID int64, state store.AlertState, firedExpiresOn string, recoveredAt time.Time, ev store.AlertEvent, targets []store.DeliveryTarget) (store.AlertEvent, error)
+	ListSilences(ctx context.Context) ([]store.Silence, error)
+	SaveSilence(ctx context.Context, si store.Silence) (store.Silence, error)
+	DeleteSilence(ctx context.Context, id int64) error
+	ListMonitoringNodes(ctx context.Context) ([]store.Node, error)
+	RenewExpiry(ctx context.Context, id int64, cycle store.BillingCycle, from, to string) (bool, error)
+	ProbeTaskNodeIDs(ctx context.Context, taskID uint64) ([]int64, error)
+	ProbeCertsByTask(ctx context.Context, taskID uint64) (map[int64]int64, error)
+}
+
+// HistoryReader 是引擎读历史的唯一途径；生产装配传 (*store.Store).Evaluation()。
+type HistoryReader interface {
+	QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv store.Level, step int64) ([]metric.Row, error)
+	QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv store.Level, step int64) ([]metric.ProbeRow, error)
+}
+
 // writeMu 串行化读库、写库到内存发布；mu 只保护内存快照，不跨存储往返持有。持 writeMu 时会去取的别包的锁与跨包锁序
 // 见 internal/hub 的包注释（doc.go）。
 // 只有存储成功才在 mu 下发布，失败写入不会改变缓存。
 type Engine struct {
 	cfg      Config
-	st       *store.Store
+	st       Storage
+	history  HistoryReader
 	live     *live.Live
 	clk      clock.Clock
 	log      *slog.Logger
@@ -118,11 +149,11 @@ type Engine struct {
 }
 
 // New 对缺时区的 Config panic：到期扫描对 nil 时区调用 time.Time.In 会在运行中 panic，装配错误应当在启动时暴露。
-func New(cfg Config, st *store.Store, l *live.Live, clk clock.Clock, log *slog.Logger) *Engine {
+func New(cfg Config, st Storage, history HistoryReader, l *live.Live, clk clock.Clock, log *slog.Logger) *Engine {
 	if cfg.Location == nil {
 		panic("alert.Config.Location must be set")
 	}
-	return &Engine{cfg: cfg, st: st, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
+	return &Engine{cfg: cfg, st: st, history: history, live: l, clk: clk, log: log, monitoringNodes: st.ListMonitoringNodes, rules: map[int64]store.AlertRule{}, channels: map[int64]store.NotifyChannel{}, silences: map[int64]store.Silence{}, states: map[stateKey]stateEntry{}}
 }
 func (e *Engine) SetSender(s Sender) { e.mu.Lock(); defer e.mu.Unlock(); e.sender = s }
 
@@ -686,7 +717,7 @@ func (e *Engine) EvaluateProbes(ctx context.Context, minuteTS int64) error {
 			}
 			candidates[node.ID] = true
 			from := minuteTS - int64(r.ForMinutes-1)*60
-			rows, err := e.st.QueryProbes(ctx, node.ID, from, minuteTS+60, lv, 60)
+			rows, err := e.history.QueryProbes(ctx, node.ID, from, minuteTS+60, lv, 60)
 			if err != nil {
 				errs = append(errs, err)
 				continue

@@ -80,7 +80,7 @@ func assertHistoryMinutes(t *testing.T, s *Store, f *family, batch metric.Batch,
 		}
 		want[k].Merge(r.Bucket)
 	}
-	got, err := s.QueryProbes(t.Context(), id, from, to, lv, step)
+	got, err := s.QueryProbes(t.Context(), id, from, to, lv, step, 0)
 	if err != nil || len(got) != len(want) {
 		t.Fatalf("probe continuity: rows=%d want=%d err=%v", len(got), len(want), err)
 	}

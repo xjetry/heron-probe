@@ -40,26 +40,47 @@ func readPoolCases() []readPoolCase {
 			_, err := s.QueryMetrics(ctx, 1, 0, bigScanTo, lv, 3600)
 			return err
 		}},
+		{"evaluation", func(s *Store) *sql.DB { return s.ev }, evaluationPoolSize(), func(ctx context.Context, s *Store) error {
+			lv, _ := LevelByName("1m")
+			_, err := s.Evaluation().QueryMetrics(ctx, 1, 0, 3600, lv, 60)
+			return err
+		}},
 	}
 }
 
-// reopenReadPools 把两个读池换成经 driverName 打开的池（同一个库文件、同样的 DSN 与池设置），测试借此在读路径上挂钩子。
-// 读按预计扫描量分池（readPoolFor），钩子只挂一个池会漏掉分到另一个池的查询，所以两个一起换。
+// readPools 是 Store 的全部读池，名字与 readPoolCases 一致。
+func readPools(s *Store) []struct {
+	name string
+	db   **sql.DB
+	size int
+} {
+	return []struct {
+		name string
+		db   **sql.DB
+		size int
+	}{{"light", &s.r, readPoolSize()}, {"history", &s.hr, historyPoolSize()}, {"evaluation", &s.ev, evaluationPoolSize()}}
+}
+
+// reopenReadPools 把全部读池换成经 driverName 打开的池（同一个库文件、同样的 DSN 与池设置），测试借此在读路径上挂钩子。
+// 读按扫描量与调用方分池（readPoolFor），钩子只挂一部分池会漏掉分到其余池的查询，所以全部一起换。
 func reopenReadPools(t *testing.T, s *Store, driverName string) {
+	t.Helper()
+	reopenReadPoolsBy(t, s, func(string) string { return driverName })
+}
+
+// reopenReadPoolsBy 同 reopenReadPools，但每个池用 driverFor(池名) 给出的驱动，钩子据此分辨查询落在哪个池。
+func reopenReadPoolsBy(t *testing.T, s *Store, driverFor func(pool string) string) {
 	t.Helper()
 	var seq int
 	var name, path string
 	if err := s.r.QueryRow("PRAGMA database_list").Scan(&seq, &name, &path); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []struct {
-		db   **sql.DB
-		size int
-	}{{&s.r, readPoolSize()}, {&s.hr, historyPoolSize()}} {
+	for _, p := range readPools(s) {
 		if err := (*p.db).Close(); err != nil {
 			t.Fatal(err)
 		}
-		db, err := sql.Open(driverName, dsn(path, "&_pragma=query_only(1)"))
+		db, err := sql.Open(driverFor(p.name), dsn(path, "&_pragma=query_only(1)"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +109,7 @@ func holdReadConns(t *testing.T, db *sql.DB, n int) (release func()) {
 }
 
 // 池满时再来一条读：它必须排队（WaitCount 增长）而不是另开第 limit+1 个连接；连接归还后全部
-// 留作空闲（MaxIdleClosed 不变），下一条读复用它们而不是关掉重开。两个读池各验一遍。
+// 留作空闲（MaxIdleClosed 不变），下一条读复用它们而不是关掉重开。每个读池各验一遍。
 func TestReadPoolQueuesAtLimitAndKeepsReturnedConnections(t *testing.T) {
 	t.Parallel()
 	for _, pc := range readPoolCases() {
@@ -143,7 +164,7 @@ func TestReadPoolQueuesAtLimitAndKeepsReturnedConnections(t *testing.T) {
 	}
 }
 
-// 真实读方法、并发数是较大上限的四倍：两个池的连接数始终不超过各自上限，归还的连接被复用而不是关掉重开。
+// 真实读方法、并发数是最大上限的四倍：每个池的连接数始终不超过各自上限，归还的连接被复用而不是关掉重开。
 func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
@@ -185,7 +206,7 @@ func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 			}
 		}
 	}()
-	readers := 4 * max(readPoolSize(), historyPoolSize())
+	readers := 4 * max(readPoolSize(), historyPoolSize(), evaluationPoolSize())
 	var wg sync.WaitGroup
 	errs := make(chan error, readers)
 	for range readers {
@@ -204,6 +225,10 @@ func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 					return
 				}
 				if _, err := s.QueryMetrics(ctx, id, 0, bigScanTo, lv, 3600); err != nil {
+					errs <- err
+					return
+				}
+				if _, err := s.Evaluation().QueryMetrics(ctx, id, 0, 4800, lv, 60); err != nil {
 					errs <- err
 					return
 				}
@@ -232,7 +257,7 @@ func TestReadPoolReusesConnectionsUnderConcurrentReads(t *testing.T) {
 }
 
 // 面板每 POLL_MS（2 秒）拉一次；一次轮询用过、归还的连接，到下一次轮询时必须还在池里。等 3 秒：
-// 一个轮询间隔，加上 database/sql 回收协程至少 1 秒一轮的扫描粒度。两个池同时验，共用这一次等待。
+// 一个轮询间隔，加上 database/sql 回收协程至少 1 秒一轮的扫描粒度。全部池同时验，共用这一次等待。
 func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
@@ -254,7 +279,7 @@ func TestReadPoolKeepsIdleConnectionsAcrossPolls(t *testing.T) {
 	}
 }
 
-// 两个池互不占用：历史池被占满时（占住的连接在池看来与在飞的大扫描相同），轻读（含历史请求的准入读与
+// 请求驱动的两个池互不占用：历史池被占满时（占住的连接在池看来与在飞的大扫描相同），轻读（含历史请求的准入读与
 // 对比候选读）照常拿到连接、哪个池都不排队；轻池被占满时，经 queryFamily 的四个历史入口以超过
 // lightScanRows 的窗口照常执行、哪个池都不排队。任何一条读走错了池，就会在被占满的那个池上排队到超时。
 func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
@@ -282,7 +307,10 @@ func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
 	}
 	historyReads := []namedRead{
 		{"QueryMetrics", func(ctx context.Context) error { _, err := s.QueryMetrics(ctx, id, 0, bigScanTo, lv, 3600); return err }},
-		{"QueryProbes", func(ctx context.Context) error { _, err := s.QueryProbes(ctx, id, 0, bigScanTo, lv, 3600); return err }},
+		{"QueryProbes", func(ctx context.Context) error {
+			_, err := s.QueryProbes(ctx, id, 0, bigScanTo, lv, 3600, 0)
+			return err
+		}},
 		{"QueryMetricsCoverage", func(ctx context.Context) error {
 			_, _, err := s.QueryMetricsCoverage(ctx, id, 0, bigScanTo, lv, 3600)
 			return err
@@ -305,24 +333,42 @@ func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
 			release := holdReadConns(t, tc.full, tc.limit)
 			defer release()
 			for _, rd := range tc.reads {
-				lightBefore, historyBefore := s.r.Stats().WaitCount, s.hr.Stats().WaitCount
+				before := poolWaits(s)
 				rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				err := rd.fn(rctx)
 				cancel()
-				lightWaits, historyWaits := s.r.Stats().WaitCount-lightBefore, s.hr.Stats().WaitCount-historyBefore
-				if err != nil || lightWaits != 0 || historyWaits != 0 {
-					t.Errorf("%s with the other pool full: err=%v, queued %d times on the light pool and %d on the history pool; want no error and no queueing",
-						rd.name, err, lightWaits, historyWaits)
+				if waits := poolWaitsSince(s, before); err != nil || waits != "" {
+					t.Errorf("%s with the other pool full: err=%v, queued %s; want no error and no queueing", rd.name, err, waits)
 				}
 			}
 		})
 	}
 }
 
-// 告警评估读的形状：1m 级、ForMinutes（至多 60，alert/rule.go 校验）分钟窗口，探测族按每节点任务上限
-// 计序列。它的预计扫描量在 lightScanRows 之内，所以历史池被大扫描占满时它不排队——告警判定的时效
-// 不随公开端的历史负载变化。
-func TestReadPoolRoutesAlertShapedReadsToLightPool(t *testing.T) {
+// poolWaits 是各读池到目前为止的排队次数，按 readPools 的顺序。
+func poolWaits(s *Store) []int64 {
+	var out []int64
+	for _, p := range readPools(s) {
+		out = append(out, (*p.db).Stats().WaitCount)
+	}
+	return out
+}
+
+// poolWaitsSince 列出自 before 以来排过队的池与次数，都没排队时为空。
+func poolWaitsSince(s *Store, before []int64) string {
+	var parts []string
+	for i, p := range readPools(s) {
+		if d := (*p.db).Stats().WaitCount - before[i]; d != 0 {
+			parts = append(parts, fmt.Sprintf("%d times on the %s pool", d, p.name))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// 告警评估读不随请求负载变化：轻池与历史池的全部连接都被未提交的只读事务占住时（与两池各自挤满在飞请求相同），
+// 经 Evaluation 的两类读以告警的窗口形状（1m 级、一小时）照常在评估池完成，r 与 hr 上都不排队。评估读若走了
+// r 或 hr，就会排在占住的事务后面直到 ctx 到期。
+func TestEvaluationReadsBypassRequestPools(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
 	ctx := context.Background()
@@ -333,24 +379,46 @@ func TestReadPoolRoutesAlertShapedReadsToLightPool(t *testing.T) {
 	lv, _ := LevelByName("1m")
 	const minuteTS = 7200
 	from, to := int64(minuteTS-59*60), int64(minuteTS+60)
-	release := holdReadConns(t, s.hr, historyPoolSize())
-	defer release()
+	seedMinute(t, s, probeRow(id, minuteTS, 1, []uint32{500}, 0, 0))
+	if rejected, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: minuteTS, CoverageStart: minuteTS, Bucket: bucket(42)}}}); err != nil || rejected != 0 {
+		t.Fatalf("seed: rejected %d, err %v", rejected, err)
+	}
+	for _, db := range []*sql.DB{s.r, s.hr} {
+		for range db.Stats().MaxOpenConnections {
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// 只读事务在第一条语句时才取读快照；读一行让它真的持着快照，与在飞的长读相同。
+			if err := tx.QueryRow("SELECT count(*) FROM node").Scan(new(int)); err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+		}
+	}
+	before := poolWaits(s)
 	for _, rd := range []struct {
 		name string
-		fn   func(context.Context) error
+		fn   func(context.Context) (int, error)
 	}{
-		{"QueryMetrics", func(ctx context.Context) error { _, err := s.QueryMetrics(ctx, id, from, to, lv, 60); return err }},
-		{"QueryProbes", func(ctx context.Context) error { _, err := s.QueryProbes(ctx, id, from, to, lv, 60); return err }},
+		{"QueryMetrics", func(ctx context.Context) (int, error) {
+			rows, err := s.Evaluation().QueryMetrics(ctx, id, from, to, lv, 60)
+			return len(rows), err
+		}},
+		{"QueryProbes", func(ctx context.Context) (int, error) {
+			rows, err := s.Evaluation().QueryProbes(ctx, id, from, to, lv, 60)
+			return len(rows), err
+		}},
 	} {
-		lightBefore, historyBefore := s.r.Stats().WaitCount, s.hr.Stats().WaitCount
-		rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := rd.fn(rctx)
+		rctx, cancel := context.WithTimeout(ctx, testwait.Bound)
+		n, err := rd.fn(rctx)
 		cancel()
-		lightWaits, historyWaits := s.r.Stats().WaitCount-lightBefore, s.hr.Stats().WaitCount-historyBefore
-		if err != nil || lightWaits != 0 || historyWaits != 0 {
-			t.Errorf("alert-shaped %s (1m, 60-minute window) with the history pool full: err=%v, queued %d times on the light pool and %d on the history pool; want no error and no queueing",
-				rd.name, err, lightWaits, historyWaits)
+		if err != nil || n != 1 {
+			t.Errorf("evaluation %s with the light and history pools held: %d rows, err=%v; want 1 row and no error", rd.name, n, err)
 		}
+	}
+	if waits := poolWaitsSince(s, before); waits != "" {
+		t.Errorf("evaluation reads queued %s; want them served by the evaluation pool alone", waits)
 	}
 }
 
@@ -661,4 +729,35 @@ func percentile(d []time.Duration, q float64) time.Duration {
 	s := slices.Clone(d)
 	slices.Sort(s)
 	return s[int(math.Ceil(q*float64(len(s))))-1]
+}
+
+// ReadPoolStats 的每个字段对应自己的池：占满哪个池，只有那个字段的 InUse 等于上限，其余字段的 InUse 为 0。
+func TestReadPoolStatsReportsEachPool(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	field := func(st ReadPoolStats, name string) sql.DBStats {
+		switch name {
+		case "light":
+			return st.Light
+		case "history":
+			return st.History
+		}
+		return st.Evaluation
+	}
+	for _, pc := range readPoolCases() {
+		release := holdReadConns(t, pc.db(s), pc.limit)
+		st := s.ReadPoolStats()
+		release()
+		for _, other := range readPoolCases() {
+			got := field(st, other.name)
+			wantInUse := 0
+			if other.name == pc.name {
+				wantInUse = pc.limit
+			}
+			if got.MaxOpenConnections != other.limit || got.InUse != wantInUse {
+				t.Errorf("with the %s pool held: ReadPoolStats.%s max=%d in use=%d, want max=%d in use=%d",
+					pc.name, other.name, got.MaxOpenConnections, got.InUse, other.limit, wantInUse)
+			}
+		}
+	}
 }

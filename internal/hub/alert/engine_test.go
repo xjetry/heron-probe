@@ -59,7 +59,7 @@ func must(t *testing.T, err error) {
 func (f *fixture) restart(t *testing.T) {
 	t.Helper()
 	f.l = live.New(f.clk, 30*time.Second)
-	f.e = New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, f.clk, f.log)
+	f.e = New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.st.Evaluation(), f.l, f.clk, f.log)
 	must(t, f.e.Load(t.Context()))
 }
 func (f *fixture) rule(t *testing.T, r store.AlertRule) store.AlertRule {

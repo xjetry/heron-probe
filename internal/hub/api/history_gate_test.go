@@ -131,7 +131,7 @@ func TestHistoryErrorPathReleasesSlot(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	g := gateForTest(2 * time.Second)
-	hh := history{store: h.store, log: slog.Default(), gate: g}
+	hh := history{store: h.store, probes: h.reg, log: slog.Default(), gate: g}
 	// 取消的上下文让存储读取立即失败：错误返回后空位必须已释放。把整份额度都
 	// 走一遍错误路径，任何一处漏释放都会让最后一个正常请求等不到空位。
 	cancelled, cancel := context.WithCancel(context.Background())

@@ -1074,7 +1074,7 @@ func readProbeMinutes(t *testing.T, h *hub, id int64) []metric.ProbeRow {
 	t.Helper()
 	from, to := h.clk.Now().Add(-5*time.Minute).Unix(), h.clk.Now().Add(time.Minute).Unix()
 	lv, step := store.ChooseLevel(from, to, 1000)
-	rows, err := h.store.QueryProbes(t.Context(), id, from, to, lv, step)
+	rows, err := h.store.QueryProbes(t.Context(), id, from, to, lv, step, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
