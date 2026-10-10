@@ -153,8 +153,8 @@ export function Nodes() {
   });
   const removeTag = useMutation(AdminService.method.deleteTag, {
     ...mutationOptions,
-    // 删掉的标签必须从过滤里去掉：它已不在任何节点上，留在条件里只会让列表为空（同时满足时整个为空）。
-    // 无标签过滤下没有标签可选，状态不变。
+    // 删掉的标签必须从过滤里去掉：它已不在任何节点上，留下就是一个匹配不到任何节点、却仍显示为已选的条件（只选了它或按
+    // 同时满足时列表为空）。无标签过滤下没有标签可选，状态不变。
     onSuccess: (_result, request) => {
       setParams((current) => {
         const filter = tagFilterFromParams(current);
