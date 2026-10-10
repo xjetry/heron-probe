@@ -16,6 +16,10 @@ import (
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
+// 窗口取 8 而不是 QueueCap：性质是"满窗口溢出之后会补货"，与窗口多大无关；QueueCap+1 次真实 HTTP 投递在高负载的
+// 全量 -race 下跑不进等待上界。
+const refillWindow = 8
+
 func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 	for _, running := range []bool{false, true} {
 		t.Run(fmt.Sprint(running), func(t *testing.T) {
@@ -47,7 +51,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 			defer func() { release.Do(func() { close(gate) }); srv.Close() }()
 			c := queueChannel(t, f, srv.URL)
 			rule := f.rule(t, offline())
-			count := QueueCap + 1
+			count := refillWindow + 1
 			if running {
 				count++
 			}
@@ -58,7 +62,7 @@ func TestQueueRefillsOverflowWithinProcess(t *testing.T) {
 				must(t, err)
 				events[i] = ev
 			}
-			q := NewQueue(QueueConfig{}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
+			q := NewQueue(QueueConfig{Limit: refillWindow}, QueueDeps{Store: f.st, Channels: f.e.Channels, Client: outbound.NewClient(NotifyTimeout), Clock: f.clk, Log: f.log})
 			var stop func()
 			if running {
 				q.Enqueue(events[0])

@@ -104,7 +104,7 @@ type Queue struct {
 	log          *slog.Logger
 	// readBatch 是读批次的唯一入口（NewQueue 取 store.GetDeliveryBatch），每次尝试前回读。
 	readBatch func(context.Context, int64) (store.DeliveryBatch, error)
-	limit     int // ready、waiting 与在途合计至多这么多批次；NewQueue 取 QueueCap。
+	limit     int // ready、waiting 与在途合计至多这么多批次；NewQueue 取 QueueConfig.Limit，0 即 QueueCap。
 	mu        sync.Mutex
 	ready     []int64
 	waiting   map[int64]waitEntry
@@ -128,6 +128,9 @@ type QueueConfig struct {
 	TelegramBase string
 	// Sleep 是 worker 等待重试间隔与渠道节奏空位的方式，ctx 取消时必须返回；nil 取真实的计时等待，测试用它推进假时钟。
 	Sleep func(context.Context, time.Duration) error
+	// Limit 是窗口容量（ready、waiting 与在途合计），0 取 QueueCap，负数拒绝。生产装配不设它；钉"满窗口溢出后补货"这类
+	// 以窗口为界的性质的用例用小窗口，不必凑够 QueueCap+1 次真实投递——那在高负载下跑不进等待上界。
+	Limit int
 }
 
 // QueueDeps 是 Queue 的协作者，全部必需：NewQueue 逐字段核对非 nil。
@@ -142,6 +145,13 @@ type QueueDeps struct {
 
 // NewQueue 对依赖缺失 panic，口径与理由见 api.New。
 func NewQueue(cfg QueueConfig, deps QueueDeps) *Queue {
+	if cfg.Limit < 0 {
+		panic("alert.QueueConfig.Limit must not be negative")
+	}
+	limit := cfg.Limit
+	if limit == 0 {
+		limit = QueueCap
+	}
 	if deps.Store == nil {
 		panic("alert.QueueDeps.Store must be set")
 	}
@@ -162,7 +172,7 @@ func NewQueue(cfg QueueConfig, deps QueueDeps) *Queue {
 		sleep = sleepContext
 	}
 	return &Queue{st: deps.Store, channels: deps.Channels, client: deps.Client, telegramBase: cfg.TelegramBase, clk: deps.Clock, sleep: sleep, log: deps.Log,
-		readBatch: deps.Store.GetDeliveryBatch, limit: QueueCap, waiting: make(map[int64]waitEntry), active: make(map[int64]int64), sent: make(map[int64][]time.Duration)}
+		readBatch: deps.Store.GetDeliveryBatch, limit: limit, waiting: make(map[int64]waitEntry), active: make(map[int64]int64), sent: make(map[int64][]time.Duration)}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

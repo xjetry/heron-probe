@@ -125,7 +125,9 @@ func TestHistoryGateSourcesIndependent(t *testing.T) {
 	}
 }
 
-// 错误路径也要释放：查询失败后同来源的下一个请求立即拿到空位。
+// 错误路径也要释放：查询失败后同来源的下一个请求拿得到空位。泄漏由闸门自己的等待上界（gateForTest 的 2 秒）暴露：
+// 额度被错误路径漏掉一个，最后那个正常请求就等不到空位而失败。不再另设墙钟上界——"立即"在负载下量不准，
+// 而漏没漏只有"拿到 / 拿不到"两个答案。
 func TestHistoryErrorPathReleasesSlot(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
@@ -141,12 +143,8 @@ func TestHistoryErrorPathReleasesSlot(t *testing.T) {
 			t.Fatal("取消的上下文应当失败")
 		}
 	}
-	begin := time.Now()
 	if _, err := hh.metrics(context.Background(), &heronv1.QueryMetricsRequest{NodeId: 1, From: 0, To: 3600}, 10, func(context.Context) error { return nil }); err != nil {
-		t.Fatalf("错误路径之后同来源应当立即拿到空位: %v", err)
-	}
-	if time.Since(begin) > 500*time.Millisecond {
-		t.Fatal("空位被错误路径泄漏")
+		t.Fatalf("错误路径之后同来源应当拿到空位（等待超时即空位被错误路径泄漏）: %v", err)
 	}
 }
 
