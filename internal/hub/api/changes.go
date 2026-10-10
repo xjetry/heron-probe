@@ -183,6 +183,7 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			}
 			base := &heronv1.UpdateNodeRequest{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, TrafficResetDay: uint32(n.TrafficResetDay), OfflineGraceS: proto.Uint32(uint32(n.OfflineGraceS)), Billing: billingProto(n.Billing, s.today()), CountryPin: n.CountryPin, Tags: n.Tags, Maintenance: n.Maintenance}
 			base.TrafficQuotaBytes, base.TrafficQuotaMode = n.TrafficQuotaBytes, enumFor(trafficQuotaModes, n.TrafficQuotaMode)
+			base.Ipv4Pin, base.Ipv6Pin = n.IPv4Pin, n.IPv6Pin
 			return mergeChange(q.UpdateNode, base, m.GetUpdateMask().GetPaths(), "id", "billing.days_left")
 		}
 	case *heronv1.ExecuteChangeRequest_RenewNodeBilling:

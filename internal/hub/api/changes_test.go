@@ -971,6 +971,8 @@ func TestUpdateNodeChangeCoversEveryEditableField(t *testing.T) {
 		"country_pin": {func(r *heronv1.UpdateNodeRequest) { r.CountryPin = "JP" }, func(r *heronv1.UpdateNodeRequest) { r.CountryPin = "US" }},
 		"tags":        {func(r *heronv1.UpdateNodeRequest) { r.Tags = []string{"first"} }, func(r *heronv1.UpdateNodeRequest) { r.Tags = []string{"second"} }},
 		"maintenance": {func(r *heronv1.UpdateNodeRequest) { r.Maintenance = true }, func(r *heronv1.UpdateNodeRequest) { r.Maintenance = false }},
+		"ipv4_pin":    {func(r *heronv1.UpdateNodeRequest) { r.Ipv4Pin = "8.8.8.8" }, func(r *heronv1.UpdateNodeRequest) { r.Ipv4Pin = "1.1.1.1" }},
+		"ipv6_pin":    {func(r *heronv1.UpdateNodeRequest) { r.Ipv6Pin = "2606:4700::1111" }, func(r *heronv1.UpdateNodeRequest) { r.Ipv6Pin = "2001:4860::8888" }},
 	}
 	fields := (&heronv1.UpdateNodeRequest{}).ProtoReflect().Descriptor().Fields()
 	var names []string

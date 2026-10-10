@@ -313,8 +313,12 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 		if b := billingProto(n.Billing, today); b != nil {
 			pn.Billing = p.billing.apply(b).(*heronv1.PublicBilling)
 		}
+		// 地址族状态取显示值（手填的族为 AVAILABLE），与管理端 Node.network 出自同一个判定；从未上报的节点没有 facts，
+		// 也就不公开地址族，与它其余的主机信息一致。
 		if n.Facts != nil {
-			pn.Facts = p.facts.apply(n.Facts).(*heronv1.PublicFacts)
+			facts := proto.Clone(n.Facts).(*heronv1.Facts)
+			facts.Network = publicNetworkInput(n.DisplayNetwork())
+			pn.Facts = p.facts.apply(facts).(*heronv1.PublicFacts)
 		}
 		if m != nil {
 			pn.Metrics = p.metrics.apply(m).(*heronv1.PublicMetrics)
@@ -323,6 +327,23 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 	}
 	out.Tags = unionTags(nodes)
 	return connect.NewResponse(out), nil
+}
+
+// publicNetworkInput 把显示值写成 NetworkInfo 的形状，作公开投影的输入：投影按字段号从 Facts.network 取出
+// PublicNetworkInfo，输入换成显示值，公开端就与管理端出自 store.Node.DisplayNetwork 这同一个判定。只填 state：地址与
+// 探测时间在 PublicAddressDetection 里是保留号，投影本就不放行它们；这里也不带进来，地址不公开就不只靠投影这一道。
+// 两族都没有显示值时为 nil，与 agent 不报双栈出口时相同。
+func publicNetworkInput(display [2]store.DisplayAddress) *heronv1.NetworkInfo {
+	var families [2]*heronv1.AddressDetection
+	for i, d := range display {
+		if d.Source != store.AddressNone {
+			families[i] = &heronv1.AddressDetection{State: d.State}
+		}
+	}
+	if families[0] == nil && families[1] == nil {
+		return nil
+	}
+	return &heronv1.NetworkInfo{Ipv4: families[0], Ipv6: families[1]}
 }
 
 // unionTags 是 nodes 各自标签的并集，按 store.TagFold 排序，与 ListTags 的 ORDER BY name_fold 同序：name_fold 就是

@@ -32,6 +32,7 @@ type fakes struct {
 	calls     []call
 	exists    map[int64]bool
 	resetDays map[int64]int
+	pins      map[int64][2]string
 
 	// 下面几项在用例开始前设好，之后只读。
 	updateErr      error
@@ -47,7 +48,7 @@ type fakes struct {
 
 func newFakes(t *testing.T, ids ...int64) (*fakes, *bytes.Buffer) {
 	t.Helper()
-	f := &fakes{exists: map[int64]bool{}, resetDays: map[int64]int{}}
+	f := &fakes{exists: map[int64]bool{}, resetDays: map[int64]int{}, pins: map[int64][2]string{}}
 	for _, id := range ids {
 		f.exists[id] = true
 	}
@@ -184,14 +185,29 @@ func (tr fakeTraffic) Commit(_ context.Context, id int64) (traffic.Entry, error)
 	return traffic.Entry{}, tr.f.commitErr
 }
 
-// fakeState.Forget 与 ingest.Service.Forget 一样清掉流量账本里该节点的状态。
+// fakeState.Forget 与 ingest.Service.Forget 一样清掉流量账本里该节点的状态与逐族探测开关。
 type fakeState struct{ f *fakes }
+
+func (s fakeState) SetAddressPins(id int64, ipv4, ipv6 string) {
+	s.f.record("state.SetAddressPins", id)
+	s.f.mu.Lock()
+	defer s.f.mu.Unlock()
+	s.f.pins[id] = [2]string{ipv4, ipv6}
+}
 
 func (s fakeState) Forget(id int64) {
 	s.f.record("state.Forget", id)
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
 	delete(s.f.resetDays, id)
+	delete(s.f.pins, id)
+}
+
+func (f *fakes) pinsOf(id int64) ([2]string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.pins[id]
+	return p, ok
 }
 
 func names(calls []call) []string {
@@ -224,33 +240,36 @@ func TestUpdateCommitsMemoryOnlyAfterStoreAndScansOutsideLock(t *testing.T) {
 	}{
 		{"neither", false, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true},
+			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true},
 		}},
 		{"billing", true, false, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true},
+			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true},
 			{"alerts.SweepExpiry", 0, false},
 		}},
 		{"traffic", false, true, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"traffic.Commit", 7, true},
+			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
 			{"alerts.EvaluateTrafficNode", 7, false},
 		}},
 		{"both", true, true, []call{
 			{"alerts.UpdateScope", 0, true}, {"nodes.UpdateNode", 7, true}, {"alerts.publishScope", 0, true},
-			{"traffic.SetResetDay", 7, true}, {"traffic.Commit", 7, true},
+			{"traffic.SetResetDay", 7, true}, {"state.SetAddressPins", 7, true}, {"traffic.Commit", 7, true},
 			{"alerts.SweepExpiry", 0, false}, {"alerts.EvaluateTrafficNode", 7, false},
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _ := newFakes(t, 7)
 			f.updateResult = store.NodeUpdateResult{BillingChanged: tc.billing, TrafficChanged: tc.traffc}
-			if err := f.svc.Update(t.Context(), 7, store.NodeEdit{TrafficResetDay: 15}); err != nil {
+			if err := f.svc.Update(t.Context(), 7, store.NodeEdit{TrafficResetDay: 15, IPv4Pin: "8.8.8.8"}); err != nil {
 				t.Fatal(err)
 			}
 			requireCalls(t, f.log(), tc.want...)
 			if day, _ := f.resetDay(7); day != 15 {
 				t.Fatalf("reset day = %d, want 15", day)
+			}
+			if pins, _ := f.pinsOf(7); pins != [2]string{"8.8.8.8", ""} {
+				t.Fatalf("published pins = %q, want the committed edit's", pins)
 			}
 		})
 	}
@@ -282,6 +301,9 @@ func TestUpdateStoreFailureLeavesMemoryUntouched(t *testing.T) {
 			requireCalls(t, f.log(), call{"alerts.UpdateScope", 0, true}, call{"nodes.UpdateNode", 7, true})
 			if day, ok := f.resetDay(7); ok {
 				t.Fatalf("reset day %d written after a failed store write", day)
+			}
+			if pins, ok := f.pinsOf(7); ok {
+				t.Fatalf("pins %q published after a failed store write", pins)
 			}
 		})
 	}
@@ -396,6 +418,9 @@ func TestConcurrentUpdateAndDeleteSerialize(t *testing.T) {
 	}
 	if day, ok := f.resetDay(7); ok {
 		t.Fatalf("deleted node revived reset day %d", day)
+	}
+	if pins, ok := f.pinsOf(7); ok {
+		t.Fatalf("deleted node revived pins %q", pins)
 	}
 }
 

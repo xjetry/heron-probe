@@ -11,6 +11,7 @@
 //	    BatchUpdateNodeTags）→ probe.Registry.mu
 //	  → auth.Auth.mutMu（DeleteNode）
 //	  → traffic.Book.writeMu → traffic.Book.mu（Commit）；traffic.Book.mu（SetResetDay）
+//	  → ingest.Service.mu（SetAddressPins）
 //	auth.Auth.mutMu → probe.Registry.writeMu → probe.Registry.mu（建节点经 auth.NodeCreator 落库并发布）
 //	alert.Engine.writeMu → traffic.Book.mu（流量评估读 Committed）；→ alert.Queue（flush 时 Enqueue，不阻塞）
 //	ingest.Service.pendingMu → ingest.Service.stateMu（Forget 取写侧，Report 的鉴权与内存写入取读侧）

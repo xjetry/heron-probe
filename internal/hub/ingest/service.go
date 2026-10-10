@@ -134,6 +134,11 @@ type Service struct {
 	factsHash map[int64]uint64
 	// taskDigest 每个节点只留当前一份：键是算出它的那份清单自带的版本与实际授予的能力，版本或能力一变就换掉旧的。
 	taskDigest map[int64]taskDigestCache
+	// detection 是各节点的逐族探测开关（store.NetworkDetection），Report 每次应答带上，上报路径不查库。Load 从库建立，
+	// 此后只由 SetAddressPins 在节点编辑提交之后改写（nodeops.Service.Update，在 nodeops.mu 下与删除串行），Forget
+	// 清掉。手填只经 UpdateNode 改：离线子命令不写这两列，恢复要求 hub 停机，启动时 Load 读到的就是恢复后的值。
+	// 没有条目即两族都探测。存的消息只读不改，多个应答共用同一个。
+	detection map[int64]*heronv1.NetworkDetection
 
 	pendingMu sync.Mutex
 	pending   []metric.Batch
@@ -183,10 +188,43 @@ func (s *Service) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	detection, err := s.store.NetworkDetections(ctx)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.factsHash = m
+	s.detection = detection
 	s.mu.Unlock()
 	return nil
+}
+
+// SetAddressPins 发布节点编辑提交后的手填出口地址，该节点的下一次 Report 应答即按它给出逐族探测开关。调用方必须在
+// 库提交成功之后调用，且与该节点的删除串行（nodeops.Service.Update 持 nodeops.mu 调用），否则 Forget 之后会重建
+// 已删节点的条目。
+func (s *Service) SetAddressPins(nodeID int64, ipv4Pin, ipv6Pin string) {
+	d := store.NetworkDetection(ipv4Pin, ipv6Pin)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.detection == nil {
+		s.detection = map[int64]*heronv1.NetworkDetection{}
+	}
+	if !d.GetSkipIpv4() && !d.GetSkipIpv6() {
+		delete(s.detection, nodeID)
+		return
+	}
+	s.detection[nodeID] = d
+}
+
+// detectionFor 是该节点这次应答要带的逐族开关；没有条目时给两族都探测的零值。每次都带上，agent 才能在手填清空后
+// 收到"恢复探测"。
+func (s *Service) detectionFor(nodeID int64) *heronv1.NetworkDetection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.detection[nodeID]; ok {
+		return d
+	}
+	return &heronv1.NetworkDetection{}
 }
 
 // Interval 是下发给 agent 的上报间隔。
@@ -345,6 +383,7 @@ func (s *Service) Report(ctx context.Context, req *connect.Request[heronv1.Repor
 	resp := &heronv1.ReportResponse{
 		ReportIntervalMs: agentwire.ReportIntervalMs(s.cfg.TTL),
 		WantFacts:        want,
+		Detection:        s.detectionFor(id),
 	}
 	if s.cfg.Updates != nil {
 		resp.Update = s.cfg.Updates.Observe(id, req.Msg.Update)
@@ -544,6 +583,7 @@ func (s *Service) Forget(nodeID int64) {
 	s.mu.Lock()
 	delete(s.factsHash, nodeID)
 	delete(s.taskDigest, nodeID)
+	delete(s.detection, nodeID)
 	s.mu.Unlock()
 	var pending []metric.Batch
 	for _, batch := range s.pending {

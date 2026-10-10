@@ -5,8 +5,9 @@
 // 每个协作者各自保证"先提交库、成功后才改自己的内存"；本包负责的是跨协作者的那部分：哪些写要串行、哪些
 // 内存更新必须跟在哪次提交之后、哪些慢操作不能挡住别的节点。
 //
-// mu（节点编辑锁）的不变式：流量账本里的重置日与库里的 traffic_reset_day 一致，节点删除并 Forget 之后不再为它建
-// 内存状态。Update 在 mu 下完成"库提交 → SetResetDay → 流量 Commit"，Delete 在 mu 下提交库删除；于是
+// mu（节点编辑锁）的不变式：流量账本里的重置日与库里的 traffic_reset_day 一致，ingest 的逐族探测开关与库里的手填
+// 出口地址一致，节点删除并 Forget 之后不再为它建内存状态。Update 在 mu 下完成"库提交 → SetResetDay、SetAddressPins
+// → 流量 Commit"，Delete 在 mu 下提交库删除；于是
 //   - 两个 Update 的"提交、改内存"不交错，内存里的重置日是最后提交的那一次；
 //   - Delete 提交之后才开始的 Update 在库层得到 ErrNotFound，不会调 SetResetDay，锁外的 Forget 不会被它重建；
 //   - Delete 提交之前已提交的 Update 在放锁前已改完内存，Forget 在 Delete 放锁之后才运行，排在它后面。
@@ -57,8 +58,10 @@ type Traffic interface {
 }
 
 // NodeState 是上报侧的进程内状态持有者，实现是 ingest.Service。它的 Forget 是上报侧节点状态的唯一清单：
-// 任务注册表的覆盖索引、更新状态、在线快照、流量账本、限流桶、facts 与任务摘要、待刷出的分钟桶。
+// 任务注册表的覆盖索引、更新状态、在线快照、流量账本、限流桶、facts 与任务摘要、逐族探测开关、待刷出的分钟桶。
+// SetAddressPins 发布已提交的手填出口地址，Update 在 mu 下、库提交成功之后调用，与 SetResetDay 同一口径。
 type NodeState interface {
+	SetAddressPins(nodeID int64, ipv4Pin, ipv6Pin string)
 	Forget(nodeID int64)
 }
 
@@ -140,6 +143,8 @@ func (s *Service) Update(ctx context.Context, id int64, edit store.NodeEdit) err
 	if err == nil {
 		// 只有库提交成功才改内存；mu 跨越库写入与内存更新并与删除共用，失败或并发请求都不能使两者分叉。
 		s.traffic.SetResetDay(id, edit.TrafficResetDay)
+		// 库里存的是规范形，开关只看空与非空，规范化不改变它，所以按 edit 发布与按库发布相同。
+		s.state.SetAddressPins(id, edit.IPv4Pin, edit.IPv6Pin)
 		if trafficChanged {
 			if _, commitErr := s.traffic.Commit(context.WithoutCancel(ctx), id); commitErr != nil {
 				s.log.Error("traffic commit after node update failed", "node", id, "err", commitErr)

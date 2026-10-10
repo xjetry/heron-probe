@@ -113,11 +113,37 @@ var countrySources = map[store.CountrySource]heronv1.CountrySource{
 	store.CountryLookup: heronv1.CountrySource_COUNTRY_SOURCE_LOOKUP,
 }
 
+// addressSources 是库层出口地址显示值来源与协议枚举的一一对应；TestAddressSourcesMapEveryValue 按两侧全集核对。
+var addressSources = map[store.AddressSource]heronv1.AddressSource{
+	store.AddressNone:     heronv1.AddressSource_ADDRESS_SOURCE_UNSPECIFIED,
+	store.AddressDetected: heronv1.AddressSource_ADDRESS_SOURCE_DETECTED,
+	store.AddressManual:   heronv1.AddressSource_ADDRESS_SOURCE_MANUAL,
+}
+
+// nodeNetworkProto 是 Node.network：两族都给出，判定只在 store.Node.DisplayNetwork。
+func nodeNetworkProto(display [2]store.DisplayAddress) *heronv1.NodeNetwork {
+	var families [2]*heronv1.NodeAddress
+	for i, d := range display {
+		families[i] = &heronv1.NodeAddress{Address: d.Address, Source: addressSources[d.Source], State: d.State}
+	}
+	return &heronv1.NodeNetwork{Ipv4: families[0], Ipv6: families[1]}
+}
+
+// addressPinInvalid 给出手填出口地址被拒时的字段路径与期望取值；判定本身只在 store（UpdateNodeTasks）。示例取真实的
+// 公网地址：文档段（203.0.113.0/24、2001:db8::/32）不是公网地址，写进示例会被同一个判定拒绝。
+func addressPinInvalid(e store.AddressPinError) error {
+	if e.IPv4 {
+		return invalid("ipv4_pin: must be empty or a public IPv4 address, e.g. 8.8.8.8; got %q", e.Got)
+	}
+	return invalid("ipv6_pin: must be empty or a public IPv6 address without a zone, e.g. 2606:4700::1111; got %q", e.Got)
+}
+
 // nodeProto 的 today 是 hub 时区的今天（alert.Today）。
 func nodeProto(n store.Node, today time.Time) *heronv1.Node {
 	out := &heronv1.Node{Id: n.ID, Name: n.Name, Public: n.Public, Note: n.Note, PublicRemark: n.PublicRemark, SortOrder: n.SortOrder, Position: n.Position, CreatedAt: n.CreatedAt.Unix(), Facts: n.Facts, TrafficResetDay: uint32(n.TrafficResetDay),
 		Billing: billingProto(n.Billing, today), LastSource: n.LastSource, CountryIp: n.CountryIP, CountryPin: n.CountryPin, CountryLookup: n.Country, Tags: n.Tags, Maintenance: n.Maintenance,
-		TrafficQuotaBytes: n.TrafficQuotaBytes, TrafficQuotaMode: enumFor(trafficQuotaModes, n.TrafficQuotaMode)}
+		TrafficQuotaBytes: n.TrafficQuotaBytes, TrafficQuotaMode: enumFor(trafficQuotaModes, n.TrafficQuotaMode),
+		Ipv4Pin: n.IPv4Pin, Ipv6Pin: n.IPv6Pin, Network: nodeNetworkProto(n.DisplayNetwork())}
 	country, source := n.DisplayCountry()
 	out.Country, out.CountrySource = country, countrySources[source]
 	if !n.LastSeenAt.IsZero() {
@@ -267,10 +293,15 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	if err != nil {
 		return nil, err
 	}
-	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags}
+	edit := store.NodeEdit{Name: name, Public: req.Msg.GetPublic(), Note: note, PublicRemark: remark, TrafficResetDay: day, TrafficQuotaBytes: quota, TrafficQuotaMode: mode, OfflineGraceS: int(grace), Billing: billing, CountryPin: pin, Maintenance: req.Msg.GetMaintenance(), Tags: tags,
+		IPv4Pin: req.Msg.GetIpv4Pin(), IPv6Pin: req.Msg.GetIpv6Pin()}
 	err = s.nodes.Update(ctx, req.Msg.GetId(), edit)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, notFound(req.Msg.GetId())
+	}
+	var pinErr store.AddressPinError
+	if errors.As(err, &pinErr) {
+		return nil, addressPinInvalid(pinErr)
 	}
 	if err != nil {
 		return nil, s.operationError(err, "tags", "updating node failed")
