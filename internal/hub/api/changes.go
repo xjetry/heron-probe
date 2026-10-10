@@ -185,6 +185,9 @@ func (s *Service) prepareChange(ctx context.Context, m *heronv1.ExecuteChangeReq
 			base.TrafficQuotaBytes, base.TrafficQuotaMode = n.TrafficQuotaBytes, enumFor(trafficQuotaModes, n.TrafficQuotaMode)
 			return mergeChange(q.UpdateNode, base, m.GetUpdateMask().GetPaths(), "id", "billing.days_left")
 		}
+	case *heronv1.ExecuteChangeRequest_RenewNodeBilling:
+		c.Action, c.ResourceID = store.ActionRenewNodeBilling, q.RenewNodeBilling.GetNodeId()
+		call = invokeChange(s.RenewNodeBilling, q.RenewNodeBilling)
 	case *heronv1.ExecuteChangeRequest_DeleteNode:
 		c.Action, c.ResourceID = store.ActionDeleteNode, q.DeleteNode.GetId()
 		call = invokeChange(s.DeleteNode, q.DeleteNode)

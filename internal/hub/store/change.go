@@ -103,6 +103,7 @@ const (
 	ActionStartUpdate
 	ActionCancelUpdate
 	ActionDeleteTag
+	ActionRenewNodeBilling
 )
 
 // String 是 operation.action 列与回执里的动作名：已持久化的回执按它展示，改名会让新旧回执的同一操作名字不同。
@@ -145,6 +146,7 @@ var changeActions = map[ChangeAction]changeActionSpec{
 	ActionStartUpdate:         {name: "start_update", kind: ChangeUpdate, permission: PermissionUpdate},
 	ActionCancelUpdate:        {name: "cancel_update", kind: ChangeUpdate, permission: PermissionUpdate},
 	ActionDeleteTag:           {name: "delete_tag", kind: ChangeTag, permission: PermissionConfigure},
+	ActionRenewNodeBilling:    {name: "renew_node_billing", kind: ChangeNode, permission: PermissionConfigure},
 }
 
 type snapshotQuery struct{ name, sql string }

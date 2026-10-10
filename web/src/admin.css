@@ -377,3 +377,15 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
 .settings-main > :last-child { margin-bottom: 0; }
 .settings-main :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not(.date-segment):not(.file-native), select, textarea) { width: 100%; max-width: 480px; }
 @media (max-width: 900px) { .settings-section { grid-template-columns: minmax(0, 1fr); } }
+
+/* 续费日历（pages/Renewals.tsx）：沿用日期选择器的 .calendar-head / .calendar-grid 结构，格子放大成页面级月历，日号下面
+   是当日到期的节点数；数字的颜色与到期列（.expiry）同一组 data-level。 */
+.renewal-calendar { max-width: 760px; }
+.renewal-calendar .calendar-head { margin-bottom: 8px; }
+.renewal-calendar .calendar-grid button { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; height: 64px; padding-top: 6px; font-size: 13px; }
+.renewal-count { font-size: 12px; color: var(--muted); }
+.renewal-count[data-level="attention"] { color: var(--status-attention); }
+.renewal-count[data-level="critical"] { color: var(--status-offline); }
+.renewal-calendar .calendar-grid button[aria-pressed="true"] .renewal-count { color: inherit; }
+.renewal-day-title { margin: 20px 0 8px; font-size: 15px; }
+@media (max-width: 560px) { .renewal-calendar .calendar-grid button { height: 48px; } }

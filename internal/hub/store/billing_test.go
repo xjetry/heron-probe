@@ -191,6 +191,56 @@ func TestRenewExpiryWritesOnlyOverTheValuesItWasComputedFrom(t *testing.T) {
 	}
 }
 
+// 手动续期与自动续期共用条件写的谓词，但不要求开着自动续期：没开它的节点照样写入；周期或到期日在读到之后被改过时
+// 不写并返回 ErrPrecondition，节点不存在返回 ErrNotFound。只写到期日，其余计费字段原样保留。
+func TestRenewNodeBillingWritesOverTheValuesItWasComputedFromWithoutAutoRenew(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	ctx := t.Context()
+	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
+	set := func(b Billing) {
+		t.Helper()
+		if _, err := s.UpdateNode(ctx, id, NodeEdit{Name: "n", TrafficResetDay: 1, Billing: b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	billing := func() Billing {
+		t.Helper()
+		n, err := s.GetNode(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n.Billing
+	}
+	manual := Billing{Price: "9.90", Currency: "USD", Cycle: CycleMonthly, ExpiresOn: "2026-01-31"}
+	for _, c := range []struct {
+		name string
+		row  Billing
+		from string
+	}{
+		{"stale date", manual, "2026-01-30"},
+		{"cycle changed", Billing{Price: "9.90", Currency: "USD", Cycle: CycleYearly, ExpiresOn: "2026-01-31"}, "2026-01-31"},
+	} {
+		set(c.row)
+		err := s.RenewNodeBilling(ctx, id, CycleMonthly, c.from, "2026-02-28")
+		if !errors.Is(err, ErrPrecondition) || billing() != c.row {
+			t.Fatalf("%s: err=%v billing=%+v, want ErrPrecondition and %+v", c.name, err, billing(), c.row)
+		}
+	}
+	set(manual)
+	if err := s.RenewNodeBilling(ctx, id, CycleMonthly, "2026-01-31", "2026-02-28"); err != nil {
+		t.Fatalf("renew with auto renew off: %v", err)
+	}
+	want := manual
+	want.ExpiresOn = "2026-02-28"
+	if got := billing(); got != want {
+		t.Fatalf("after renew: %+v, want %+v", got, want)
+	}
+	if err := s.RenewNodeBilling(ctx, 999, CycleMonthly, "2026-01-31", "2026-02-28"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown node: %v, want ErrNotFound", err)
+	}
+}
+
 // days_before 只随到期规则落库；改它不改规则身份，状态保留；换成别的种类（同时清掉 days_before，组合合法）时，
 // 列变回 NULL，状态随身份一起清除。
 func TestAlertRuleDaysBeforeBelongsToExpiryRules(t *testing.T) {

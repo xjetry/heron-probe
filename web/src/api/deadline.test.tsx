@@ -21,7 +21,7 @@ const reads = [
 ];
 const others = [
   "ExecuteChange", "StartUpdate", "CancelUpdate", "Login", "BeginPasskeyLogin", "FinishPasskeyLogin", "GetSecurity",
-  "SecurityAction", "Logout", "ListSessions", "RevokeSession", "CreateNode", "UpdateNode", "BatchUpdateNodeTags",
+  "SecurityAction", "Logout", "ListSessions", "RevokeSession", "CreateNode", "UpdateNode", "RenewNodeBilling", "BatchUpdateNodeTags",
   "DeleteNode", "RotateNodeToken", "ReorderNodes", "MoveNodes", "DeleteTag", "OpenRegisterWindow", "CloseRegisterWindow",
   "AdjustTraffic", "SaveProbeTask", "DeleteProbeTask", "ReorderProbeTasks", "SaveAlertRule", "DeleteAlertRule",
   "SaveSilence", "DeleteSilence", "GetAlertDeliveryError", "ListNotifyChannels", "SaveNotifyChannel", "DeleteNotifyChannel",

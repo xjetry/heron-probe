@@ -14,8 +14,9 @@ var ErrNodeLimit = errors.New("probe task limit per node exceeded")
 
 var ErrInUse = errors.New("in use")
 
-// ErrPrecondition 是写事务里的前置条件失败：调用方带来的 expected_config_id 与任务当前身份不一致。
-// 与 ErrNotFound 分开，调用方才能回答 FailedPrecondition 而不是把"配置已变"说成"不存在"。
+// ErrPrecondition 是写事务里的前置条件失败：调用方据以发起写的取值已不是库里的当前值（保存探测任务时带来的
+// expected_config_id 与任务当前身份不一致；手动续期所依据的周期与到期日已被改过）。与 ErrNotFound 分开，调用方才能
+// 回答 FailedPrecondition 而不是把"已变"说成"不存在"。
 var ErrPrecondition = errors.New("precondition failed")
 
 // PreconditionError 携带哪一个前置条件没有满足。Detail 是给调用方的原文。

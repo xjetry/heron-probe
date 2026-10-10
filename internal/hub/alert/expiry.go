@@ -71,8 +71,17 @@ func addMonths(d time.Time, n int) time.Time {
 	return time.Date(first.Year(), first.Month(), min(d.Day(), last), 0, 0, 0, 0, time.UTC)
 }
 
-// renewedExpiry 是自动续期推后的到期日：到期日早于 today 就加一个周期，直到不早于 today。每一步从上一步的结果
-// 推后，钳到月末之后日号停在钳后的值（1 月 31 日按月推后：2 月 28 日、3 月 28 日……），这是 §9.4 接受的漂移。
+// stepExpiry 从 d 起按 months 个月一步步推后，直到不早于 today。每一步从上一步的结果推后，钳到月末之后日号停在
+// 钳后的值（1 月 31 日按月推后：2 月 28 日、3 月 28 日……），这是 §9.4 接受的漂移。自动续期（renewedExpiry）与
+// 手动续期（RenewedExpiry）都只经这里步进，二者的推后规则因此只有一份。
+func stepExpiry(d time.Time, months int, today time.Time) time.Time {
+	for d.Before(today) {
+		d = addMonths(d, months)
+	}
+	return d
+}
+
+// renewedExpiry 是自动续期推后的到期日：到期日早于 today 就按周期步进到不早于 today（stepExpiry）。
 // ok 为假表示不推后：没开自动续期、没有可用的周期、没有到期日或不是合法日期、到期日不早于 today。
 func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 	if !b.AutoRenew {
@@ -86,10 +95,35 @@ func renewedExpiry(b store.Billing, today time.Time) (string, bool) {
 	if err != nil || !d.Before(today) {
 		return "", false
 	}
-	for d.Before(today) {
-		d = addMonths(d, months)
+	return stepExpiry(d, months, today).Format(time.DateOnly), true
+}
+
+// 手动续期（RenewedExpiry）拒绝的两种计费：推后需要周期与到期日，缺哪一项就没有可推后的对象。
+var (
+	ErrRenewNoCycle  = errors.New("node has no billing cycle")
+	ErrRenewNoExpiry = errors.New("node has no expiry date")
+)
+
+// RenewedExpiry 是"已续费"把到期日推后之后的日期（§9.4）。规则与自动续期相同：先推后一个周期，仍早于 today 就继续
+// 步进到不早于 today。自动续期从到期日 d 步进经过的是 addMonths(d)、addMonths(addMonths(d))……，先走的一步就是这
+// 个序列的第一项，所以已过期的节点得到与自动续期同一个日期；未过期的节点第一步之后已不早于 today，恰好推后一个周期。与 renewedExpiry 不同，不要求开着自动续期：手动续期的
+// 主要对象正是没开它的节点。
+//
+// 周期不可用（store.CycleNone，或写入口会拒绝、只可能来自手改的库的表外值）返回 ErrRenewNoCycle；没有到期日返回
+// ErrRenewNoExpiry；到期日不是合法日期返回 ParseDate 的错误。
+func RenewedExpiry(b store.Billing, today time.Time) (string, error) {
+	months, ok := cycleMonths(b.Cycle)
+	if !ok {
+		return "", ErrRenewNoCycle
 	}
-	return d.Format(time.DateOnly), true
+	if b.ExpiresOn == "" {
+		return "", ErrRenewNoExpiry
+	}
+	d, err := ParseDate(b.ExpiresOn)
+	if err != nil {
+		return "", err
+	}
+	return stepExpiry(addMonths(d, months), months, today).Format(time.DateOnly), nil
 }
 
 // nextDayStart 是 now 之后 loc 里下一个日历日开始的时刻。一般就是 time.Date(y, m, d+1, 0, 0, 0, 0, loc)。
