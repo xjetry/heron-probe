@@ -15,7 +15,6 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
   const m = node.metrics;
   const f = node.facts;
   const system = [f?.os, f?.virtualization, f?.arch].filter(Boolean).join(" · ") || "系统未知";
-  const uptime = m?.uptimeS !== undefined ? `运行 ${duration(m.uptimeS)}` : null;
   const price = priceText(node.billing);
   const b = node.billing;
   return (
@@ -27,7 +26,7 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
       </header>
       {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
       {/* 双栈标记放在系统信息行尾而不是标题行：卡片约 260px 宽，标题行再放两个标记会把短名称也截断。 */}
-      <p className="node-card-meta muted">{uptime ? `${system} · ${uptime}` : system}{" "}<AddressFamilies network={f?.network} /></p>
+      <p className="node-card-meta muted">{system}{" "}<AddressFamilies network={f?.network} /></p>
       <div className="node-meters">
         <Meter label="CPU" value={m?.cpuPct} text={m?.cpuPct !== undefined ? percent(m.cpuPct) : undefined} />
         <Meter label="内存" value={m?.memUsed !== undefined && m.memTotal ? ratio(m.memUsed, m.memTotal) : undefined} text={m?.memUsed !== undefined && m.memTotal ? `${bytes(m.memUsed)} / ${bytes(m.memTotal)}` : undefined} />
@@ -43,6 +42,8 @@ export function NodeCard({ node }: { node: PublicNode; now: number }) {
         <dd><span className="num">{price || "–"}</span></dd>
         <dt>到期</dt>
         <dd>{b?.expiresOn ? <Expiry billing={b} /> : "–"}</dd>
+        <dt>运行时长</dt>
+        <dd><span className="num">{m?.uptimeS !== undefined ? duration(m.uptimeS) : "–"}</span></dd>
       </dl>
     </article>
   );

@@ -19,6 +19,7 @@ import { NodeMoveModal } from "../components/NodeMoveModal";
 import { NodeOrderControl } from "../components/NodeOrderControl";
 import { AdminService, type Node, type NodeStatus, type Tag } from "../gen/heron/v1/admin_pb";
 import { priceText } from "../lib/billing";
+import { duration } from "../lib/format";
 import { withId } from "../lib/ids";
 import { POLL_MS } from "../lib/poll";
 import { useSyncedSearchParams } from "../lib/useSyncedSearchParams";
@@ -240,7 +241,7 @@ export function Nodes() {
         : <div className="table-scroll" role="region" aria-label="节点管理" tabIndex={0}>
         <table className="nodes node-management"><thead><tr>
           <th data-column="select"><MixedCheckbox label="选择当前结果全部节点" checked={selectedNodes.length === 0 ? false : selectedNodes.length === list.length ? true : "mixed"} disabled={editing || nodes.stale || list.length === 0} onChange={() => setSelected(selectedNodes.length === list.length ? [] : list.map((node) => node.id))} /></th>
-          <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th data-column="traffic">本周期</th><th data-column="billing">费用</th><th data-column="expiry">到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
+          <th data-column="order"><span className="sr-only">排序</span></th><th data-column="name">节点</th><th data-column="addresses">IPv4 / IPv6</th><th data-column="status">状态</th><th data-column="uptime">运行时长</th><th data-column="traffic">本周期</th><th data-column="billing">费用</th><th data-column="expiry">到期</th><th data-column="actions"><span className="sr-only">操作</span></th>
         </tr></thead>
           <tbody>{list.map((node, index) => {
             const label = withId(node.name, node.id);
@@ -302,6 +303,7 @@ function NodeRow({ node, live, boundAgentVersion, detailState, selection, orderC
     </td>
     <td data-column="addresses" data-label="IPv4 / IPv6"><NodeAddresses network={node.network} reported={node.facts?.network} /></td>
     <td data-column="status" data-label="状态">{status ? <StatusBadge status={status} /> : <span className="muted">状态未知</span>}</td>
+    <td data-column="uptime" data-label="运行时长">{live?.metrics?.uptimeS !== undefined ? <span className="num cell-main">{duration(live.metrics.uptimeS)}</span> : <Missing />}</td>
     <td data-column="traffic" data-label="本周期">{live?.traffic ? <TwoLine main={trafficParts(live.traffic).amount} note={trafficParts(live.traffic).percent} mono /> : <Missing />}</td>
     <td data-column="billing" data-label="费用"><TwoLine main={priceText(node.billing) || "—"} note={node.billing?.autoRenew ? "自动续期" : undefined} /></td>
     <td data-column="expiry" data-label="到期">{node.billing?.expiresOn ? <Expiry billing={node.billing} /> : "—"}</td>

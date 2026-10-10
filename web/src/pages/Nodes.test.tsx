@@ -58,6 +58,21 @@ describe("Nodes", () => {
     expect(amount.closest("td")).toHaveTextContent(/^200 B \/ 1000 B 20\.0%$/);
   });
 
+  it("状态之后是运行时长一列：表头与单元格同名（手机卡片按 data-column 放置、按 data-label 标注），秒数按 duration 写，无读数画「–」", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: two }), getSnapshot: async () => ({ nodes: [{ id: 1n, name: "a", online: true, lastSeenAt: 1n, metrics: { uptimeS: 2n * 86_400n + 3n * 3600n + 59n } }] }) });
+    const a = (await screen.findByText("2d 3h")).closest("td");
+    const headers = screen.getAllByRole("columnheader");
+    const uptime = headers.find((th) => th.textContent === "运行时长");
+    expect(uptime).toHaveAttribute("data-column", "uptime");
+    expect(headers.indexOf(uptime!)).toBe(headers.findIndex((th) => th.textContent === "状态") + 1);
+    expect(a).toHaveAttribute("data-column", "uptime");
+    expect(a).toHaveAttribute("data-label", "运行时长");
+    expect(a).toHaveTextContent(/^2d 3h$/);
+    const b = screen.getByRole("link", { name: "b（#2）" }).closest("tr")!.children[column("运行时长")] as HTMLElement;
+    expect(b).toHaveAttribute("data-column", "uptime");
+    expect(within(b).getByLabelText("无读数")).toHaveTextContent("–");
+  });
+
   it("双栈结果区分地址、不支持、失败与未上报，并在详情显示探测时间", async () => {
     const detected = AddressSource.DETECTED;
     renderNodes({ listNodes: async () => ({ nodes: [

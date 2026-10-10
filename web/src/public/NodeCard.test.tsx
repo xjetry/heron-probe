@@ -15,7 +15,7 @@ async function renderCards(nodes: object[]) {
   fireEvent.click(screen.getByRole("button", { name: "卡片" }));
 }
 
-it("卡片：名称、国家、状态徽章；系统 · 虚拟化 · 架构 · 运行时长；三条进度条；↓↑ 速率；底部两行费用与到期", async () => {
+it("卡片：名称、国家、状态徽章；系统 · 虚拟化 · 架构；三条进度条；↓↑ 速率；底部本周期、费用、到期，运行时长在最后一行", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2031, 0, 1));
   await renderCards([{
@@ -30,7 +30,8 @@ it("卡片：名称、国家、状态徽章；系统 · 虚拟化 · 架构 · �
   expect.soft(card.getByTitle("国家 / 地区 HK")).toBeInTheDocument();
   expect.soft(card.getByText("在线")).toHaveAttribute("data-status", "online");
   expect.soft(card.getByText("联通 4837")).toBeInTheDocument();
-  expect.soft(card.getByText("Debian 13 · kvm · amd64 · 运行 1d 1h")).toBeInTheDocument();
+  expect.soft(card.getByText("Debian 13 · kvm · amd64")).toBeInTheDocument();
+  expect.soft(card.getByText(/Debian 13/).textContent).not.toMatch(/运行|1d 1h/);
   expect.soft(card.getByRole("meter", { name: "CPU 0.0%" })).toHaveAttribute("aria-valuenow", "0");
   expect.soft(card.getByRole("meter", { name: "内存 0 B / 1.0 GiB" })).toHaveAttribute("aria-valuenow", "0");
   expect.soft(card.getByRole("meter", { name: "磁盘 9.0 GiB / 10 GiB" })).toHaveAttribute("data-level", "attention");
@@ -39,9 +40,12 @@ it("卡片：名称、国家、状态徽章；系统 · 虚拟化 · 架构 · �
   expect.soft(card.getByText("费用").nextElementSibling).toHaveTextContent("US$12.50 / 月");
   expect.soft(card.getByText("到期").nextElementSibling).toHaveTextContent("2026-10-01");
   expect.soft(card.getByText("剩 4 天").closest(".expiry")).toHaveAttribute("data-level", "attention");
+  const foot = card.getByText("本周期").closest("dl") as HTMLElement;
+  expect.soft([...foot.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual(["本周期", "费用", "到期", "运行时长"]);
+  expect.soft(foot.lastElementChild).toHaveTextContent(/^1d 1h$/);
 });
 
-it("没填费用与到期时底行写破折号；已过期写已过期天数并标玫红；无读数不画进度条", async () => {
+it("没填费用与到期、没有运行时长读数时底行写破折号；已过期写已过期天数并标玫红；无读数不画进度条", async () => {
   await renderCards([
     { id: 1n, name: "plain", online: true, lastSeenAt: 998n },
     { id: 2n, name: "lapsed", online: true, lastSeenAt: 998n, billing: { expiresOn: "2026-09-24", daysLeft: -3 } },
@@ -49,6 +53,7 @@ it("没填费用与到期时底行写破折号；已过期写已过期天数并�
   const plain = within(screen.getByRole("article", { name: "plain" }));
   expect.soft(plain.getByText("费用").nextElementSibling).toHaveTextContent("–");
   expect.soft(plain.getByText("到期").nextElementSibling).toHaveTextContent("–");
+  expect.soft(plain.getByText("运行时长").nextElementSibling).toHaveTextContent(/^–$/);
   expect.soft(plain.queryAllByRole("meter")).toHaveLength(0);
   expect.soft(plain.getByText("系统未知")).toBeInTheDocument();
   const lapsed = within(screen.getByRole("article", { name: "lapsed" }));
