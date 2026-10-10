@@ -1,10 +1,17 @@
 package deploy
 
 import (
+	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -331,6 +338,10 @@ func TestHubExecStartForms(t *testing.T) {
 			wantErr: "remove --theme-origin from the installed unit before upgrading"},
 		{name: "legacy passkey origin", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --admin-origin https://panel.example.com`,
 			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--admin-origin=https://panel.example.com"`},
+		{name: "offline-after in the installed unit", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db --offline-after 60s`,
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--offline-after=60s"`},
+		{name: "offline-after override", args: []string{"--offline-after", "60s"},
+			want: hubCmd + ` "--db=/var/lib/heron/heron.db" "--listen=127.0.0.1:8080" "--offline-after=60s"`},
 		{name: "positional argument", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /var/lib/heron/heron.db extra`,
 			wantErr: "unexpected positional argument in ExecStart: extra"},
 		{name: "another database", exec: `ExecStart=/usr/local/bin/heron-hub serve --db /srv/other.db`,
@@ -654,16 +665,11 @@ func TestHubUninstallWithoutATerminalNeedsYes(t *testing.T) {
 // 安装器认得的 serve 参数（SERVE_FLAGS 加上固定的 --db）与 cmd/hub/serve.go 定义的 flag 是同一张表的两处写法。
 // serve 加了参数而安装器没加时，装过这个参数的单元升级会在停服前被拒绝；反过来安装器会写出 serve 不认的参数，
 // hub 起不来。usage 也要列出每个可覆盖的参数。
+// serve 侧的表从源码解析：flag 名既可能是字面量，也可能是 cmd/hub 里的字符串常量（serve 用常量拼错误前缀与
+// usage），只认字面量的核对会把常量定义的 flag 当成 serve 没有，安装器漏了它也不会红。解析不出名字就失败，不跳过。
 func TestHubFlagTableAgreesWithServe(t *testing.T) {
 	t.Parallel()
-	src, err := os.ReadFile("../cmd/hub/serve.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var serve []string
-	for _, m := range regexp.MustCompile(`\bfs\.[A-Za-z]+\((?:&[^,]+,\s*)?"([^"]+)"`).FindAllStringSubmatch(string(src), -1) {
-		serve = append(serve, m[1])
-	}
+	serve := serveFlagNames(t)
 	script, err := os.ReadFile("install-hub.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -684,6 +690,144 @@ func TestHubFlagTableAgreesWithServe(t *testing.T) {
 			t.Errorf("usage does not list --%s", f)
 		}
 	}
+}
+
+// flagSetMethods 把 *flag.FlagSet 的每个方法分成定义 flag 的（值是 flag 名所在的参数位置）与不定义的（-1）。
+// 表必须覆盖全部方法：TestFlagSetMethodsClassified 用反射核对，Go 新增方法时这里先登记，serveFlagNames 才不会
+// 把新写法静默跳过。
+var flagSetMethods = map[string]int{
+	"Bool": 0, "BoolFunc": 0, "BoolVar": 1, "Duration": 0, "DurationVar": 1, "Float64": 0, "Float64Var": 1,
+	"Func": 0, "Int": 0, "Int64": 0, "Int64Var": 1, "IntVar": 1, "String": 0, "StringVar": 1, "TextVar": 1,
+	"Uint": 0, "Uint64": 0, "Uint64Var": 1, "UintVar": 1, "Var": 1,
+	"Arg": -1, "Args": -1, "ErrorHandling": -1, "Init": -1, "Lookup": -1, "NArg": -1, "NFlag": -1, "Name": -1,
+	"Output": -1, "Parse": -1, "Parsed": -1, "PrintDefaults": -1, "Set": -1, "SetOutput": -1, "Visit": -1,
+	"VisitAll": -1,
+}
+
+func TestFlagSetMethodsClassified(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeFor[*flag.FlagSet]()
+	var methods []string
+	for i := range typ.NumMethod() {
+		methods = append(methods, typ.Method(i).Name)
+	}
+	known := slices.Sorted(maps.Keys(flagSetMethods))
+	if !slices.Equal(methods, known) {
+		t.Fatalf("*flag.FlagSet has methods %q; flagSetMethods classifies %q", methods, known)
+	}
+}
+
+// serveFlagNames 返回 cmd/hub/serve.go 里在 flag.NewFlagSet 建出的集合上定义的全部 flag 名。名字参数是标识符时按
+// cmd/hub 包（不含测试文件）顶层的字符串常量解析；别的写法（变量、拼接、别处的 FlagSet 方法值）这里认不出，
+// 直接失败，由改 serve.go 的人决定是改回常量还是扩展这里。
+func serveFlagNames(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	files, err := filepath.Glob("../cmd/hub/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	consts := map[string]string{}
+	var serve *ast.File
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Base(name) == "serve.go" {
+			serve = f
+		}
+		for _, d := range f.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range g.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, id := range vs.Names {
+					if i < len(vs.Values) {
+						if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							consts[id.Name], _ = strconv.Unquote(lit.Value)
+						}
+					}
+				}
+			}
+		}
+	}
+	if serve == nil {
+		t.Fatal("cmd/hub/serve.go not found")
+	}
+	sets := map[string]bool{}
+	var names []string
+	ast.Inspect(serve, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if len(n.Lhs) == 1 && len(n.Rhs) == 1 && isCall(n.Rhs[0], "flag", "NewFlagSet") {
+				if id, ok := n.Lhs[0].(*ast.Ident); ok {
+					sets[id.Name] = true
+				}
+			}
+		case *ast.CallExpr:
+			sel, ok := n.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			recv, ok := sel.X.(*ast.Ident)
+			if !ok || !sets[recv.Name] {
+				return true
+			}
+			pos, ok := flagSetMethods[sel.Sel.Name]
+			if !ok {
+				t.Fatalf("%s: unclassified FlagSet method %s", fset.Position(n.Pos()), sel.Sel.Name)
+			}
+			if pos < 0 {
+				return true
+			}
+			if pos >= len(n.Args) {
+				t.Fatalf("%s: %s has no name argument", fset.Position(n.Pos()), sel.Sel.Name)
+			}
+			switch arg := n.Args[pos].(type) {
+			case *ast.BasicLit:
+				if arg.Kind != token.STRING {
+					t.Fatalf("%s: flag name is not a string literal", fset.Position(arg.Pos()))
+				}
+				name, err := strconv.Unquote(arg.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				names = append(names, name)
+			case *ast.Ident:
+				name, ok := consts[arg.Name]
+				if !ok {
+					t.Fatalf("%s: flag name %s is not a string constant of package cmd/hub", fset.Position(arg.Pos()), arg.Name)
+				}
+				names = append(names, name)
+			default:
+				t.Fatalf("%s: flag name is neither a string literal nor a constant", fset.Position(n.Args[pos].Pos()))
+			}
+		}
+		return true
+	})
+	if len(sets) == 0 {
+		t.Fatal("serve.go builds no flag.FlagSet")
+	}
+	return names
+}
+
+func isCall(e ast.Expr, pkg, fn string) bool {
+	c, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == pkg && sel.Sel.Name == fn
 }
 
 // unit_enabled 只看 $WANTS 这条链接，前提是发布包里 heron-hub.service 的 [Install] 恰好只有 WantedBy=<target>，且
