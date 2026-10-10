@@ -1,7 +1,7 @@
 import { type Page } from "@playwright/test";
 import { AdminService, AlertKind, ChannelKind, ProbeMetric, SilenceKind, TokenPermission } from "../src/gen/heron/v1/admin_pb";
 import { ProbeKind } from "../src/gen/heron/v1/types_pb";
-import { expect, login, must, test } from "./fixtures";
+import { expect, login, must, mustField, test } from "./fixtures";
 
 // 管理端表格的单元格一律不折行（styles.css 的 table.nodes td）：长度不受用户约束的内容若不收住，会把整张表撑到几千
 // 像素，后面的列与 ⋯ 要横向滚动才看得到。这里把每类这样的内容都造到最长量级：标识类的值（探测目标、渠道目标）单行
@@ -13,7 +13,7 @@ test("长内容不撑破管理端表格：截断标识、折行句子与列表",
   const nodeIds: bigint[] = [];
   for (let i = 0; i < 60; i++) {
     const name = `${browserName}-wide-${i}`;
-    const id = must(await hub.rpc(AdminService.method.createNode, { name })).node!.id;
+    const id = mustField(await hub.rpc(AdminService.method.createNode, { name }), "node").id;
     hub.deleteNodeAtEnd(id);
     nodeIds.push(id);
     must(await hub.rpc(AdminService.method.updateNode, { id, name, trafficResetDay: 1, offlineGraceS: 0, tags: i < 2 ? tags : [] }));
@@ -23,23 +23,23 @@ test("长内容不撑破管理端表格：截断标识、折行句子与列表",
   for (let i = 0; i < 8; i++) {
     const name = `${browserName}-通知渠道名称用于验证列表折行-${"y".repeat(16)}-${i}`;
     const url = i === 0 ? `https://${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.example.com/hook` : `https://hooks.example.com/${browserName}/${i}`;
-    const id = must(await hub.rpc(AdminService.method.saveNotifyChannel, { channel: { name, kind: ChannelKind.WEBHOOK, webhook: { url, method: "POST" } } })).channel!.id;
+    const id = mustField(await hub.rpc(AdminService.method.saveNotifyChannel, { channel: { name, kind: ChannelKind.WEBHOOK, webhook: { url, method: "POST" } } }), "channel").id;
     hub.deleteAtEnd(AdminService.method.deleteNotifyChannel, { id });
     channelIds.push(id);
   }
   const target = (`https://status.example-monitoring.com/${browserName}/` + "x".repeat(400) + "?region=ap-east-1").slice(0, 500);
   const save = async (task: { kind: ProbeKind; target: string }, scope: { nodeIds: bigint[] } | { selectorTags: string[] }) => {
-    const id = must(await hub.rpc(AdminService.method.saveProbeTask, { task: { intervalS: 60, timeoutMs: 1000, ...task }, ...scope })).task!.task!.id;
+    const id = mustField(await hub.rpc(AdminService.method.saveProbeTask, { task: { intervalS: 60, timeoutMs: 1000, ...task }, ...scope }), "task", "task").id;
     hub.deleteAtEnd(AdminService.method.deleteProbeTask, { id });
     return id;
   };
   const longTask = await save({ kind: ProbeKind.HTTP, target }, { nodeIds: nodeIds.slice(0, 2) });
   await save({ kind: ProbeKind.ICMP, target: "1.1.1.1" }, { selectorTags: tags });
-  const rule = must(await hub.rpc(AdminService.method.saveAlertRule, { rule: { name: `${browserName} 长目标丢包`, kind: AlertKind.PROBE, enabled: true, selectorTags: tags, taskId: longTask, metric: ProbeMetric.LOSS_PCT, threshold: 20, forMinutes: 5, channelIds } })).rule!.id;
+  const rule = mustField(await hub.rpc(AdminService.method.saveAlertRule, { rule: { name: `${browserName} 长目标丢包`, kind: AlertKind.PROBE, enabled: true, selectorTags: tags, taskId: longTask, metric: ProbeMetric.LOSS_PCT, threshold: 20, forMinutes: 5, channelIds } }), "rule").id;
   hub.deleteAtEnd(AdminService.method.deleteAlertRule, { id: rule });
-  const silence = must(await hub.rpc(AdminService.method.saveSilence, { silence: { name: `${browserName} 长作用域静默`, enabled: true, selectorTags: tags, kind: SilenceKind.DAILY, startHhmm: "01:00", endHhmm: "02:00", reason: "原因".repeat(60) } })).silence!.id;
+  const silence = mustField(await hub.rpc(AdminService.method.saveSilence, { silence: { name: `${browserName} 长作用域静默`, enabled: true, selectorTags: tags, kind: SilenceKind.DAILY, startHhmm: "01:00", endHhmm: "02:00", reason: "原因".repeat(60) } }), "silence").id;
   hub.deleteAtEnd(AdminService.method.deleteSilence, { id: silence });
-  const token = must(await hub.rpc(AdminService.method.createApiToken, { name: `${browserName}-wide-token`, grant: { permissions: [TokenPermission.CREATE], allNodes: false, nodeIds } })).apiToken!.id;
+  const token = mustField(await hub.rpc(AdminService.method.createApiToken, { name: `${browserName}-wide-token`, grant: { permissions: [TokenPermission.CREATE], allNodes: false, nodeIds } }), "apiToken").id;
   hub.deleteAtEnd(AdminService.method.deleteApiToken, { id: token });
 
   await page.goto("/admin/login");

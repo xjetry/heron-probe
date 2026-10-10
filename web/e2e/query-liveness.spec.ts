@@ -4,7 +4,7 @@ import type { Request } from "@playwright/test";
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { PublicService } from "../src/gen/heron/v1/public_pb";
 import { ProbeKind } from "../src/gen/heron/v1/types_pb";
-import { expect, login, must, requestMessage, rpc, rpcPath, rpcRoute, test } from "./fixtures";
+import { expect, login, must, mustField, requestMessage, rpc, rpcPath, rpcRoute, test } from "./fixtures";
 import { READ_DEADLINE_MESSAGE } from "../src/api/deadline";
 
 // 三个查询方法的请求消息都带 hub 时钟下的 from、to（Unix 秒）。
@@ -18,13 +18,13 @@ for (const hours of [8, -8]) for (const [service, comparison] of [
   await login(page);
   // 公开端用例的前提是公开页总闸打开；它是 hub 共用设置，不能依赖之前的 spec 留下的状态。
   if (service === "PublicService") must(await rpc(page, AdminService.method.updateSettings, { settings: { publicEnabled: true } }));
-  const node = must(await rpc(page, AdminService.method.createNode, { name: `clock-${browserName}` })).node!;
+  const node = mustField(await rpc(page, AdminService.method.createNode, { name: `clock-${browserName}` }), "node");
   hub.deleteNodeAtEnd(node.id);
   must(await rpc(page, AdminService.method.updateNode, { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 }));
-  const saved = must(await rpc(page, AdminService.method.saveProbeTask, {
+  const saved = await rpc(page, AdminService.method.saveProbeTask, {
     task: { kind: ProbeKind.TCP, target: "127.0.0.1:18987", intervalS: 60, timeoutMs: 1000 }, nodeIds: [node.id],
-  }));
-  const taskId = saved.task!.task!.id;
+  });
+  const taskId = mustField(saved, "task", "task").id;
   hub.deleteAtEnd(AdminService.method.deleteProbeTask, { id: taskId });
   const { now } = must(await rpc(page, AdminService.method.getSnapshot, {}));
   await page.clock.setFixedTime((Number(now) + hours * 3600) * 1000);

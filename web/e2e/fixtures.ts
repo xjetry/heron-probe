@@ -1,5 +1,5 @@
-import { create, createRegistry, fromJsonString, toJsonString, type DescMessage, type DescMethodUnary, type MessageInitShape, type MessageShape } from "@bufbuild/protobuf";
-import { test as base, expect, request, type Page, type Request, type Route } from "@playwright/test";
+import { create, createRegistry, fromJsonString, toJsonString, type DescMessage, type DescMethodUnary, type Message, type MessageInitShape, type MessageShape } from "@bufbuild/protobuf";
+import { test as base, expect, request, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { AdminService, file_heron_v1_admin } from "../src/gen/heron/v1/admin_pb";
 import { file_heron_v1_agent } from "../src/gen/heron/v1/agent_pb";
 import { file_heron_v1_public } from "../src/gen/heron/v1/public_pb";
@@ -16,12 +16,21 @@ const registry = createRegistry(file_heron_v1_admin, file_heron_v1_agent, file_h
 export type ConnectErrorBody = { code: string; message: string };
 
 export type RpcResult<O extends DescMessage> =
-  | { ok: true; message: MessageShape<O> }
+  | { ok: true; method: string; message: MessageShape<O>; text: string }
   | { ok: false; method: string; status: number; error: ConnectErrorBody | undefined; text: string };
 
 export class RpcError extends Error {
   constructor(readonly method: string, readonly status: number, readonly error: ConnectErrorBody | undefined, text: string) {
     super(`${method}: ${status} ${text}`);
+  }
+}
+
+// 应答成功却缺了用例预期必有的子消息（hub 漏填，或线上形状变了）。与非 200 的失败同属 RpcError：都是这次调用没给出
+// 用例要的东西，报告里同样点名方法并附上应答原文，另外点名缺的是哪个字段。
+export class MissingFieldError extends RpcError {
+  constructor(method: string, readonly field: string, text: string) {
+    super(method, 200, undefined, text);
+    this.message = `${method}: 200 response has no ${field}: ${text}`;
   }
 }
 
@@ -44,7 +53,7 @@ type Send = (path: string, body: string, token: string | undefined) => Promise<{
 async function invoke<I extends DescMessage, O extends DescMessage>(send: Send, method: DescMethodUnary<I, O>, init: MessageInitShape<I>, token?: string): Promise<RpcResult<O>> {
   const body = toJsonString(method.input, create(method.input, init), { registry });
   const { status, text } = await send(rpcPath(method), body, token);
-  if (status === 200) return { ok: true, message: fromJsonString(method.output, text, { registry }) };
+  if (status === 200) return { ok: true, method: method.name, message: fromJsonString(method.output, text, { registry }), text };
   return { ok: false, method: method.name, status, error: connectError(text), text };
 }
 
@@ -66,6 +75,32 @@ export function rpc<I extends DescMessage, O extends DescMessage>(page: Page, me
 export function must<O extends DescMessage>(result: RpcResult<O>): MessageShape<O> {
   if (result.ok) return result.message;
   throw new RpcError(result.method, result.status, result.error, result.text);
+}
+
+// M 里取值为子消息的字段名。proto3 的子消息字段在生成的类型里都是可选的：线上缺席就是 undefined，类型系统替用例
+// 担保不了"必有"。标量、repeated、map、oneof 都不是子消息，不在其中。
+type SubMessageKey<M> = { [K in keyof M & string]-?: undefined extends M[K] ? (NonNullable<M[K]> extends Message ? K : never) : never }[keyof M & string];
+
+// 取成功应答里用例预期必有的子消息（给两个字段名时取子消息的子消息，如 SaveProbeTask 的 task.task）。返回类型去掉了
+// undefined，调用处不需要 `!`；缺席时抛出 MissingFieldError，点名方法与字段，而不是在下游以 TypeError 失败。
+export function mustField<O extends DescMessage, K extends SubMessageKey<MessageShape<O>>>(result: RpcResult<O>, key: K): NonNullable<MessageShape<O>[K]>;
+export function mustField<O extends DescMessage, K extends SubMessageKey<MessageShape<O>>, K2 extends SubMessageKey<NonNullable<MessageShape<O>[K]>>>(result: RpcResult<O>, key: K, key2: K2): NonNullable<NonNullable<MessageShape<O>[K]>[K2]>;
+export function mustField(result: RpcResult<DescMessage>, ...path: string[]): Message {
+  let value: Message = must(result);
+  for (const [depth, key] of path.entries()) {
+    const next = (value as Record<string, unknown>)[key];
+    if (next === undefined) throw new MissingFieldError(result.method, path.slice(0, depth + 1).join("."), result.text);
+    value = next as Message;
+  }
+  return value;
+}
+
+// 元素的包围盒；元素不存在或不可见时 Playwright 给 null，这里抛错点名定位器，而不是在下游读 null 的坐标。
+// page.evaluate 里的代码跑在浏览器里，引用不到这里的工具，那里的 DOM 与几何值各自判空。
+export async function boxOf(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = await locator.boundingBox();
+  if (box === null) throw new Error(`${locator.toString()} has no bounding box: not attached or not visible`);
+  return box;
 }
 
 // 以页面的 cookie 会话登录管理端。

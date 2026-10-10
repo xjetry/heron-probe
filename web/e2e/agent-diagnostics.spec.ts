@@ -3,15 +3,15 @@ import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { AgentService } from "../src/gen/heron/v1/agent_pb";
 import { PublicService, PublicSnapshotSchema } from "../src/gen/heron/v1/public_pb";
 import { CollectionComponent } from "../src/gen/heron/v1/types_pb";
-import { expect, login, must, rpc, test } from "./fixtures";
+import { expect, login, must, mustField, rpc, test } from "./fixtures";
 
 test("采集诊断从真实上报进入管理详情且不进入公开页", async ({ page, browserName, hub }, testInfo) => {
   await page.goto("/admin/login");
   await login(page);
-  const created = must(await rpc(page, AdminService.method.createNode, { name: `agent-health-${browserName}` }));
-  const node = created.node!;
+  const created = await rpc(page, AdminService.method.createNode, { name: `agent-health-${browserName}` });
+  const node = mustField(created, "node");
   hub.deleteNodeAtEnd(node.id);
-  const { token } = must(await rpc(page, AgentService.method.register, { key: created.token }));
+  const { token } = must(await rpc(page, AgentService.method.register, { key: must(created).token }));
   must(await rpc(page, AdminService.method.updateNode, { id: node.id, name: node.name, public: true, trafficResetDay: 1, offlineGraceS: 0 }));
   await page.goto(`/admin/nodes/${node.id}`);
   await page.getByRole("tab", { name: "Agent 诊断", exact: true }).click();

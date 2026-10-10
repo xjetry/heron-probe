@@ -1,5 +1,5 @@
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
-import { expect, login, must, rpc, test } from "./fixtures";
+import { boxOf, expect, login, must, mustField, rpc, test } from "./fixtures";
 
 test('公开页地区多选与家宽标签交集，标签匹配方式，未知和手机布局', async ({ page, browserName, hub }, testInfo) => {
   const ids: bigint[] = [];
@@ -12,7 +12,7 @@ test('公开页地区多选与家宽标签交集，标签匹配方式，未知�
   ];
   for (const [label, countryPin, tag] of fixtures) {
     const name = `${label}-${browserName}`;
-    const id = must(await rpc(page, AdminService.method.createNode, { name })).node!.id;
+    const id = mustField(await rpc(page, AdminService.method.createNode, { name }), 'node').id;
     ids.push(id);
     hub.deleteNodeAtEnd(id);
     must(await rpc(page, AdminService.method.updateNode, { id, name, public: true, countryPin, tags: [tag], trafficResetDay: 1, offlineGraceS: 0 }));
@@ -51,8 +51,8 @@ test('公开页地区多选与家宽标签交集，标签匹配方式，未知�
   await page.setViewportSize({ width: 1440, height: 960 });
   // 面板在 DOM 里紧跟标签入口，视觉上却排在筛选行全部控件之后、独占一行（CSS order）。
   const below = async (name: RegExp) => {
-    const [panel, control] = [await tags.boundingBox(), await page.getByRole('button', { name }).boundingBox()];
-    expect(panel!.y).toBeGreaterThanOrEqual(control!.y + control!.height);
+    const [panel, control] = [await boxOf(tags), await boxOf(page.getByRole('button', { name }))];
+    expect(panel.y).toBeGreaterThanOrEqual(control.y + control.height);
   };
   await below(/^只看在线$/);
   await below(/^着色依据 /);
