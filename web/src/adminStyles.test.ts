@@ -19,3 +19,12 @@ it("筛选行样式只在 styles.css", () => {
   expect(shared).toMatch(/^\.filter-row \{/m);
   expect(publicCss).not.toMatch(/\.filter-row/);
 });
+
+// 地区 / 标签入口（components/Facet.tsx）由公开页总览与管理端节点页共用：样式只在两端都加载的 styles.css，任一端另写一份
+// 都会让两端的面板与胶囊各走各的。
+it("地区 / 标签入口的样式只在 styles.css", () => {
+  expect(shared).toMatch(/^\.facet-panel \{/m);
+  expect(shared).toMatch(/^\.facet-chip \{/m);
+  expect(publicCss).not.toMatch(/\.facet-/);
+  expect(admin).not.toMatch(/\.facet-/);
+});

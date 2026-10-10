@@ -18,24 +18,6 @@
 .segments > [data-status="offline"] { background: var(--status-offline); }
 .summary-rates, .summary-period { color: var(--muted); white-space: nowrap; }
 
-/* 地区与标签筛选（Facet.tsx）：筛选行上是入口按钮，外观沿用共享的自绘下拉触发按钮（.select-trigger），有选择时描强调色；
-   展开的面板在 DOM 里紧跟入口，由 order 排到筛选行最后、独占一行，选项平铺成胶囊。选中的胶囊与「只看在线」同一种强调色
-   描边，单选 / 多选与匹配方式用共享的分段控件，与选项区分开。 */
-.facet-trigger[data-active] { border-color: var(--accent); }
-.facet-trigger[data-active] .select-value { color: var(--accent); }
-.facet-panel { order: 1; flex: 1 0 100%; display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
-.facet-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.facet-panel .segmented { margin-bottom: 0; }
-.facet-hint { margin: 0; color: var(--muted); font-size: 12px; }
-.facet-options { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.facet-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; min-height: 0; max-width: 16rem; padding: 0 12px; border-radius: 999px; font-size: 13px; }
-.facet-chip:hover { border-color: var(--line-strong); }
-.facet-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.facet-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.facet-chip .num { color: var(--muted); font-size: 12px; }
-.facet-box { display: inline-grid; place-items: center; flex: none; width: 14px; height: 14px; border: 1px solid var(--line-strong); border-radius: 3px; }
-.facet-chip[aria-pressed="true"] .facet-box { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
-
 /* 卡片视图（NodeCard.tsx）：宽屏五列，1px 边框分层，不用阴影与渐变（设计 §2、§3.1）。 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, (100% - 40px) / 5)), 1fr)); gap: 10px; }
 .node-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); font-size: 13px; }

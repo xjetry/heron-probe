@@ -2,15 +2,16 @@ import { useQuery } from "@connectrpc/connect-query";
 import { useState } from "react";
 import { errorBanner, queryGate } from "../api/queryGate";
 import { PublicService } from "../gen/heron/v1/public_pb";
+import { regionOptions, tagOptions, useFacetModes } from "../lib/facets";
 import { POLL_MS } from "../lib/poll";
 import { sameTag, type TagMatch } from "../lib/tags";
 import { FilterRow } from "./FilterRow";
-import { filterPublicNodes, NO_FILTERS, regionOptions, sortNodes, tagOptions, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
+import { filterPublicNodes, NO_FILTERS, sortNodes, type NodeSort, type ColorBy, type GroupBy, type PublicFilters } from "./filters";
 import { StatusSummary } from "./StatusSummary";
 import { CardGrid } from "./NodeCard";
 import { NodeList } from "./NodeList";
 import { StatusWall } from "./StatusWall";
-import { readFacetMode, readPublicView, readTagMatch, readWallGroupBy, writeFacetMode, writePublicView, writeTagMatch, writeWallGroupBy, type Facet, type FacetMode, type View } from "./prefs";
+import { PUBLIC_FACET_MODE_KEYS, readPublicView, readTagMatch, readWallGroupBy, writePublicView, writeTagMatch, writeWallGroupBy, type View } from "./prefs";
 
 export function PublicOverview() {
   const snap = useQuery(PublicService.method.getSnapshot, {}, { refetchInterval: POLL_MS });
@@ -20,8 +21,7 @@ export function PublicOverview() {
   const chooseView = (next: View) => { setView(next); writePublicView(next); };
   const [groupBy, setGroupBy] = useState<GroupBy>(readWallGroupBy);
   const chooseGroupBy = (next: GroupBy) => { setGroupBy(next); writeWallGroupBy(next); };
-  const [modes, setModes] = useState<Record<Facet, FacetMode>>(() => ({ region: readFacetMode("region"), tag: readFacetMode("tag") }));
-  const chooseMode = (facet: Facet, mode: FacetMode) => { setModes((current) => ({ ...current, [facet]: mode })); writeFacetMode(facet, mode); };
+  const [modes, chooseMode] = useFacetModes(PUBLIC_FACET_MODE_KEYS);
   const [colorBy, setColorBy] = useState<ColorBy>("status");
   const [sort, setSort] = useState<NodeSort>("default");
   const [selectedId, setSelectedId] = useState<bigint | null>(null);

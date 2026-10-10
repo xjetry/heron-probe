@@ -5,7 +5,7 @@ import { PublicService, PublicSnapshotSchema } from "../gen/heron/v1/public_pb";
 import { POLL_MS } from "../lib/poll";
 import { renderWithService } from "../test/harness";
 import { PublicOverview } from "./Overview";
-import { FACET_SEARCH_AT } from "./Facet";
+import { FACET_SEARCH_AT } from "../components/Facet";
 import { PUBLIC_FACET_MODE_KEYS, PUBLIC_TAG_MATCH_KEY, PUBLIC_VIEW_KEY, PUBLIC_WALL_GROUP_KEY } from "./prefs";
 import { chooseOption, querySelectTrigger, selectTrigger } from "../test/select";
 

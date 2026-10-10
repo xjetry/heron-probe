@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { expect, it } from "vitest";
 import { PublicNodeSchema, type PublicNode } from "../gen/heron/v1/public_pb";
-import { NODE_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, regionName, regionOptions, sortNodes, summarize, tagOptions, tileLevel, type NodeSort, type ColorBy, type PublicFilters } from "./filters";
+import { NODE_SORTS, COLOR_BYS, filterPublicNodes, groupByRegion, groupByTag, matchesSearch, NO_FILTERS, sortNodes, summarize, tileLevel, type NodeSort, type ColorBy, type PublicFilters } from "./filters";
 
 const node = (init: Parameters<typeof create<typeof PublicNodeSchema>>[1]): PublicNode => create(PublicNodeSchema, init);
 const nodes = [
@@ -62,28 +62,6 @@ it.each<[PublicNode, ColorBy, string | undefined]>([
   [nodes[0], "expiry", "neutral"],
 ])("着色依据 %o / %s：无使用量读数不给档位，无到期日为中性", (n, by, expected) => {
   expect(tileLevel(n, by)).toBe(expected);
-});
-
-it.each([
-  ["JP", "日本"], ["HK", "香港"], ["", "未知"], ["ZZ", "未知地区"], ["XX", "XX"], ["invalid", "invalid"],
-])("地区中文短名 %s，空代码未知、无名称或无效代码回退", (code, expected) => {
-  expect(regionName(code)).toBe(expected);
-});
-
-it("标签选项按 hub 给的顺序，计数按折叠比较，带上没有节点的标签", () => {
-  expect(tagOptions(nodes, ["db", "prod", "gone"])).toEqual([
-    { value: "db", label: "db", count: 1 },
-    { value: "prod", label: "prod", count: 2 },
-    { value: "gone", label: "gone", count: 0 },
-  ]);
-});
-
-it("地区选项按代码排序，未知最后，带国旗与计数", () => {
-  expect(regionOptions(nodes)).toEqual([
-    { value: "HK", label: "香港", count: 2 },
-    { value: "JP", label: "日本", count: 2 },
-    { value: "", label: "未知", count: 1 },
-  ]);
 });
 
 it("地区分组按四态算在线数，在线数与总数相同按代码排序", () => {
