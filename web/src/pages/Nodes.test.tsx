@@ -1377,6 +1377,8 @@ describe("Nodes", () => {
       fireEvent.click(tagChip("web"));
       fireEvent.click(screen.getByRole("checkbox", { name: "选择当前结果全部节点" }));
       expect(screen.getByText("已选择 2 个节点")).toBeInTheDocument();
+      // 表头勾选框按当前结果判全选：两个都选上就是勾满，不是半选。
+      expect(screen.getByRole("checkbox", { name: "选择当前结果全部节点" })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: "选择 beta（#2）" })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: "选择 gamma（#3）" })).toBeChecked();
     });
@@ -1444,6 +1446,13 @@ describe("筛选由 URL 持有", () => {
     expect(search(router).getAll("tag")).toEqual([]);
     fireEvent.click(tagChip("db"));
     await waitFor(() => expect(search(router).getAll("tag")).toEqual(["db"]));
+    // 无标签与标签互斥：选无标签把 tag 从 URL 里去掉，再选标签把 untagged 去掉。
+    fireEvent.click(untaggedChip());
+    await waitFor(() => expect(search(router).get("untagged")).toBe("1"));
+    expect(search(router).getAll("tag")).toEqual([]);
+    fireEvent.click(tagChip("db"));
+    await waitFor(() => expect(search(router).getAll("tag")).toEqual(["db"]));
+    expect(search(router).get("untagged")).toBeNull();
     chooseFacetMode("标签", "多选");
     chooseTagMatch("满足任一");
     await waitFor(() => expect(search(router).get("match")).toBe("any"));
