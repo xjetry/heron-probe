@@ -94,6 +94,7 @@
 .admin-shell table.node-management th[data-column="name"] { width: 24%; }
 .admin-shell table.node-management th[data-column="addresses"] { width: 20%; }
 .admin-shell table.node-management th[data-column="status"] { width: 85px; }
+.admin-shell table.node-management th[data-column="uptime"] { width: 88px; }
 .node-order-control { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .admin-shell .node-order-control .order-handle { width: 52px; height: 30px; min-height: 30px; cursor: grab; }
 .admin-shell .node-order-control .order-handle:active { cursor: grabbing; }
@@ -285,7 +286,7 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .node-secondary { mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 }
 @media (max-width: 900px) {
-  /* 手机卡片（设计 §4.7）：首行勾选、名称块、⋯ 顶对齐，下面依次是状态、本周期与费用、到期，都缩进到名称下方；地址与排序藏起来。
+  /* 手机卡片（设计 §4.7）：首行勾选、名称块、⋯ 顶对齐，下面依次是状态与运行时长、本周期与费用、到期，都缩进到名称下方；地址与排序藏起来。
      按 data-column 指名放进网格区域并整体顶对齐：名称块有几行（标签、备注）都不会把勾选框与 ⋯ 推到卡片中部。 */
   .admin-shell .table-scroll:has(.node-management) { border: 0; background: none; overflow: visible; }
   .admin-shell table.node-management, .node-management tbody { display: block; min-width: 0; background: none; border: 0; }
@@ -293,7 +294,7 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .node-management thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .node-management tr {
     display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 8px 10px; align-items: start;
-    grid-template-areas: "select name name actions" ". status status ." ". traffic billing ." ". expiry expiry .";
+    grid-template-areas: "select name name actions" ". status uptime ." ". traffic billing ." ". expiry expiry .";
     margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card);
   }
   .admin-shell table.node-management td { height: auto; padding: 0; border: 0; }
@@ -301,7 +302,8 @@ table.events-table td:is([data-label="变化"], [data-label="投递"]) { white-s
   .node-management td[data-column="name"] { grid-area: name; }
   .node-management td[data-column="actions"] { grid-area: actions; }
   .node-management td[data-column="status"] { grid-area: status; }
-  .node-management td[data-column="traffic"], .node-management td[data-column="billing"], .node-management td[data-column="expiry"] { font-size: 12px; }
+  .node-management td[data-column="uptime"], .node-management td[data-column="traffic"], .node-management td[data-column="billing"], .node-management td[data-column="expiry"] { font-size: 12px; }
+  .node-management td[data-column="uptime"] { grid-area: uptime; }
   .node-management td[data-column="traffic"] { grid-area: traffic; }
   .node-management td[data-column="billing"] { grid-area: billing; }
   .node-management td[data-column="expiry"] { grid-area: expiry; }
