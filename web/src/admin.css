@@ -45,6 +45,8 @@
 .admin-main > section { animation: admin-enter .25s ease-out; }
 .admin-shell p { overflow-wrap: anywhere; }
 .update-progress { display: grid; gap: 5px; max-width: 460px; overflow-wrap: anywhere; }
+/* 提交结果列表固定高度、内部滚动：几十个目标的结果留在弹窗里，不把页面往下顶。 */
+.update-results { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; max-height: min(50vh, 420px); overflow-y: auto; overflow-wrap: anywhere; }
 .update-reason-raw { display: block; margin-top: 2px; font-size: 11px; }
 .admin-shell .card, .admin-shell fieldset:not(.bare):not(.picks) { padding: 16px; margin: 0 0 16px; }
 .admin-shell .card { border-radius: var(--radius-card); }
