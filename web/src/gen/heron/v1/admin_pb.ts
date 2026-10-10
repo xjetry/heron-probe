@@ -2311,7 +2311,7 @@ export type AlertRule = Message<"heron.v1.AlertRule"> & {
   upperDeviationPct: number;
 
   /**
-   * 下偏差百分比，(0, 100)。
+   * 下偏差百分比，(0, 100]。取 100 即正常带下界为 0 ms，正的 rtt 均值不会落到带下，等于只按上偏差判定。
    *
    * @generated from field: double lower_deviation_pct = 22;
    */

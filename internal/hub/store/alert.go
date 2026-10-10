@@ -55,6 +55,8 @@ const (
 const (
 	MaxBaselineWindowS   = 30 * 24 * 3600
 	MaxUpperDeviationPct = 1000
+	// 下偏差取到 100 即下界为 0 ms：正的分钟均值不可能落到带下，等于只按上偏差判定（alert.rttBand）。
+	MaxLowerDeviationPct = 100
 	MinCooldownS         = 60
 	MaxCooldownS         = 7 * 24 * 3600
 	MaxFixedBaselineMs   = 60000
@@ -475,8 +477,8 @@ func checkRttFields(r AlertRule) error {
 	if !(0 < r.UpperDeviationPct && r.UpperDeviationPct <= MaxUpperDeviationPct) {
 		return KindFieldError{"upper_deviation_pct", fmt.Sprintf("must be greater than 0 and at most %d", MaxUpperDeviationPct)}
 	}
-	if !(0 < r.LowerDeviationPct && r.LowerDeviationPct < 100) {
-		return KindFieldError{"lower_deviation_pct", "must be greater than 0 and less than 100"}
+	if !(0 < r.LowerDeviationPct && r.LowerDeviationPct <= MaxLowerDeviationPct) {
+		return KindFieldError{"lower_deviation_pct", fmt.Sprintf("must be greater than 0 and at most %d", MaxLowerDeviationPct)}
 	}
 	if r.CooldownS < MinCooldownS || r.CooldownS > MaxCooldownS {
 		return KindFieldError{"cooldown_s", fmt.Sprintf("must be between %d and %d", MinCooldownS, MaxCooldownS)}

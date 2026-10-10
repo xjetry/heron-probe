@@ -37,7 +37,8 @@ func relativeBand(r store.AlertRule, b store.Baselines, nodeID int64) (rttBand, 
 	return rttBand{baselineMs: base, lo: base * (1 - r.LowerDeviationPct/100), hi: base * (1 + r.UpperDeviationPct/100)}, true
 }
 
-// exceeds 报告分钟均值是否越出正常带。两端都含等号，沿用固定阈值"触发含阈值等号"的惯例（§9.1）。
+// exceeds 报告分钟均值是否越出正常带。两端都含等号，沿用固定阈值"触发含阈值等号"的惯例（§9.1）。下偏差取 100%
+// 时 lo 为 0：均值是 RttSumUs/RttN 且 RttN > 0，对公网目标恒为正，带下的那一侧因此不可达，规则只按上偏差判定。
 func (b rttBand) exceeds(ms float64) bool { return ms >= b.hi || ms <= b.lo }
 
 // summary 是相对判定的事件文案：实测均值、基线与偏差百分比，以及正常带。触发与恢复共用：恢复时同一组数说明它回到了带内。

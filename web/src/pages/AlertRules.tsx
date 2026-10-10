@@ -294,7 +294,7 @@ function AlertRuleDrawer({ title, submitLabel, nodes, channels, tasks, initial, 
 }
 
 // 相对判定的字段与取值提示，范围与 hub 的 store.checkRttFields 一致（RELATIVE_LIMITS）。基线窗口不得短于判定窗口
-// （连续分钟），输入的下限随它变；下偏差必须小于 100%，用 max 减一个最小步长挡不住小数，交给 hub 拒绝并显示原文。
+// （连续分钟），输入的下限随它变。
 function RelativeFields({ draft, set }: { draft: Draft; set: (patch: Partial<Draft>) => void }) {
   const adaptive = draft.baselineMode === BaselineMode.ADAPTIVE;
   return (
@@ -317,7 +317,7 @@ function RelativeFields({ draft, set }: { draft: Draft; set: (patch: Partial<Dra
         {adaptive
           ? "自适应基线取基线窗口内（不含判定窗口）各个 5 分钟桶的 RTT 均值的中位数，hub 每小时重算一次；桶数少于最少桶数时既不触发也不恢复。任务的类型或目标改了，基线从改动时起重新累积。"
           : "固定基线直接作为基线，与阈值无关。"}
-        上偏差大于 0、不超过 {RELATIVE_LIMITS.upperMax}%，下偏差大于 0、小于 100%，冷却 1 分钟到 7 天：触发之后冷却期内不再触发，恢复照常通知。</p>
+        上偏差大于 0、不超过 {RELATIVE_LIMITS.upperMax}%，下偏差大于 0、不超过 {RELATIVE_LIMITS.lowerMax}%（取 {RELATIVE_LIMITS.lowerMax}% 即只看上偏差），冷却 1 分钟到 7 天：触发之后冷却期内不再触发，恢复照常通知。</p>
     </>
   );
 }

@@ -971,7 +971,7 @@ message AlertRule {
   uint32 baseline_min_samples = 20;
   // 上偏差百分比，(0, 1000]。
   double upper_deviation_pct = 21;
-  // 下偏差百分比，(0, 100)。
+  // 下偏差百分比，(0, 100]。取 100 即正常带下界为 0 ms，正的 rtt 均值不会落到带下，等于只按上偏差判定。
   double lower_deviation_pct = 22;
   // 进入 firing 之后这么多秒内不再产生新的 firing 转换（恢复照常），[60, 604800]。
   uint32 cooldown_s = 23;

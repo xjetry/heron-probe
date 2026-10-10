@@ -5398,7 +5398,7 @@ type AlertRule struct {
 	BaselineMinSamples uint32 `protobuf:"varint,20,opt,name=baseline_min_samples,json=baselineMinSamples,proto3" json:"baseline_min_samples,omitempty"`
 	// 上偏差百分比，(0, 1000]。
 	UpperDeviationPct float64 `protobuf:"fixed64,21,opt,name=upper_deviation_pct,json=upperDeviationPct,proto3" json:"upper_deviation_pct,omitempty"`
-	// 下偏差百分比，(0, 100)。
+	// 下偏差百分比，(0, 100]。取 100 即正常带下界为 0 ms，正的 rtt 均值不会落到带下，等于只按上偏差判定。
 	LowerDeviationPct float64 `protobuf:"fixed64,22,opt,name=lower_deviation_pct,json=lowerDeviationPct,proto3" json:"lower_deviation_pct,omitempty"`
 	// 进入 firing 之后这么多秒内不再产生新的 firing 转换（恢复照常），[60, 604800]。
 	CooldownS uint32 `protobuf:"varint,23,opt,name=cooldown_s,json=cooldownS,proto3" json:"cooldown_s,omitempty"`

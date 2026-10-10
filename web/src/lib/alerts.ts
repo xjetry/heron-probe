@@ -99,7 +99,8 @@ export const BASELINE_MODES: readonly Entry<BaselineMode>[] = [
 ];
 
 // 相对判定字段的取值界，与 hub 的 store.checkRttFields 同值（proto AlertRule 注释）：基线窗口与冷却在表单里以分钟输入，
-// 上偏差 (0, 1000]、下偏差 (0, 100)、固定基线 (0, 60000] ms、冷却 [1, 10080] 分钟、窗口不超过 30 天。
+// 上偏差 (0, 1000]、下偏差 (0, 100]（100 即下界为 0 ms，只按上偏差判定）、固定基线 (0, 60000] ms、冷却 [1, 10080] 分钟、
+// 窗口不超过 30 天。
 export const RELATIVE_LIMITS = { upperMax: 1000, lowerMax: 100, fixedMax: 60000, cooldownMinMinutes: 1, cooldownMaxMinutes: 7 * 24 * 60, windowMaxMinutes: 30 * 24 * 60 } as const;
 
 // 秒数按分钟写：整小时写小时，其余写分钟，摘要里不出现 86400 秒这种读不出量级的数。
