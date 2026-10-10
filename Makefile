@@ -46,9 +46,13 @@ web-install:
 gen: web-install
 	buf generate
 
+# buf breaking 对照的分支：本地默认是本仓库的 main（任务分支在工作树里跑 lint 就能发现破坏兼容的 proto 改动）；
+# CI 的 pull_request 检出没有本地 main，由 ci.yml 传 origin/main。在 main 自身上跑是与自己比较，恒通过。
+BUF_AGAINST_BRANCH ?= main
 lint:
 	go mod tidy -diff
 	buf lint
+	buf breaking --against ".git#branch=$(BUF_AGAINST_BRANCH)"
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
 	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/heron-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/release-assets-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	shellcheck -s sh scripts/compat-download.sh scripts/compat-e2e.sh scripts/compat-download-test.sh
