@@ -423,7 +423,7 @@ describe("ProbeTasks", () => {
     await screen.findByText("1.1.1.1:443");
     await openRowAction("1.1.1.1:443（#3）", "删除");
     expect(remove).not.toHaveBeenCalled();
-    expect(screen.getByText("历史保留至到期清理")).toBeInTheDocument();
+    expect(screen.getByText("历史随后由维护任务分块清除")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("menuitem", { name: "确认删除 1.1.1.1:443（#3）" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
     expect(remove.mock.calls[0][0]).toMatchObject({ id: 3n });

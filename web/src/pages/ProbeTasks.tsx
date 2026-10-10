@@ -119,7 +119,7 @@ export function ProbeTasks() {
                 // 导航项不随保存禁用：保存只发生在抽屉里，抽屉打开时整页已 inert，行菜单本就不可达。
                 { label: "对比", to: `/probes/${t.id}/compare` },
                 ...(isHTTPSTarget(t.kind, t.target) ? [{ label: "证书", to: `/probes/${t.id}/certs` }] : []),
-                { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "历史保留至到期清理", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: t.id }) },
+                { label: "删除", danger: true, confirm: `确认删除 ${label}`, note: "历史随后由维护任务分块清除", disabled: busy || remove.isPending, onSelect: () => remove.mutate({ id: t.id }) },
               ]} /></td>
             </tr>;
           })}</tbody>
