@@ -13,6 +13,7 @@ import { ago, bytes, duration, percent } from "../lib/format";
 import { toAligned } from "../lib/series";
 import { nodeStatus } from "../lib/status";
 import { trafficDetail, trafficText } from "../lib/traffic";
+import { hasHostFacts } from "./facts";
 
 const HOUR_S = 3600;
 // 请求最多 60 点；边界对齐 hub 时钟的整分钟，使同一分钟内的快照共用查询键。
@@ -59,7 +60,7 @@ export function DetailPanel({ node, now }: { node: PublicNode; now: number }) {
       {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
       {node.tags.length > 0 && <ul className="tag-chips">{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
       <dl className="detail-list">
-        {f && <Row label="系统">{[f.os, f.virtualization, f.arch].filter(Boolean).join(" · ") || <Missing />}</Row>}
+        {hasHostFacts(f) && <Row label="系统">{[f.os, f.virtualization, f.arch].filter(Boolean).join(" · ") || <Missing />}</Row>}
         {f && f.cpuModel && <Row label="CPU">{f.cpuModel} × {f.cpuCores}</Row>}
         <Row label="运行时长">{m?.uptimeS !== undefined ? `运行 ${duration(m.uptimeS)}` : <Missing />}</Row>
         <Row label="CPU 使用">{m?.cpuPct !== undefined ? <Meter value={m.cpuPct} label="CPU" text={percent(m.cpuPct)} /> : <Missing />}</Row>

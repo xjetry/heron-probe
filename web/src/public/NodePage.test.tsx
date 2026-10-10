@@ -7,6 +7,7 @@ import { QueryProbesResponseSchema } from "../gen/heron/v1/query_pb";
 import { ProbeKind } from "../gen/heron/v1/types_pb";
 import { rangeHeader, renderWithService } from "../test/harness";
 import { NodePage } from "./NodePage";
+import { AddressDetectionState } from "../gen/heron/v1/types_pb";
 
 vi.mock("../components/Chart", () => ({
   Chart: ({ labels }: { labels: string[] }) => <div data-testid="chart">{labels.map((l) => <span key={l}>{l}</span>)}</div>,
@@ -65,6 +66,8 @@ it("系统信息行：主机信息缺失时整行不画，缺的单项不写", a
   const nodes = [
     { id: 7n, name: "edge-1", online: true, facts: { os: "Alpine 3.21", arch: "arm64" } },
     { id: 9n, name: "bare", online: false, billing: { price: "3", currency: "USD", expiresOn: "2030-01-01", daysLeft: 20 } },
+    // 从未上报但手填了 IPv4 的节点：facts 只带 network，系统信息行不画，双栈标记照画。
+    { id: 11n, name: "pinned", online: false, facts: { network: { ipv4: { state: AddressDetectionState.AVAILABLE } } } },
   ];
   const getSnapshot = async () => ({ now: 1_000n, nodes });
   const queryMetrics = async () => ({ level: "1m", stepS: 60, ts: [], series: [] });
@@ -80,6 +83,10 @@ it("系统信息行：主机信息缺失时整行不画，缺的单项不写", a
   cleanup();
   await show(9);
   expect(document.querySelector("dl.facts-inline")).toBeNull();
+  cleanup();
+  await show(11);
+  expect(document.querySelector("dl.facts-inline")).toBeNull();
+  expect(screen.getByRole("group", { name: "公网出口" })).toHaveTextContent("IPv4");
 });
 
 it("窗口每分钟前进后请求失败，图表与级别仍在并带横幅，不误报“非当前窗口”", async () => {

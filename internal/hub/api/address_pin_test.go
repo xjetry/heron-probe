@@ -132,3 +132,50 @@ func TestUpdateNodeValidatesAddressPins(t *testing.T) {
 		}
 	}
 }
+
+// 从未上报 facts 的节点：没有手填时公开快照不带 facts（与其余主机信息一致）；手填之后公开那一族的状态为 AVAILABLE，
+// PublicFacts 只有 network，地址不出现；管理端显示值为 MANUAL。标记跟着显示值走，不跟着 agent 有没有上报过。
+func TestNeverReportedNodePublishesPinnedFamily(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "")
+	h.login(t)
+	id, _ := h.createNode(t, "n")
+	h.setPublic(t, id, "n", true)
+	publicNode := func(stage string) *heronv1.PublicNode {
+		t.Helper()
+		h.clk.Advance(snapshotTTL)
+		snap := pubGet(t, h, "GetSnapshot", jsonQuery("{}"), nil)
+		var out heronv1.PublicSnapshot
+		if err := protojson.Unmarshal(snap.body, &out); err != nil || len(out.GetNodes()) != 1 {
+			t.Fatalf("%s: public snapshot %s: %v", stage, snap.body, err)
+		}
+		if strings.Contains(string(snap.body), "8.8.8.8") {
+			t.Fatalf("%s: public snapshot leaks the pinned address: %s", stage, snap.body)
+		}
+		return out.GetNodes()[0]
+	}
+	if pn := publicNode("unpinned"); pn.Facts != nil {
+		t.Fatalf("unpinned never-reported node has public facts %v, want none", pn.Facts)
+	}
+	n, err := updateAddressPins(t, h, id, "8.8.8.8", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	available := heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE
+	if got := n.GetNetwork().GetIpv4(); got.GetSource() != heronv1.AddressSource_ADDRESS_SOURCE_MANUAL || got.GetState() != available || got.GetAddress() != "8.8.8.8" {
+		t.Fatalf("admin network.ipv4 = %v, want MANUAL AVAILABLE 8.8.8.8", got)
+	}
+	pn := publicNode("pinned")
+	if pn.Facts == nil || pn.GetFacts().GetNetwork().GetIpv4().GetState() != available || pn.GetFacts().GetNetwork().GetIpv6() != nil {
+		t.Fatalf("pinned never-reported node public facts = %v, want network.ipv4 AVAILABLE only", pn.Facts)
+	}
+	if f := pn.GetFacts(); f.GetOs() != "" || f.GetArch() != "" || f.GetCpuModel() != "" || f.GetCpuCores() != 0 {
+		t.Fatalf("public facts of a never-reported node carry host fields: %v", f)
+	}
+	if _, err := updateAddressPins(t, h, id, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if pn := publicNode("cleared"); pn.Facts != nil {
+		t.Fatalf("cleared never-reported node has public facts %v, want none", pn.Facts)
+	}
+}

@@ -313,11 +313,16 @@ func (p *Public) GetSnapshot(ctx context.Context, _ *connect.Request[heronv1.Pub
 		if b := billingProto(n.Billing, today); b != nil {
 			pn.Billing = p.billing.apply(b).(*heronv1.PublicBilling)
 		}
-		// 地址族状态取显示值（手填的族为 AVAILABLE），与管理端 Node.network 出自同一个判定；从未上报的节点没有 facts，
-		// 也就不公开地址族，与它其余的主机信息一致。
-		if n.Facts != nil {
-			facts := proto.Clone(n.Facts).(*heronv1.Facts)
-			facts.Network = publicNetworkInput(n.DisplayNetwork())
+		// 地址族状态取显示值（手填的族为 AVAILABLE），与管理端 Node.network 出自同一个判定。从未上报 facts 的节点只要有
+		// 手填，也公开那一族的状态：这时 PublicFacts 只有 network，其余字段为零值——标记跟着显示值走，不跟着 agent 有没有
+		// 上报过。
+		network := publicNetworkInput(n.DisplayNetwork())
+		if n.Facts != nil || network != nil {
+			facts := &heronv1.Facts{}
+			if n.Facts != nil {
+				facts = proto.Clone(n.Facts).(*heronv1.Facts)
+			}
+			facts.Network = network
 			pn.Facts = p.facts.apply(facts).(*heronv1.PublicFacts)
 		}
 		if m != nil {

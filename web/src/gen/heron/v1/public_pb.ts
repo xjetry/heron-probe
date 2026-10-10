@@ -175,7 +175,8 @@ export type PublicNode = Message<"heron.v1.PublicNode"> & {
   sortOrder: number;
 
   /**
-   * 主机静态信息的公开部分；从未上报则缺失。
+   * 主机静态信息的公开部分；从未上报且没有手填出口地址则缺失。从未上报但管理员手填了出口地址的节点只有 network
+   * （手填的族为 AVAILABLE），其余字段为零值。
    *
    * @generated from field: heron.v1.PublicFacts facts = 6;
    */

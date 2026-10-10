@@ -267,7 +267,8 @@ type PublicNode struct {
 	LastSeenAt *int64 `protobuf:"varint,4,opt,name=last_seen_at,json=lastSeenAt,proto3,oneof" json:"last_seen_at,omitempty"`
 	// 管理员在面板里定的顺序；nodes 已按它排好。
 	SortOrder int32 `protobuf:"varint,5,opt,name=sort_order,json=sortOrder,proto3" json:"sort_order,omitempty"`
-	// 主机静态信息的公开部分；从未上报则缺失。
+	// 主机静态信息的公开部分；从未上报且没有手填出口地址则缺失。从未上报但管理员手填了出口地址的节点只有 network
+	// （手填的族为 AVAILABLE），其余字段为零值。
 	Facts *PublicFacts `protobuf:"bytes,6,opt,name=facts,proto3" json:"facts,omitempty"`
 	// 最近一次上报的读数；从未上报则缺失，离线节点仍带最后一次读数。
 	Metrics *PublicMetrics `protobuf:"bytes,7,opt,name=metrics,proto3" json:"metrics,omitempty"`

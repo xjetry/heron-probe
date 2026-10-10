@@ -34,11 +34,13 @@ const dual = { id: 1n, name: "双栈", online: true, lastSeenAt: 998n, sortOrder
   facts: { os: "Debian 13", network: { ipv4: { state: AVAILABLE }, ipv6: { state: AVAILABLE } } } };
 const v4only = { id: 2n, name: "只有 v4", online: true, lastSeenAt: 998n, sortOrder: 1, country: "JP",
   facts: { os: "Debian 13", network: { ipv4: { state: AVAILABLE }, ipv6: { state: FAILED } } } };
+// 从未上报但手填了 IPv4 的节点：facts 只带 network（PublicNode.facts），标记照画，详情面板不画"系统"一栏。
+const pinnedOnly = { id: 3n, name: "只有手填", online: false, sortOrder: 2, facts: { network: { ipv4: { state: AVAILABLE } } } };
 const families = (scope: HTMLElement) => within(scope).queryByRole("group", { name: "公网出口" })?.textContent ?? null;
 
 async function overview(view: string) {
   localStorage.setItem(PUBLIC_VIEW_KEY, view);
-  renderWithService(PublicService, { getSnapshot: async () => ({ now: 1000n, nodes: [dual, v4only], tags: [] }), queryMetrics: async () => ({ ts: [], series: [] }) },
+  renderWithService(PublicService, { getSnapshot: async () => ({ now: 1000n, nodes: [dual, v4only, pinnedOnly], tags: [] }), queryMetrics: async () => ({ ts: [], series: [] }) },
     [{ path: "/", Component: PublicOverview }], "/");
   await screen.findByRole("group", { name: "视图" });
 }
@@ -64,6 +66,11 @@ it("状态墙的详情面板", async () => {
   fireEvent.click(screen.getByRole("link", { name: "只有 v4" }));
   expect(within(panel()).getByRole("heading", { name: "只有 v4" })).toBeInTheDocument();
   expect(families(panel())).toBe("IPv4");
+  expect(within(panel()).getByText("系统")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("link", { name: "只有手填" }));
+  expect(within(panel()).getByRole("heading", { name: "只有手填" })).toBeInTheDocument();
+  expect(families(panel())).toBe("IPv4");
+  expect(within(panel()).queryByText("系统")).toBeNull();
 });
 
 it("节点页", async () => {

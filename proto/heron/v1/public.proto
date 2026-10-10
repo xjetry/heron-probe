@@ -91,7 +91,8 @@ message PublicNode {
   optional int64 last_seen_at = 4;
   // 管理员在面板里定的顺序；nodes 已按它排好。
   int32 sort_order = 5;
-  // 主机静态信息的公开部分；从未上报则缺失。
+  // 主机静态信息的公开部分；从未上报且没有手填出口地址则缺失。从未上报但管理员手填了出口地址的节点只有 network
+  // （手填的族为 AVAILABLE），其余字段为零值。
   PublicFacts facts = 6;
   // 最近一次上报的读数；从未上报则缺失，离线节点仍带最后一次读数。
   PublicMetrics metrics = 7;

@@ -10,6 +10,7 @@ import { PublicService, type PublicNode } from "../gen/heron/v1/public_pb";
 import { ago } from "../lib/format";
 import { POLL_MS } from "../lib/poll";
 import { nodeStatus } from "../lib/status";
+import { hasHostFacts } from "./facts";
 
 const PUBLIC_HISTORY: HistoryMethods = { queryMetrics: PublicService.method.queryMetrics, queryProbes: PublicService.method.queryProbes };
 
@@ -47,8 +48,8 @@ function NodeContent({ node, now, error }: { node: PublicNode; now: number; erro
         </div>
         {node.publicRemark && <p className="node-remark">{node.publicRemark}</p>}
         {node.tags.length > 0 && <ul className="tag-chips">{node.tags.map((tag) => <li key={tag} className="chip">{tag}</li>)}</ul>}
-        {/* 系统信息写成页头里的一行，不单独铺一张全宽卡片；主机信息从未上报时整行不画，缺的单项不写。 */}
-        {f && (
+        {/* 系统信息写成页头里的一行，不单独铺一张全宽卡片；主机信息从未上报时整行不画（只有手填出口地址、facts 只带 network 的节点同样不画），缺的单项不写。 */}
+        {hasHostFacts(f) && (
           <dl className="facts-inline">
             {f.os && <div><dt>系统</dt><dd>{f.os}</dd></div>}
             {f.arch && <div><dt>架构</dt><dd>{f.arch}</dd></div>}
