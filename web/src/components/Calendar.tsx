@@ -1,27 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState, type KeyboardEvent } from "react";
 import { isDate } from "../lib/format";
+import { addMonths, calendarStep, monthDays } from "../lib/ymd";
 import { Icon } from "./Icon";
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
-
-// 日期运算都在 UTC 上做：只关心日历日，不经过本地时区，夏令时切换日不会少一天或多一天。
-// 用 setUTCFullYear 而不是 Date.UTC：后者把 0–99 年当成 1900–1999 年，而 isDate 收 0001 年起的日期。
-function utc(year: number, monthIndex: number, day: number): number {
-  const date = new Date(0);
-  date.setUTCFullYear(year, monthIndex, day);
-  return date.getTime();
-}
-const toUtc = (ymd: string) => { const [y, m, d] = ymd.split("-").map(Number); return utc(y, m - 1, d); };
-const fromUtc = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const addDays = (ymd: string, n: number) => fromUtc(toUtc(ymd) + n * 86_400_000);
-// 跨月时日子夹到目标月的最后一天：1 月 31 日的下个月是 2 月 28 / 29 日，不溢出到 3 月。
-function addMonths(ymd: string, n: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const first = new Date(utc(y, m - 1 + n, 1));
-  const last = new Date(utc(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
-  return fromUtc(utc(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last)));
-}
-const weekdayOf = (ymd: string) => (new Date(toUtc(ymd)).getUTCDay() + 6) % 7;
 
 // 「今天」取浏览器本地日期：选日期是给人看的日历，与 hub 时区无关；需要 hub 日界的地方（到期剩余天数）由 hub 自己算。
 function today(): string {
@@ -54,22 +36,14 @@ export function Calendar({ label, value, onPick, onClose }: { label: string; val
   // 0001–9999 年之外 toISOString 会写成六位年份；翻到范围外时停在原地。
   const move = (next: string, byKeyboard: boolean) => { if (!isDate(next)) return; keyboard.current = byKeyboard; setFocus(next); };
   const onKeyDown = (event: KeyboardEvent) => {
-    const steps: Record<string, () => string> = {
-      ArrowLeft: () => addDays(focus, -1), ArrowRight: () => addDays(focus, 1),
-      ArrowUp: () => addDays(focus, -7), ArrowDown: () => addDays(focus, 7),
-      PageUp: () => addMonths(focus, -1), PageDown: () => addMonths(focus, 1),
-      Home: () => addDays(focus, -weekdayOf(focus)), End: () => addDays(focus, 6 - weekdayOf(focus)),
-    };
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(true); return; }
-    const step = steps[event.key];
-    if (!step || !(event.target instanceof HTMLButtonElement) || !event.target.dataset.ymd) return;
+    const next = calendarStep(event.key, focus);
+    if (next === undefined || !(event.target instanceof HTMLButtonElement) || !event.target.dataset.ymd) return;
     event.preventDefault();
-    move(step(), true);
+    move(next, true);
   };
   const [year, month] = focus.split("-");
-  const first = `${year}-${month}-01`;
-  const start = addDays(first, -weekdayOf(first));
-  const days = Array.from({ length: 42 }, (_, i) => addDays(start, i));
+  const days = monthDays(focus);
   const now = today();
   return (
     <div ref={root} className="calendar" role="dialog" aria-label={`选择${label}`} onKeyDown={onKeyDown}>
