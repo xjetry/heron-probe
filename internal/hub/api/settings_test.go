@@ -94,7 +94,7 @@ func TestUpdateSettingsCleansTitleAndAccentAndEchoes(t *testing.T) {
 	// 总闸、国家查询两项、backup 与 login_notify 没有提交，回显的是从未保存过时的值（login_notify 关闭即空 message）；
 	// 后端回显夹具装配的 HTTP 后端。
 	want := &heronv1.Settings{Title: "运行状态", Theme: "light", AccentColor: "#abcdef", PublicEnabled: proto.Bool(true), GeoEnabled: proto.Bool(true), GeoUrl: proto.String("https://ipinfo.io/{ip}/country"),
-		GeoBackend: heronv1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &heronv1.LoginNotify{}}
+		GeoBackend: heronv1.GeoBackend_GEO_BACKEND_HTTP, LoginNotify: &heronv1.LoginNotify{}, TrafficReport: &heronv1.TrafficReport{}}
 	want.Backup = defaultBackup()
 	if got := saveSettings(t, h, &heronv1.Settings{Title: " \u202e\x07运行状态 \t", Theme: "light", AccentColor: "#AbCdEf"}); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
@@ -127,7 +127,7 @@ func TestTitleAndNodeNameCleanAlike(t *testing.T) {
 	}
 }
 
-const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, login_notify, or heartbeat"
+const noGroup = "settings must give at least one group: the appearance (title, theme, accent_color, logo, custom_css; given when any of them is non-empty), public_enabled, the country lookup (geo_enabled, geo_url), backup, login_notify, heartbeat, or traffic_report"
 
 // UpdateSettings 按组判定、各组彼此独立：外观五项任一非空即算给出并整体校验，所以只带 title 的请求报 theme 的错；
 // 只带国家查询两项之一、只带总闸或只带备份（部分项或全部项）的请求照常保存，其余各组原样保留；一组都没给出（含整个 settings 缺失）的请求被拒并
@@ -204,12 +204,18 @@ func TestUpdateSettingsEveryFieldIsClassified(t *testing.T) {
 				s.Heartbeat = &heronv1.Heartbeat{IntervalS: 120, Method: heronv1.HeartbeatMethod_HEARTBEAT_METHOD_POST, HasUrl: true, UrlHost: "hc.example"}
 			},
 		},
+		"traffic_report": {in: func(s *heronv1.Settings) {
+			s.TrafficReport = &heronv1.TrafficReport{Enabled: true, Weekly: true, Hour: 9, ChannelIds: []int64{channel}}
+		}},
 	}
 	for i := range fields.Len() {
 		fd := fields.Get(i)
 		t.Run(string(fd.Name()), func(t *testing.T) {
 			in := &heronv1.Settings{}
-			want := proto.Clone(before).(*heronv1.Settings)
+			// 起点是写回 before 之后库里的实际设置：heartbeat 一旦配置过就总在回显里（has_url 由库里的 url 推出），写回
+			// before 不会把它变回缺席，前面子用例留下的它属于"其余各组原样保留"。
+			saveSettings(t, h, before)
+			want := currentSettings(t, h)
 			switch {
 			case slices.Contains(appearanceFields, fd.Name()):
 				v, ok := appearance[fd.Name()]
@@ -378,6 +384,7 @@ func worstCaseSettings(t *testing.T, channelIDs []string) []byte {
 		"backup.config_interval_s": 86400, "backup.metrics_interval_s": 604800,
 		"backup.config_keep": 1000, "backup.metrics_keep": 1000,
 		"heartbeat.url": worstHeartbeatURL, "heartbeat.interval_s": 3600, "heartbeat.method": "HEARTBEAT_METHOD_POST",
+		"traffic_report.enabled": true, "traffic_report.daily": true, "traffic_report.hour": store.TrafficReportMaxHour,
 	} {
 		generators[path] = func() any { return value }
 	}
@@ -445,6 +452,9 @@ func TestUpdateSettingsBudgetFitsFullSettingsWithWorstCaseEscaping(t *testing.T)
 	}
 	if !slices.Equal(st.LoginChannelIDs, ids) {
 		t.Fatalf("login_notify in the worst-case request was not applied: %v, want %v", st.LoginChannelIDs, ids)
+	}
+	if r := st.TrafficReport; !r.Enabled || r.Hour != store.TrafficReportMaxHour || !slices.Equal(r.Channels, ids) {
+		t.Fatalf("traffic_report in the worst-case request was not applied: %+v, want channels %v", r, ids)
 	}
 }
 

@@ -147,6 +147,7 @@ func TestUpdateSettingsGeoFieldsAbsentMeansUnchanged(t *testing.T) {
 	want.Backup = defaultBackup()
 	want.GeoBackend = heronv1.GeoBackend_GEO_BACKEND_HTTP
 	want.LoginNotify = &heronv1.LoginNotify{}
+	want.TrafficReport = &heronv1.TrafficReport{}
 	if got := saveSettings(t, h, in); !proto.Equal(got, want) {
 		t.Fatalf("echo = %v, want %v", got, want)
 	}

@@ -1077,6 +1077,29 @@ message Settings {
   // hub 心跳外推（§9.6）。presence 组语义与总闸、login_notify 相同：缺席即不变，给出即整体替换这一组。
   // 目标地址是只写设置（ping 地址本身就是密钥），不会下发到公开页，也不经 GetSettings 回显原文。
   optional Heartbeat heartbeat = 13;
+  // 周期流量报告（§9.3）。presence 组语义与 login_notify 相同：缺席即不变，给出即整体替换这一组；响应里总带它，
+  // 把读到的整份设置原样写回不改变它。默认关闭。不会下发到公开页。
+  optional TrafficReport traffic_report = 14;
+}
+
+// 周期流量报告：按 hub 的 --timezone 日历，在选定的周期把全部节点当前计费周期的已提交用量、配额占比与距下次重置的
+// 天数汇成一条消息，投递到选定的渠道（§9.3）。
+message TrafficReport {
+  // 总开关。为 true 时 daily、weekly、monthly 至少一项为 true，否则 InvalidArgument 点名 settings.traffic_report。
+  // 关闭时保留三种周期与时刻的选择。
+  bool enabled = 1;
+  // 日报：每天一次。
+  bool daily = 2;
+  // 周报：每周一一次。
+  bool weekly = 3;
+  // 月报：每月 1 日一次。
+  bool monthly = 4;
+  // 投递时刻（hub 时区的整点）0–23，越界返回 InvalidArgument 点名字段与范围。当天这一时刻因夏令时拨快而不存在时，
+  // 取当天本地时间不小于它的第一个存在时刻。库里没有这个键时为 0。
+  uint32 hour = 5;
+  // 接收渠道（键 notify.traffic_report_channels），约束与 LoginNotify.channel_ids 相同：最多 16 个（按请求里的原始
+  // 条数计，含重复），每个 ID 必须对应存在的渠道，重复 ID 合并。为空时报告照常记为事件，不投递。
+  repeated int64 channel_ids = 6;
 }
 
 // hub 心跳外推的目标与节奏（§9.6）。默认关闭：url 为空即停用。
