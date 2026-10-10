@@ -297,8 +297,10 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: log})
 	alerts.SetSender(notifier)
 	a := auth.New(st, reg, notifier, clk, loc, log)
+	// opts.adminOrigin 已由 parseServeOptions 校验，这里剩下的失败只来自读、解析 admin_security 或写入导入的绑定：
+	// 前缀点名这一步而不是 flag，损坏的库不被报成配置问题。
 	if err := a.ConfigureWebAuthn(opts.adminOrigin); err != nil {
-		return nil, fmt.Errorf("--admin-origin: %w", err)
+		return nil, fmt.Errorf("passkey binding: %w", err)
 	}
 	if opts.adminOrigin != "" {
 		log.Warn("--admin-origin is only for legacy Passkey migration; persisted bindings take precedence, remove this flag after migration")

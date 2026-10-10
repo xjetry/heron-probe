@@ -87,6 +87,10 @@ func TestNewHubClosesTheStoreWhenAssemblyFails(t *testing.T) {
 	if err == nil || h != nil || !errors.As(err, &syntax) {
 		t.Fatalf("newHub = %v, %v; want an error from parsing the unreadable admin_security", h, err)
 	}
+	// 损坏的库要报成绑定这一步的失败，不能被报成 --admin-origin 的配置问题：这里根本没给那个 flag。
+	if msg := err.Error(); !strings.HasPrefix(msg, "passkey binding: ") || strings.Contains(msg, "--admin-origin") {
+		t.Errorf("err = %q, want it prefixed with the passkey binding step and not naming --admin-origin", msg)
+	}
 	settledGoroutines(t, baseline)
 }
 
