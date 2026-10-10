@@ -146,7 +146,8 @@ func restoreSnapshots(t *testing.T) (config, metrics string) {
 			INSERT INTO probe_cert_presented (node_id,task_id,config_id,spki_sha256,not_after,reason,observed_at) VALUES (%[1]d,7,x'01010101010101010101010101010101',x'0202020202020202020202020202020202020202020202020202020202020202',1,1,0);
 			INSERT INTO alert_rule_node VALUES (1,%[1]d);
 			INSERT INTO silence_node VALUES (1,%[1]d);
-			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);`, id))
+			INSERT INTO alert_state (rule_id,node_id,state,since_at) VALUES (1,%[1]d,'firing',0);
+			INSERT INTO alert_baseline (rule_id,node_id,baseline_us,buckets,computed_at,task_fingerprint) VALUES (1,%[1]d,0,0,0,'');`, id))
 	}
 	config, metrics = filepath.Join(dir, "config.db"), filepath.Join(dir, "metrics.db")
 	if err := s.SnapshotConfig(t.Context(), config); err != nil {
@@ -287,6 +288,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV39Config(t, cfg)
 			removeV38Config(t, cfg)
 			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
@@ -347,6 +349,16 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
 // 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
 // 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+// 39 给 alert_rule 加了 rtt 相对判定的八列、给 alert_state 加了 fired_at，并新建 alert_baseline，全部在配置层。
+func removeV39Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, `DROP TABLE alert_baseline; ALTER TABLE alert_state DROP COLUMN fired_at;
+		ALTER TABLE alert_rule DROP COLUMN rtt_mode; ALTER TABLE alert_rule DROP COLUMN baseline_mode;
+		ALTER TABLE alert_rule DROP COLUMN baseline_window_s; ALTER TABLE alert_rule DROP COLUMN baseline_min_samples;
+		ALTER TABLE alert_rule DROP COLUMN upper_deviation_pct; ALTER TABLE alert_rule DROP COLUMN lower_deviation_pct;
+		ALTER TABLE alert_rule DROP COLUMN cooldown_s; ALTER TABLE alert_rule DROP COLUMN fixed_baseline_ms`)
+}
+
 // removeV38Config 撤掉清理作业表：38 之前的配置层没有它。
 func removeV38Config(t *testing.T, config *sql.DB) {
 	t.Helper()
@@ -417,6 +429,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV39Config(t, cfg)
 	removeV38Config(t, cfg)
 	removeV36Config(t, cfg)
 	removeV35Config(t, cfg)

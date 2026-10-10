@@ -181,6 +181,10 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 迁移 39 的 rtt 相对判定列、fired_at 与 alert_baseline 也要撤回，否则回填 33 后迁移 39 撞上已有的列。
+	if _, err := raw.Exec("DROP TABLE alert_baseline; ALTER TABLE alert_state DROP COLUMN fired_at; ALTER TABLE alert_rule DROP COLUMN rtt_mode; ALTER TABLE alert_rule DROP COLUMN baseline_mode; ALTER TABLE alert_rule DROP COLUMN baseline_window_s; ALTER TABLE alert_rule DROP COLUMN baseline_min_samples; ALTER TABLE alert_rule DROP COLUMN upper_deviation_pct; ALTER TABLE alert_rule DROP COLUMN lower_deviation_pct; ALTER TABLE alert_rule DROP COLUMN cooldown_s; ALTER TABLE alert_rule DROP COLUMN fixed_baseline_ms"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := raw.Exec("DROP TABLE cleanup_job; ALTER TABLE node DROP COLUMN traffic_quota_bytes; ALTER TABLE node DROP COLUMN traffic_quota_mode; DROP TABLE probe_cert_presented; ALTER TABLE probe_cert DROP COLUMN config_id; ALTER TABLE probe_task DROP COLUMN cert_spki_sha256; ALTER TABLE probe_task DROP COLUMN config_id; ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev; UPDATE snapshot_meta SET schema_version = 33"); err != nil {
 		t.Fatal(err)
 	}

@@ -260,10 +260,14 @@ func readPoolSize() int { return max(4, 2*runtime.GOMAXPROCS(0)) }
 func historyPoolSize() int { return max(2, runtime.GOMAXPROCS(0)) }
 
 // evaluationPoolSize 是评估池上限：2，不随核数。Evaluation 的调用方只有告警引擎（cmd/hub/serve.go 装配），经它的读
-// 只发生在 alert.Engine 的 EvaluateResources 与 EvaluateProbes 里，两者全程持 Engine.writeMu：同一个引擎同一时刻
-// 至多一条评估读在飞、只占一个连接。多出的一个留给这条互斥之外的调用（测试、将来第二个引擎实例），它们不必与引擎
-// 排队。上限随核数增长不会让评估更快，只多留空闲连接与页缓存。Evaluation 有了新的调用方、或评估入口不再持
-// writeMu，这个上限要重新论证。
+// 来自两个调用方，各自至多一条在飞：
+//   - 一条评估：alert.Engine 的 EvaluateResources 与 EvaluateProbes 全程持 Engine.writeMu，同一时刻至多一个在读历史。
+//   - 一条基线重算：alert.Engine.RunBaselineRecompute 是单个协程，逐对 (规则, 节点) 顺序调 ProbeBucketMeans，
+//     不持 writeMu（只读历史，写经写协程），所以与评估并行，但自己同一时刻至多一条。
+//
+// 两者各占一个连接，互不排队：重算一次读至多 8640 个桶，若与评估共用一个连接，评估的时效就随重算的读量变化。
+// 上限随核数增长不会让评估更快，只多留空闲连接与页缓存。Evaluation 有了第三个调用方、评估入口不再持 writeMu、
+// 或重算不再是单协程，这个上限要重新论证。
 func evaluationPoolSize() int { return 2 }
 
 // readConnMaxIdle 是池里连接空闲多久才回收，三个池同一个值。面板每 2 秒、流量每 10 秒轮询（web/src/lib/poll.ts），
@@ -404,7 +408,7 @@ func (s *Store) writeAsync(fn func(*sql.Tx) error, done func(error)) {
 	}
 }
 
-const schemaVersion = 38
+const schemaVersion = 39
 
 type schemaAction int
 

@@ -63,6 +63,34 @@ var migrations = map[int]func(*sql.Tx) error{
 	36: execAll(migrationV36Config),
 	37: execAll(migrationV37),
 	38: execAll(append(append([]string{}, migrationV38Config...), migrationV38OrphanTasks...)),
+	39: execAll(migrationV39Config),
+}
+
+// v39：rtt 规则的相对基线判定（§9.1）。已有 rtt 规则显式写成固定阈值，库里不以 NULL 代表它；已在 firing 的状态以进入
+// firing 的时刻（since_at）作 fired_at，其余为 0（从未触发或已恢复，恢复前那次触发的时刻不可考）。全部是配置层的表，
+// 指标层无变化。
+var migrationV39Config = []string{
+	`ALTER TABLE alert_rule ADD COLUMN rtt_mode TEXT`,
+	`ALTER TABLE alert_rule ADD COLUMN baseline_mode TEXT`,
+	`ALTER TABLE alert_rule ADD COLUMN baseline_window_s INTEGER`,
+	`ALTER TABLE alert_rule ADD COLUMN baseline_min_samples INTEGER`,
+	`ALTER TABLE alert_rule ADD COLUMN upper_deviation_pct REAL`,
+	`ALTER TABLE alert_rule ADD COLUMN lower_deviation_pct REAL`,
+	`ALTER TABLE alert_rule ADD COLUMN cooldown_s INTEGER`,
+	`ALTER TABLE alert_rule ADD COLUMN fixed_baseline_ms REAL`,
+	`UPDATE alert_rule SET rtt_mode = 'threshold' WHERE kind = 'probe' AND metric = 'rtt_ms'`,
+	`ALTER TABLE alert_state ADD COLUMN fired_at INTEGER NOT NULL DEFAULT 0`,
+	`UPDATE alert_state SET fired_at = since_at WHERE state = 'firing'`,
+	`CREATE TABLE alert_baseline (
+  rule_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  baseline_us INTEGER NOT NULL,
+  buckets INTEGER NOT NULL,
+  computed_at INTEGER NOT NULL,
+  task_fingerprint TEXT NOT NULL,
+  accumulate_from INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (rule_id, node_id)
+)`,
 }
 
 // 清理作业表只在配置层。迁移前删节点是同步删历史的，库里没有节点的孤儿行；删任务却从不删历史，已删任务的行一直

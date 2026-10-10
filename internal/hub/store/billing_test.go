@@ -39,7 +39,7 @@ func TestMigrationFromV8MatchesFreshSchemaAndKeepsRows(t *testing.T) {
 	if err != nil || len(rules) != 1 || rules[0].ID != 3 || rules[0].DaysBefore != 0 {
 		t.Fatalf("rules after migration: %+v %v", rules, err)
 	}
-	wantStates := []StateRow{{RuleID: 3, NodeID: 7, State: StateFiring, SinceAt: time.Unix(1, 0).UTC()}}
+	wantStates := []StateRow{{RuleID: 3, NodeID: 7, State: StateFiring, SinceAt: time.Unix(1, 0).UTC(), FiredAt: time.Unix(1, 0).UTC()}}
 	if states, err := migrated.ListAlertStates(t.Context()); err != nil || !reflect.DeepEqual(states, wantStates) {
 		t.Fatalf("states after migration: %+v %v", states, err)
 	}

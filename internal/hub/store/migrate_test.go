@@ -115,6 +115,7 @@ var frozenSchemas = map[int][]string{
 	36: schemaV36,
 	37: schemaV37,
 	38: schemaV38,
+	39: schemaV39,
 }
 
 func frozenSchema(t *testing.T, version int) []string {

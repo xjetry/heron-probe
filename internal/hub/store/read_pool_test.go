@@ -366,7 +366,7 @@ func poolWaitsSince(s *Store, before []int64) string {
 }
 
 // 告警评估读不随请求负载变化：轻池与历史池的全部连接都被未提交的只读事务占住时（与两池各自挤满在飞请求相同），
-// 经 Evaluation 的两类读以告警的窗口形状（1m 级、一小时）照常在评估池完成，r 与 hr 上都不排队。评估读若走了
+// 经 Evaluation 的三类读以告警的窗口形状（判定读 1m 级一小时、基线读 5m 级一小时）照常在评估池完成，r 与 hr 上都不排队。评估读若走了
 // r 或 hr，就会排在占住的事务后面直到 ctx 到期。
 func TestEvaluationReadsBypassRequestPools(t *testing.T) {
 	t.Parallel()
@@ -384,6 +384,7 @@ func TestEvaluationReadsBypassRequestPools(t *testing.T) {
 	if rejected, err := s.WriteMinuteBatch(ctx, metric.Batch{Rows: []metric.Row{{NodeID: id, TS: minuteTS, CoverageStart: minuteTS, Bucket: bucket(42)}}}); err != nil || rejected != 0 {
 		t.Fatalf("seed: rejected %d, err %v", rejected, err)
 	}
+	probe5m(t, s, id, 1, minuteTS-3600, 2, 0, 0, 2*500)
 	for _, db := range []*sql.DB{s.r, s.hr} {
 		for range db.Stats().MaxOpenConnections {
 			tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -409,6 +410,11 @@ func TestEvaluationReadsBypassRequestPools(t *testing.T) {
 		{"QueryProbes", func(ctx context.Context) (int, error) {
 			rows, err := s.Evaluation().QueryProbes(ctx, id, from, to, lv, 60)
 			return len(rows), err
+		}},
+		// 基线重算的读：一小时的基线窗口，判定窗口之前。
+		{"ProbeBucketMeans", func(ctx context.Context) (int, error) {
+			means, err := s.Evaluation().ProbeBucketMeans(ctx, id, 1, minuteTS-3600, minuteTS)
+			return len(means), err
 		}},
 	} {
 		rctx, cancel := context.WithTimeout(ctx, testwait.Bound)

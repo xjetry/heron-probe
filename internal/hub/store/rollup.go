@@ -69,7 +69,8 @@ type family struct {
 	values   func() []string
 	aggs     func() []string
 	// live 把源行限定在配置层里仍存在的主体上：节点在 node 表里，探测行的任务在 probe_task 表里。删除节点或任务的
-	// 事务只删配置层并登记清理作业（cleanup.go），时序行在作业完成前仍在表里；所有历史读都经 rangeSQL 带上它，
+	// 事务只删配置层并登记清理作业（cleanup.go），时序行在作业完成前仍在表里；所有历史读都经 rangeSQL 带上它
+	// （不经 queryFamily 的 EvaluationReader.ProbeBucketMeans 在自己的 SQL 里拼上 probeFamily.live），
 	// 与主体存在性判定在同一个读快照里，这些孤儿行因此不出现在任何查询结果里，与准入检查和读之间是否插进了删除无关。
 	// 它只过滤、不参与定位，没有占位符：每条源查询仍按 keyWhere 的前导键 SEARCH，读到的行（额度计数的对象）含孤儿行。
 	live string

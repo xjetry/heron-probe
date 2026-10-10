@@ -27,9 +27,12 @@ func TestCheckRule(t *testing.T) {
 		{"metric", func(r *store.AlertRule) { r.Metric = "other" }, "metric"},
 		{"loss_low", func(r *store.AlertRule) { r.Threshold = -1 }, "threshold"},
 		{"loss_high", func(r *store.AlertRule) { r.Threshold = 101 }, "threshold"},
-		{"rtt_zero", func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = 0 }, "threshold"},
+		{"rtt_zero", func(r *store.AlertRule) { r.Metric, r.RttMode = store.MetricRttMs, store.RttThreshold; r.Threshold = 0 }, "threshold"},
 		{"nan", func(r *store.AlertRule) { r.Threshold = math.NaN() }, "threshold"},
-		{"infinite", func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = math.Inf(1) }, "threshold"},
+		{"infinite", func(r *store.AlertRule) {
+			r.Metric, r.RttMode = store.MetricRttMs, store.RttThreshold
+			r.Threshold = math.Inf(1)
+		}, "threshold"},
 		{"minutes_low", func(r *store.AlertRule) { r.ForMinutes = 0 }, "for_minutes"},
 		{"minutes_high", func(r *store.AlertRule) { r.ForMinutes = 61 }, "for_minutes"},
 		{"probe_days_before", func(r *store.AlertRule) { r.DaysBefore = 7 }, "days_before"},
@@ -60,7 +63,10 @@ func TestCheckRule(t *testing.T) {
 		func(r *store.AlertRule) { r.Name = strings.Repeat("字", 64) },
 		func(r *store.AlertRule) { r.Threshold = 0; r.ForMinutes = 1 },
 		func(r *store.AlertRule) { r.Threshold = 100; r.ForMinutes = 60 },
-		func(r *store.AlertRule) { r.Metric = store.MetricRttMs; r.Threshold = 0.1 },
+		func(r *store.AlertRule) {
+			r.Metric, r.RttMode = store.MetricRttMs, store.RttThreshold
+			r.Threshold = 0.1
+		},
 		func(r *store.AlertRule) { r.AllNodes = false; r.NodeIDs = []int64{1} },
 		func(r *store.AlertRule) { r.AllNodes = false },
 		func(r *store.AlertRule) { *r = offline() },

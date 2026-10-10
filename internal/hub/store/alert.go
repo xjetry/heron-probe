@@ -33,6 +33,33 @@ const (
 	MetricRttMs   ProbeMetric = "rtt_ms"
 )
 
+// RttMode 是 rtt 规则（探测、指标 rtt_ms）的判定方式；其余规则为空串。rtt 规则只取两个值之一，库里显式落值，
+// 不以空串代表固定阈值：迁移 39 把已有 rtt 规则写成 threshold，协议层把未指定收成 threshold（§9.1）。
+type RttMode string
+
+const (
+	RttThreshold RttMode = "threshold"
+	RttRelative  RttMode = "relative"
+)
+
+// BaselineMode 是相对判定的基线来源；非相对判定的规则为空串。
+type BaselineMode string
+
+const (
+	BaselineAdaptive BaselineMode = "adaptive"
+	BaselineFixed    BaselineMode = "fixed"
+)
+
+// 相对判定字段的取值界（§9.1）。MaxBaselineWindowS 同时是 ProbeBucketMeans 一次读取的窗口上限，
+// 5 分钟桶下至多 8640 个。
+const (
+	MaxBaselineWindowS   = 30 * 24 * 3600
+	MaxUpperDeviationPct = 1000
+	MinCooldownS         = 60
+	MaxCooldownS         = 7 * 24 * 3600
+	MaxFixedBaselineMs   = 60000
+)
+
 type ResourceMetric string
 
 // 常量值即 metric 列名时取值可直接按名查列。cpu_pct 是语义名，到列名 cpu 的映射在 alert 包。
@@ -66,6 +93,20 @@ type AlertRule struct {
 	// DaysBefore 只属于到期规则。它与 Threshold、ForMinutes 一样不是规则身份：改它保留状态（见 SaveAlertRule）。
 	DaysBefore int
 	CreatedAt  time.Time
+	// 以下只属于 rtt 规则，取值矩阵由 CheckKindFields 裁决（§9.1）。RttMode 为 relative 时其余字段才可能非零。
+	RttMode            RttMode
+	BaselineMode       BaselineMode
+	BaselineWindowS    int
+	BaselineMinSamples int
+	UpperDeviationPct  float64
+	LowerDeviationPct  float64
+	CooldownS          int
+	FixedBaselineMs    float64
+}
+
+// AdaptiveBaseline 报告规则是否用自适应基线：只有这样的规则有 alert_baseline 行。
+func (r AlertRule) AdaptiveBaseline() bool {
+	return r.Kind == KindProbe && r.Metric == MetricRttMs && r.RttMode == RttRelative && r.BaselineMode == BaselineAdaptive
 }
 
 type NotifyChannel struct {
@@ -105,6 +146,10 @@ type StateRow struct {
 	// 它不是当前状态的属性，而是一段历史：状态再变（恢复后再次离线写成 pending）时由写入方沿用，只有下一次恢复
 	// 才改写它。抖动抑制按它判断这次离线是否落在恢复后的窗口里；状态行被删除（规则不再适用）时一起消失。
 	RecoveredAt time.Time
+	// FiredAt 是这一对规则与节点最近一次进入 firing 的时刻，零值表示从未触发过（库里是 0）。与 RecoveredAt 一样是一段
+	// 历史而不是当前状态的属性，由 setAlertState 维护：写入 firing 记当下，其余写入沿用库里的值，调用方不给出它。
+	// 冷却（rtt 相对判定的 cooldown_s）按它判断新的触发是否落在上一次触发之后的冷却期内；状态行被删除时一起消失。
+	FiredAt time.Time
 	// FiredSilenced 表示当前 firing 进入时处于维护静默覆盖内、没有投递（§9.5）：恢复是否投递只看它，
 	// 与恢复时刻是否静默无关。随触发转换写入（见 RecordTransition），恢复转换把它写回 0。
 	FiredSilenced bool
@@ -277,7 +322,8 @@ func (s *Store) listAlertRules(ctx context.Context, visibleOnly bool) ([]AlertRu
 }
 
 func listAlertRulesTx(ctx context.Context, tx *sql.Tx) ([]AlertRule, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold FROM alert_rule ORDER BY id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id, name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold,
+		rtt_mode, baseline_mode, baseline_window_s, baseline_min_samples, upper_deviation_pct, lower_deviation_pct, cooldown_s, fixed_baseline_ms FROM alert_rule ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -292,9 +338,16 @@ func listAlertRulesTx(ctx context.Context, tx *sql.Tx) ([]AlertRule, error) {
 		var resourceMetric sql.NullString
 		var recovery sql.NullFloat64
 		var created int64
-		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &daysBefore, &created, &resourceMetric, &recovery); err != nil {
+		var rttMode, baselineMode sql.NullString
+		var window, minSamples, cooldown sql.NullInt64
+		var upper, lower, fixed sql.NullFloat64
+		if err := rows.Scan(&r.ID, &r.Name, &r.Kind, &r.Enabled, &r.AllNodes, &task, &metric, &threshold, &minutes, &daysBefore, &created, &resourceMetric, &recovery,
+			&rttMode, &baselineMode, &window, &minSamples, &upper, &lower, &cooldown, &fixed); err != nil {
 			return nil, err
 		}
+		r.RttMode, r.BaselineMode = RttMode(rttMode.String), BaselineMode(baselineMode.String)
+		r.BaselineWindowS, r.BaselineMinSamples, r.CooldownS = int(window.Int64), int(minSamples.Int64), int(cooldown.Int64)
+		r.UpperDeviationPct, r.LowerDeviationPct, r.FixedBaselineMs = upper.Float64, lower.Float64, fixed.Float64
 		r.TaskID, r.Metric, r.Threshold, r.ForMinutes = uint64(task.Int64), ProbeMetric(metric.String), threshold.Float64, int(minutes.Int64)
 		r.DaysBefore = int(daysBefore.Int64)
 		r.ResourceMetric, r.RecoveryThreshold = ResourceMetric(resourceMetric.String), recovery.Float64
@@ -365,7 +418,7 @@ func (e KindFieldError) Error() string { return e.Field + " " + e.Constraint }
 // CheckKindFields 裁决种类与专用字段的组合：任务只属于探测与证书到期，探测指标只属于探测，资源指标与恢复阈值只属于资源；
 // 阈值由探测、资源与流量共用，持续分钟只属于探测与资源，days_before 只属于到期与证书到期。SaveAlertRule 对非法组合报错而不改写，
 // alert.CheckRule 在保存与载入时调它，协议层经 CheckRule 得到同样的字段与约束（§9.1）。阈值用 != 0 判：NaN 与任何数
-// 都不等，也被拒绝。种类本身是否合法不在这里判断。
+// 都不等，也被拒绝。rtt 判定方式的八个字段只属于 rtt 规则，矩阵见 checkRttFields。种类本身是否合法不在这里判断。
 func CheckKindFields(r AlertRule) error {
 	if r.Kind != KindProbe && r.Kind != KindCertExpiry {
 		if r.TaskID != 0 {
@@ -395,6 +448,86 @@ func CheckKindFields(r AlertRule) error {
 	}
 	if r.Kind != KindExpiry && r.Kind != KindCertExpiry && r.DaysBefore != 0 {
 		return KindFieldError{"days_before", "must be 0 unless kind is expiry or cert_expiry"}
+	}
+	return checkRttFields(r)
+}
+
+// checkRttFields 裁决 rtt 判定方式的八个字段（§9.1 的零值矩阵）。字段是否非零按"放宽还是缺省"逐个裁决：
+// 非 rtt 规则与固定阈值下它们全部为零值；相对判定下偏差、冷却与基线来源必填，两种基线来源各自只认自己的字段。
+// 浮点用 !(lo < x && x <= hi) 的形式判区间，NaN 不满足任何比较，一并被拒。
+func checkRttFields(r AlertRule) error {
+	if r.Kind != KindProbe || r.Metric != MetricRttMs {
+		if r.RttMode != "" {
+			return KindFieldError{"rtt_mode", "must be unspecified unless kind is probe and metric is rtt_ms"}
+		}
+		return checkRelativeFieldsZero(r, "unless kind is probe and metric is rtt_ms")
+	}
+	switch r.RttMode {
+	case RttThreshold:
+		return checkRelativeFieldsZero(r, "unless rtt_mode is relative")
+	case RttRelative:
+	default:
+		return KindFieldError{"rtt_mode", fmt.Sprintf("must be %s or %s for rtt_ms probe rules; got %q", RttThreshold, RttRelative, r.RttMode)}
+	}
+	if r.Threshold != 0 {
+		return KindFieldError{"threshold", "must be 0 when rtt_mode is relative"}
+	}
+	if !(0 < r.UpperDeviationPct && r.UpperDeviationPct <= MaxUpperDeviationPct) {
+		return KindFieldError{"upper_deviation_pct", fmt.Sprintf("must be greater than 0 and at most %d", MaxUpperDeviationPct)}
+	}
+	if !(0 < r.LowerDeviationPct && r.LowerDeviationPct < 100) {
+		return KindFieldError{"lower_deviation_pct", "must be greater than 0 and less than 100"}
+	}
+	if r.CooldownS < MinCooldownS || r.CooldownS > MaxCooldownS {
+		return KindFieldError{"cooldown_s", fmt.Sprintf("must be between %d and %d", MinCooldownS, MaxCooldownS)}
+	}
+	switch r.BaselineMode {
+	case BaselineAdaptive:
+		// 基线窗口排除判定窗口，比判定窗口还短的基线窗口里一个桶也取不到。
+		if r.BaselineWindowS < r.ForMinutes*60 || r.BaselineWindowS > MaxBaselineWindowS {
+			return KindFieldError{"baseline_window_s", fmt.Sprintf("must be at least for_minutes×60 and at most %d", MaxBaselineWindowS)}
+		}
+		if r.BaselineMinSamples < 1 {
+			return KindFieldError{"baseline_min_samples", "must be at least 1"}
+		}
+		if r.FixedBaselineMs != 0 {
+			return KindFieldError{"fixed_baseline_ms", "must be 0 unless baseline_mode is fixed"}
+		}
+	case BaselineFixed:
+		if !(0 < r.FixedBaselineMs && r.FixedBaselineMs <= MaxFixedBaselineMs) {
+			return KindFieldError{"fixed_baseline_ms", fmt.Sprintf("must be greater than 0 and at most %d", MaxFixedBaselineMs)}
+		}
+		if r.BaselineWindowS != 0 {
+			return KindFieldError{"baseline_window_s", "must be 0 unless baseline_mode is adaptive"}
+		}
+		if r.BaselineMinSamples != 0 {
+			return KindFieldError{"baseline_min_samples", "must be 0 unless baseline_mode is adaptive"}
+		}
+	default:
+		return KindFieldError{"baseline_mode", "must be specified when rtt_mode is relative"}
+	}
+	return nil
+}
+
+// checkRelativeFieldsZero 要求相对判定专用的七个字段全部为零值，when 说明它们在什么条件下才可以非零。
+func checkRelativeFieldsZero(r AlertRule, when string) error {
+	if r.BaselineMode != "" {
+		return KindFieldError{"baseline_mode", "must be unspecified " + when}
+	}
+	for _, f := range []struct {
+		field string
+		zero  bool
+	}{
+		{"baseline_window_s", r.BaselineWindowS == 0},
+		{"baseline_min_samples", r.BaselineMinSamples == 0},
+		{"upper_deviation_pct", r.UpperDeviationPct == 0},
+		{"lower_deviation_pct", r.LowerDeviationPct == 0},
+		{"cooldown_s", r.CooldownS == 0},
+		{"fixed_baseline_ms", r.FixedBaselineMs == 0},
+	} {
+		if !f.zero {
+			return KindFieldError{f.field, "must be 0 " + when}
+		}
 	}
 	return nil
 }
@@ -430,6 +563,18 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		// 每种规则只落自己的专用列，其余列写 NULL。CheckKindFields 已保证别的种类的专用字段都是零值，NULL 与回显的
 		// 零值一致。
 		var task, metric, threshold, minutes, daysBefore, resourceMetric, recovery any
+		var rttMode, baselineMode, window, minSamples, upper, lower, cooldown, fixed any
+		if r.Kind == KindProbe && r.Metric == MetricRttMs {
+			rttMode = r.RttMode
+			if r.RttMode == RttRelative {
+				baselineMode, upper, lower, cooldown = r.BaselineMode, r.UpperDeviationPct, r.LowerDeviationPct, r.CooldownS
+				if r.BaselineMode == BaselineAdaptive {
+					window, minSamples = r.BaselineWindowS, r.BaselineMinSamples
+				} else {
+					fixed = r.FixedBaselineMs
+				}
+			}
+		}
 		if r.Kind == KindTraffic {
 			threshold = r.Threshold
 		}
@@ -455,8 +600,10 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		var identityChanged bool
 		if r.ID == 0 {
 			created = s.clk.Now().Unix()
-			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, created, resourceMetric, recovery).Scan(&r.ID)
+			err := tx.QueryRow(`INSERT INTO alert_rule (name, kind, enabled, all_nodes, task_id, metric, threshold, for_minutes, days_before, created_at, resource_metric, recovery_threshold,
+				rtt_mode, baseline_mode, baseline_window_s, baseline_min_samples, upper_deviation_pct, lower_deviation_pct, cooldown_s, fixed_baseline_ms)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, created, resourceMetric, recovery,
+				rttMode, baselineMode, window, minSamples, upper, lower, cooldown, fixed).Scan(&r.ID)
 			if err != nil {
 				return err
 			}
@@ -468,8 +615,10 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 			if err != nil {
 				return err
 			}
-			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?, days_before = ?, resource_metric = ?, recovery_threshold = ?
-				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, resourceMetric, recovery, r.ID).Scan(&created)
+			err = tx.QueryRow(`UPDATE alert_rule SET name = ?, kind = ?, enabled = ?, all_nodes = ?, task_id = ?, metric = ?, threshold = ?, for_minutes = ?, days_before = ?, resource_metric = ?, recovery_threshold = ?,
+				rtt_mode = ?, baseline_mode = ?, baseline_window_s = ?, baseline_min_samples = ?, upper_deviation_pct = ?, lower_deviation_pct = ?, cooldown_s = ?, fixed_baseline_ms = ?
+				WHERE id = ? RETURNING created_at`, r.Name, r.Kind, r.Enabled, r.AllNodes, task, metric, threshold, minutes, daysBefore, resourceMetric, recovery,
+				rttMode, baselineMode, window, minSamples, upper, lower, cooldown, fixed, r.ID).Scan(&created)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NotFoundError{Kind: ObjectAlertRule, ID: r.ID}
 			}
@@ -523,6 +672,14 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 				return err
 			}
 		}
+		// 基线行只属于自适应基线的规则，且描述的是这条规则的任务（task_fingerprint 只比任务的种类与目标，换成目标相同的
+		// 另一个任务认不出来）：身份变化或不再是自适应基线时随规则一起提交删除。基线窗口与最小样本数不是身份，行沿用，
+		// 引擎在保存后的下一轮重算按新值重算（Engine.SaveRule 标记）。作用域与任务分配收缩留下的行由重算轮次删除。
+		if identityChanged || !r.AdaptiveBaseline() {
+			if _, err := tx.Exec("DELETE FROM alert_baseline WHERE rule_id = ?", r.ID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -564,7 +721,7 @@ func (s *Store) DeleteAlertRule(ctx context.Context, id int64) error {
 		if err := deleteAlertEntity(tx, "alert_rule", ObjectAlertRule, id); err != nil {
 			return err
 		}
-		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_rule_tag", "alert_state"} {
+		for _, table := range []string{"alert_rule_node", "alert_rule_channel", "alert_rule_tag", "alert_state", "alert_baseline"} {
 			if _, err := tx.Exec("DELETE FROM "+table+" WHERE rule_id = ?", id); err != nil {
 				return err
 			}
@@ -687,7 +844,7 @@ func (s *Store) DeleteNotifyChannel(ctx context.Context, id int64) error {
 }
 
 func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
-	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced FROM alert_state ORDER BY rule_id, node_id")
+	rows, err := s.r.QueryContext(ctx, "SELECT rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at FROM alert_state ORDER BY rule_id, node_id")
 	if err != nil {
 		return nil, err
 	}
@@ -697,10 +854,14 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 		var r StateRow
 		var since int64
 		var recovered sql.NullInt64
-		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered, &r.FiredSilenced); err != nil {
+		var fired int64
+		if err := rows.Scan(&r.RuleID, &r.NodeID, &r.State, &since, &r.FiredExpiresOn, &recovered, &r.FiredSilenced, &fired); err != nil {
 			return nil, err
 		}
 		r.SinceAt = time.Unix(since, 0).UTC()
+		if fired != 0 {
+			r.FiredAt = time.Unix(fired, 0).UTC()
+		}
 		if recovered.Valid {
 			r.RecoveredAt = time.Unix(recovered.Int64, 0).UTC()
 		}
@@ -711,6 +872,8 @@ func (s *Store) ListAlertStates(ctx context.Context) ([]StateRow, error) {
 
 // 两个状态写入口共用事务内准入，单写协程保证删除之后排队的写不能重建孤儿状态。整行替换：每次写都给出
 // fired_expires_on、recovered_at 与 fired_silenced，上一个状态记的值不会留到下一个状态；要沿用时由调用方显式带上。
+// fired_at 例外，由这里按库里的上一行推出（见 StateRow.FiredAt）：从非 firing 写成 firing 记 since，其余沿用上一行的值，
+// 没有上一行时为 0。它不经调用方，所以任何种类、任何写入口进入 firing 都记下它，不会有入口漏带而把冷却的起点抹掉。
 func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since time.Time, firedExpiresOn string, recoveredAt time.Time, firedSilenced bool) error {
 	if err := requireAlertReference(tx, "alert_rule", ObjectAlertRule, ruleID); err != nil {
 		return err
@@ -726,8 +889,18 @@ func setAlertState(tx *sql.Tx, ruleID, nodeID int64, state AlertState, since tim
 	if !recoveredAt.IsZero() {
 		recovered = recoveredAt.Unix()
 	}
-	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered, firedSilenced)
+	var prevState string
+	var prevFired int64
+	err = tx.QueryRow("SELECT state, fired_at FROM alert_state WHERE rule_id = ? AND node_id = ?", ruleID, nodeID).Scan(&prevState, &prevFired)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	firedAt := prevFired
+	if state == StateFiring && AlertState(prevState) != StateFiring {
+		firedAt = since.Unix()
+	}
+	_, err = tx.Exec("INSERT OR REPLACE INTO alert_state (rule_id, node_id, state, since_at, fired_expires_on, recovered_at, fired_silenced, fired_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		ruleID, nodeID, state, since.Unix(), firedExpiresOn, recovered, firedSilenced, firedAt)
 	return err
 }
 

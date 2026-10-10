@@ -32,7 +32,7 @@ func TestMigrationFromV11AddsRecoveredAtAsNull(t *testing.T) {
 	if err := migrated.r.QueryRow("SELECT recovered_at IS NULL FROM alert_state").Scan(&null); err != nil || !null {
 		t.Fatalf("recovered_at after migration is null = %v (%v)", null, err)
 	}
-	want := []StateRow{{RuleID: 3, NodeID: 7, State: StateFiring, SinceAt: time.Unix(1, 0).UTC()}}
+	want := []StateRow{{RuleID: 3, NodeID: 7, State: StateFiring, SinceAt: time.Unix(1, 0).UTC(), FiredAt: time.Unix(1, 0).UTC()}}
 	if states, err := migrated.ListAlertStates(t.Context()); err != nil || !reflect.DeepEqual(states, want) {
 		t.Fatalf("states after migration: %+v %v", states, err)
 	}

@@ -152,7 +152,7 @@ var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 // alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。cleanup_job 的 node_id 指向的
 // 正是已删节点，它是待办而不是从属行，两份清单都不含它。
 var nodeConfigTables = []string{
-	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "probe_cert_presented", "node_coverage",
+	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "probe_cert_presented", "node_coverage", "alert_baseline",
 }
 
 var nodeHistoryTables = append(slices.Clone(metricTables), probeTables...)
@@ -464,7 +464,18 @@ const ddlAlertRule = `CREATE TABLE alert_rule (
   -- 1–365 由 alert.CheckRule 在保存与载入时裁决，存储层不查。列序与迁移 9 的 ADD COLUMN 结果一致。
   days_before INTEGER,
   resource_metric TEXT,
-  recovery_threshold REAL
+  recovery_threshold REAL,
+  -- rtt 判定方式（§9.1）。非 rtt 规则整组为 NULL；rtt 规则的 rtt_mode 恒为 threshold 或 relative（不以 NULL 代表固定阈值），
+  -- 固定阈值下其余七列为 NULL，相对判定下只落所选基线来源用到的列。取值矩阵由 CheckKindFields 裁决。
+  -- 列序与迁移 39 的 ADD COLUMN 结果一致。
+  rtt_mode TEXT,
+  baseline_mode TEXT,
+  baseline_window_s INTEGER,
+  baseline_min_samples INTEGER,
+  upper_deviation_pct REAL,
+  lower_deviation_pct REAL,
+  cooldown_s INTEGER,
+  fixed_baseline_ms REAL
 )`
 const ddlAlertRuleNode = `CREATE TABLE alert_rule_node (
   rule_id INTEGER NOT NULL,
@@ -507,6 +518,26 @@ const ddlAlertState = `CREATE TABLE alert_state (
   -- 该 firing 进入时是否被静默覆盖；静默只抑制投递，恢复投递据此判断配对的 firing 是否真的投递过。恒为 0/1。
   -- 列序与迁移 27 的 ADD COLUMN 结果一致，同样写在 PRIMARY KEY 约束之前。
   fired_silenced INTEGER NOT NULL DEFAULT 0,
+  -- 最近一次进入 firing 的墙钟（Unix 秒），0 表示从未触发；由 setAlertState 按上一行推出（见 StateRow.FiredAt），冷却判定读它。
+  -- 列序与迁移 39 的 ADD COLUMN 结果一致，同样写在 PRIMARY KEY 约束之前。
+  fired_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (rule_id, node_id)
+)`
+
+// alert_baseline 是自适应基线的缓存（§9.1）：每对 (规则, 节点) 一行，引擎的重算轮次每小时写一次，每分钟的评估只读它。
+// baseline_us 是 buckets 个 5 分钟桶均值的中位数（微秒，四舍五入）；buckets 为 0 时 baseline_us 无意义。
+// task_fingerprint 是算出这一行时规则所指任务的种类与目标（TaskFingerprint），与任务当前的指纹不同即作废；
+// accumulate_from 是重新累积的起点（Unix 秒，0 = 无下界）：发现指纹变化时写当下，此后的重算只读它之后的桶。
+// 行随规则删除（DeleteAlertRule）与节点删除（nodeConfigTables）消失；规则不再用自适应基线或身份变化时由
+// SaveAlertRule 删除。
+const ddlAlertBaseline = `CREATE TABLE alert_baseline (
+  rule_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  baseline_us INTEGER NOT NULL,
+  buckets INTEGER NOT NULL,
+  computed_at INTEGER NOT NULL,
+  task_fingerprint TEXT NOT NULL,
+  accumulate_from INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (rule_id, node_id)
 )`
 const ddlAlertEvent = `CREATE TABLE alert_event (
@@ -605,7 +636,7 @@ const ddlSetting = `CREATE TABLE setting (
 func alertStatements() []string {
 	return []string{ddlAlertRule, ddlAlertRuleNode, ddlAlertRuleNodeByNode, ddlAlertRuleChannel,
 		ddlAlertRuleChannelByChannel, ddlNotifyChannel, ddlAlertState, ddlAlertEvent,
-		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending, ddlAlertDeliveryByBatch}
+		ddlAlertEventByNode, ddlAlertEventByAt, ddlAlertDelivery, ddlAlertDeliveryByEvent, ddlAlertDeliveryPending, ddlAlertDeliveryByBatch, ddlAlertBaseline}
 }
 
 // tag 是运维自定义的节点标签（§10）。name 是先建的写法，回显用；name_fold 是 TagFold(name)，UNIQUE 承载"大小写不敏感

@@ -116,7 +116,8 @@ func CheckRule(r store.AlertRule) error {
 				return invalid("threshold", "must be between 0 and 100")
 			}
 		case store.MetricRttMs:
-			if r.Threshold <= 0 {
+			// 相对判定的 threshold 必须为 0，已由 checkKindFields 裁决；它的偏差、冷却与基线字段的范围也在那里。
+			if r.RttMode == store.RttThreshold && r.Threshold <= 0 {
 				return invalid("threshold", "must be greater than 0")
 			}
 		default:

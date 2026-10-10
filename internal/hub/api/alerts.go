@@ -34,6 +34,14 @@ var probeMetrics = map[heronv1.ProbeMetric]store.ProbeMetric{
 	heronv1.ProbeMetric_PROBE_METRIC_LOSS_PCT: store.MetricLossPct,
 	heronv1.ProbeMetric_PROBE_METRIC_RTT_MS:   store.MetricRttMs,
 }
+var rttModes = map[heronv1.RttMode]store.RttMode{
+	heronv1.RttMode_RTT_MODE_THRESHOLD: store.RttThreshold,
+	heronv1.RttMode_RTT_MODE_RELATIVE:  store.RttRelative,
+}
+var baselineModes = map[heronv1.BaselineMode]store.BaselineMode{
+	heronv1.BaselineMode_BASELINE_MODE_ADAPTIVE: store.BaselineAdaptive,
+	heronv1.BaselineMode_BASELINE_MODE_FIXED:    store.BaselineFixed,
+}
 var channelKinds = map[heronv1.ChannelKind]store.ChannelKind{
 	heronv1.ChannelKind_CHANNEL_KIND_TELEGRAM: store.ChannelTelegram,
 	heronv1.ChannelKind_CHANNEL_KIND_WEBHOOK:  store.ChannelWebhook,
@@ -50,7 +58,9 @@ func enumFor[K comparable, V comparable](values map[K]V, value V) K {
 }
 
 func ruleProto(r store.AlertRule) *heronv1.AlertRule {
-	return &heronv1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix(), ResourceMetric: enumFor(resourceMetrics, r.ResourceMetric), RecoveryThreshold: r.RecoveryThreshold, SelectorTags: r.SelectorTags}
+	return &heronv1.AlertRule{Id: r.ID, Name: r.Name, Kind: enumFor(alertKinds, r.Kind), Enabled: r.Enabled, AllNodes: r.AllNodes, NodeIds: r.NodeIDs, ChannelIds: r.ChannelIDs, TaskId: r.TaskID, Metric: enumFor(probeMetrics, r.Metric), Threshold: r.Threshold, ForMinutes: uint32(r.ForMinutes), DaysBefore: uint32(r.DaysBefore), CreatedAt: r.CreatedAt.Unix(), ResourceMetric: enumFor(resourceMetrics, r.ResourceMetric), RecoveryThreshold: r.RecoveryThreshold, SelectorTags: r.SelectorTags,
+		RttMode: enumFor(rttModes, r.RttMode), BaselineMode: enumFor(baselineModes, r.BaselineMode), BaselineWindowS: uint32(r.BaselineWindowS), BaselineMinSamples: uint32(r.BaselineMinSamples),
+		UpperDeviationPct: r.UpperDeviationPct, LowerDeviationPct: r.LowerDeviationPct, CooldownS: uint32(r.CooldownS), FixedBaselineMs: r.FixedBaselineMs}
 }
 
 func (s *Service) ListAlertRules(ctx context.Context, _ *connect.Request[heronv1.ListAlertRulesRequest]) (*connect.Response[heronv1.ListAlertRulesResponse], error) {
@@ -101,11 +111,33 @@ func (s *Service) SaveAlertRule(ctx context.Context, req *connect.Request[heronv
 			return nil, err
 		}
 	}
+	// rtt_mode 的零值是"没发这个字段"：rtt 规则按固定阈值收（不带它的旧客户端保存的就是固定阈值规则），存储层显式落值、
+	// 回显 RTT_MODE_THRESHOLD。其余规则的非零值同样先按协议枚举解析，表外值以协议词汇报错，表内值由 store.CheckKindFields
+	// 以"非 rtt 规则必须不指定"拒绝。
+	var rttMode store.RttMode
+	if r.GetRttMode() != heronv1.RttMode_RTT_MODE_UNSPECIFIED {
+		rttMode, err = parseEnum(rttModes, r.GetRttMode(), "rule", "rtt_mode")
+		if err != nil {
+			return nil, err
+		}
+	} else if kind == store.KindProbe && metric == store.MetricRttMs {
+		rttMode = store.RttThreshold
+	}
+	// baseline_mode 没有旧客户端：零值就是未指定，相对判定下由 store.CheckKindFields 拒绝。
+	var baselineMode store.BaselineMode
+	if r.GetBaselineMode() != heronv1.BaselineMode_BASELINE_MODE_UNSPECIFIED {
+		baselineMode, err = parseEnum(baselineModes, r.GetBaselineMode(), "rule", "baseline_mode")
+		if err != nil {
+			return nil, err
+		}
+	}
 	tags, err := cleanTags("rule.selector_tags", r.GetSelectorTags())
 	if err != nil {
 		return nil, err
 	}
-	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore()), ResourceMetric: resourceMetric, RecoveryThreshold: r.GetRecoveryThreshold(), SelectorTags: tags})
+	saved, err := s.alerts.SaveRule(ctx, store.AlertRule{ID: r.GetId(), Name: r.GetName(), Kind: kind, Enabled: r.GetEnabled(), AllNodes: r.GetAllNodes(), NodeIDs: r.GetNodeIds(), ChannelIDs: r.GetChannelIds(), TaskID: r.GetTaskId(), Metric: metric, Threshold: r.GetThreshold(), ForMinutes: int(r.GetForMinutes()), DaysBefore: int(r.GetDaysBefore()), ResourceMetric: resourceMetric, RecoveryThreshold: r.GetRecoveryThreshold(), SelectorTags: tags,
+		RttMode: rttMode, BaselineMode: baselineMode, BaselineWindowS: int(r.GetBaselineWindowS()), BaselineMinSamples: int(r.GetBaselineMinSamples()),
+		UpperDeviationPct: r.GetUpperDeviationPct(), LowerDeviationPct: r.GetLowerDeviationPct(), CooldownS: int(r.GetCooldownS()), FixedBaselineMs: r.GetFixedBaselineMs()})
 	if err != nil {
 		return nil, s.operationError(err, "rule", "saving alert rule failed")
 	}

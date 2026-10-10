@@ -185,7 +185,7 @@ var changeKinds = map[ChangeKind]changeKindSpec{
 		},
 	},
 	ChangeAlert: {
-		row:       "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold FROM alert_rule WHERE id=?",
+		row:       "SELECT id,name,kind,enabled,all_nodes,task_id,metric,threshold,for_minutes,created_at,days_before,resource_metric,recovery_threshold,rtt_mode,baseline_mode,baseline_window_s,baseline_min_samples,upper_deviation_pct,lower_deviation_pct,cooldown_s,fixed_baseline_ms FROM alert_rule WHERE id=?",
 		relations: []snapshotQuery{{"nodes", "SELECT node_id FROM alert_rule_node WHERE rule_id=? ORDER BY node_id"}, {"tags", "SELECT tag_id FROM alert_rule_tag WHERE rule_id=? ORDER BY tag_id"}, {"channels", "SELECT channel_id FROM alert_rule_channel WHERE rule_id=? ORDER BY channel_id"}},
 		sequence:  "SELECT seq FROM sqlite_sequence WHERE name='alert_rule'",
 		scope: &ruleScopeQueries{

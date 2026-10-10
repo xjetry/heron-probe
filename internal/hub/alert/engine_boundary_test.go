@@ -118,7 +118,7 @@ func TestRuleIdentityChangeClearsState(t *testing.T) {
 			case "task":
 				r.TaskID = nextTask
 			case "metric":
-				r.Metric = store.MetricRttMs
+				r.Metric, r.RttMode = store.MetricRttMs, store.RttThreshold
 			case "threshold":
 				r.Threshold = 30
 			}
@@ -173,6 +173,9 @@ func TestProbeThresholdEqualityFiresAndDoesNotRecover(t *testing.T) {
 			task := f.task(t, f.ids)
 			r := probeRule(task)
 			r.Metric = c.metric
+			if c.metric == store.MetricRttMs {
+				r.RttMode = store.RttThreshold
+			}
 			r.Threshold = c.threshold
 			r = f.rule(t, r)
 			ts := f.clk.Now().Unix() - 120
@@ -190,6 +193,9 @@ func TestProbeThresholdEqualityFiresAndDoesNotRecover(t *testing.T) {
 			task := f.task(t, f.ids)
 			r := probeRule(task)
 			r.Metric, r.Threshold = c.metric, c.threshold
+			if c.metric == store.MetricRttMs {
+				r.RttMode = store.RttThreshold
+			}
 			r = f.rule(t, r)
 			must(t, f.st.SetAlertState(t.Context(), r.ID, f.ids[0], store.StateFiring, f.clk.Now(), time.Time{}))
 			must(t, f.e.Load(t.Context()))

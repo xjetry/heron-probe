@@ -49,7 +49,7 @@ func TestSaveAlertRuleClearsStatesOnIdentityChange(t *testing.T) {
 				}
 				r.TaskID = p.Task.Id
 			case "metric":
-				r.Metric = MetricRttMs
+				r.Metric, r.RttMode = MetricRttMs, RttThreshold
 			case "threshold":
 				r.Threshold = 30
 			case "name":

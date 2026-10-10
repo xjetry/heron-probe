@@ -35,6 +35,10 @@ func renderField(root string, field alert.FieldError) alert.FieldError {
 			return enumFor(probeMetrics, store.ProbeMetric(v)).String()
 		case root == "rule" && field.Path == "resource_metric":
 			return enumFor(resourceMetrics, store.ResourceMetric(v)).String()
+		case root == "rule" && field.Path == "rtt_mode":
+			return enumFor(rttModes, store.RttMode(v)).String()
+		case root == "rule" && field.Path == "baseline_mode":
+			return enumFor(baselineModes, store.BaselineMode(v)).String()
 		case root == "channel" && field.Path == "kind":
 			return enumFor(channelKinds, store.ChannelKind(v)).String()
 		default:

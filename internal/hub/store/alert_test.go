@@ -89,14 +89,14 @@ func TestAlertRuleRoundTripAndScope(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, []AlertRule{wantA, wantB}) {
 		t.Fatalf("listed rules=%+v err=%v", got, err)
 	}
-	wantB.Name, wantB.Enabled, wantB.Metric, wantB.Threshold, wantB.ForMinutes = "changed", false, MetricRttMs, 100, 5
+	wantB.Name, wantB.Enabled, wantB.Metric, wantB.RttMode, wantB.Threshold, wantB.ForMinutes = "changed", false, MetricRttMs, RttThreshold, 100, 5
 	wantB.NodeIDs, wantB.ChannelIDs = []int64{ids[1]}, []int64{cs[1].ID}
 	b = saveRule(t, s, wantB)
 	got, err = s.ListAlertRules(t.Context())
 	if err != nil || !reflect.DeepEqual(got, []AlertRule{wantA, wantB}) || !reflect.DeepEqual(b, wantB) {
 		t.Fatalf("replaced rules=%+v saved=%+v err=%v", got, b, err)
 	}
-	wantB.Kind, wantB.TaskID, wantB.Metric, wantB.Threshold, wantB.ForMinutes = KindOffline, 0, "", 0, 0
+	wantB.Kind, wantB.TaskID, wantB.Metric, wantB.RttMode, wantB.Threshold, wantB.ForMinutes = KindOffline, 0, "", "", 0, 0
 	wantB.NodeIDs, wantB.ChannelIDs = nil, nil
 	saveRule(t, s, wantB)
 	got, err = s.ListAlertRules(t.Context())
@@ -209,7 +209,7 @@ func TestRecordTransitionWritesStateEventAndDeliveries(t *testing.T) {
 		t.Fatalf("persisted event=%+v err=%v", got, err)
 	}
 	states, err := s.ListAlertStates(t.Context())
-	if err != nil || !reflect.DeepEqual(states, []StateRow{{RuleID: r.ID, NodeID: ids[0], State: StateFiring, SinceAt: ev.At}}) {
+	if err != nil || !reflect.DeepEqual(states, []StateRow{{RuleID: r.ID, NodeID: ids[0], State: StateFiring, SinceAt: ev.At, FiredAt: ev.At}}) {
 		t.Fatalf("transition states=%+v err=%v", states, err)
 	}
 }

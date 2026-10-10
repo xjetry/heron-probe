@@ -169,6 +169,10 @@ func TestProbeAlertRuleRoundTrip(t *testing.T) {
 		got := saveRule(t, h, want)
 		want.Id = got.Id
 		want.CreatedAt = h.clk.Now().Unix()
+		// 请求不带 rtt_mode（旧客户端的形状）：rtt 规则按固定阈值收并显式回显，丢包规则保持未指定。
+		if metric == heronv1.ProbeMetric_PROBE_METRIC_RTT_MS {
+			want.RttMode = heronv1.RttMode_RTT_MODE_THRESHOLD
+		}
 		if got.Id == 0 || !proto.Equal(got, want) {
 			t.Fatalf("rule=%v want=%v", got, want)
 		}

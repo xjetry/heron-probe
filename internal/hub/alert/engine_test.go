@@ -270,7 +270,11 @@ func TestEvaluateProbesReadsClosedMinutes(t *testing.T) {
 			task := f.task(t, f.ids)
 			other := f.task(t, f.ids)
 			ts := f.clk.Now().Unix() - 240
-			r := f.rule(t, store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: metricName, Threshold: 20, ForMinutes: 3})
+			r := store.AlertRule{Name: "探测", Kind: store.KindProbe, Enabled: true, AllNodes: true, TaskID: task, Metric: metricName, Threshold: 20, ForMinutes: 3}
+			if metricName == store.MetricRttMs {
+				r.RttMode = store.RttThreshold
+			}
+			r = f.rule(t, r)
 			high := metric.ProbeBucket{Sent: 4, Lost: 2, RttN: 2, RttSumUs: 101_000, RttMinUs: 50_000, RttMaxUs: 51_000}
 			low := metric.ProbeBucket{Sent: 2, Errors: 1, RttN: 1, RttSumUs: 1_000, RttMinUs: 1_000, RttMaxUs: 1_000}
 			f.minutes(t, task, f.ids[0], ts, high, high, high, low)
