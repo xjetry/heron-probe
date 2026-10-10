@@ -15,7 +15,7 @@ func runStats(args []string) error { return runStatsWith(args, os.Stdout) }
 
 // runStatsWith 打印库的逻辑大小、每张表的行数与存储健康读数；数据来自 store.StorageStats，与
 // AdminService.GetStorageStats 同源。除首行 db_bytes 外，不是表行数的读数都在表行数之后、键都带点号
-// （sql.observed_at、表名.oldest、表名.watermark、prune.finished_at、rollup.finished_at），不会与"表名: 行数"混淆：
+// （sql.observed_at、表名.oldest、表名.watermark、prune.finished_at、rollup.finished_at、cleanup.pending），不会与"表名: 行数"混淆：
 // 解析方（scripts/e2e.sh 与 stats_health_test）按"键不带点号且值为整数"认表行，新增读数的键不带点号就会被当成一张表。
 // sql.observed_at 是行数、逻辑大小与健康读数所在 SQL 快照的时刻（Unix 秒），与 wal.observed_at 不是同一时刻。缺失的值写 none。
 // 离线命令不知道运行中 hub 的保留期配置，所以只给原值，不给标红结论（标红见 GetStorageStats）。
@@ -61,6 +61,8 @@ func runStatsWithSource(args []string, out io.Writer, open func(string) (storage
 	}
 	fmt.Fprintf(out, "%s.finished_at: %s\n", store.MaintenancePrune, orNone(stats.LastPrune))
 	fmt.Fprintf(out, "%s.finished_at: %s\n", store.MaintenanceRollup, orNone(stats.LastRollup))
+	// 尚未完成的历史清理作业数，与表行数同一 SQL 快照。
+	fmt.Fprintf(out, "cleanup.pending: %d\n", stats.CleanupPending)
 	fmt.Fprintf(out, "wal.observed_at: %d\n", stats.WAL.ObservedAt)
 	switch {
 	case stats.WAL.Bytes != nil:

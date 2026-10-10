@@ -728,6 +728,8 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 [ "$(get traffic)" = 2 ] || { echo "FAIL: traffic rows"; exit 1; }
 [ "$(get node_facts)" = 2 ] || { echo "FAIL: facts count"; exit 1; }
 [ "$(get metric_1m)" -ge 2 ] || { echo "FAIL: no minute rows"; exit 1; }
+# 删掉的那个探测任务登记了一个清理作业；停机前维护循环可能已把它清完，也可能还没轮到，两种都对，多了不对。
+case "$(get cleanup.pending)" in 0|1) ;; *) echo "FAIL: cleanup.pending"; exit 1 ;; esac
 [ "$(get admin)" = 1 ] || { echo "FAIL: admin row"; exit 1; }
 [ "$(get admin_session)" = 0 ] || { echo "FAIL: session not removed by logout"; exit 1; }
 [ "$(grep -c 'node registered' "$work/hub.log")" = 2 ] || { echo "FAIL: registration log count"; exit 1; }

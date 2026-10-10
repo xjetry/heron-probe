@@ -55,6 +55,14 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if err := st.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// 删一个节点、不跑清理：留下一个待清理作业，两边的 cleanup.pending 都要是 1 而不是零值。
+	gone, _, err := st.CreateNode(ctx, "gone", store.Billing{}, append(make([]byte, 31), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteNode(ctx, gone); err != nil {
+		t.Fatal(err)
+	}
 	plain, hash := auth.NewAPIToken()
 	if _, err := st.CreateAPIToken(ctx, "reader", hash, clk.Now(), 100, nil); err != nil {
 		t.Fatal(err)
@@ -118,13 +126,14 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		}
 	}
 	want = append(want, "prune.finished_at: "+orNoneOf(msg.LastPruneAt != nil, msg.GetLastPruneAt()),
-		"rollup.finished_at: "+orNoneOf(msg.LastRollupAt != nil, msg.GetLastRollupAt()))
+		"rollup.finished_at: "+orNoneOf(msg.LastRollupAt != nil, msg.GetLastRollupAt()),
+		fmt.Sprintf("cleanup.pending: %d", msg.GetCleanupPending()))
 	if !slices.Equal(cli, want) {
 		t.Fatalf("CLI health lines:\n%s\nAPI response as lines:\n%s", strings.Join(cli, "\n"), strings.Join(want, "\n"))
 	}
 	// 两边一致之外，内容本身也要是这次造的数据：否则两边一起为空也会相等。
 	for _, line := range []string{fmt.Sprintf("metric_1m.oldest: %d", ts-ts%60), fmt.Sprintf("probe_1m.oldest: %d", ts-ts%60),
-		fmt.Sprintf("rollup.finished_at: %d", clk.Now().Unix()), "prune.finished_at: none", "metric_1h.oldest: none"} {
+		fmt.Sprintf("rollup.finished_at: %d", clk.Now().Unix()), "prune.finished_at: none", "metric_1h.oldest: none", "cleanup.pending: 1"} {
 		if !slices.Contains(cli, line) {
 			t.Errorf("CLI health lines lack %q:\n%s", line, strings.Join(cli, "\n"))
 		}

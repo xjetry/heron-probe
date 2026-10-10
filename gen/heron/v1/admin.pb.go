@@ -8848,8 +8848,13 @@ type GetStorageStatsResponse struct {
 	// 新 hub 总是给出；缺席表示旧 hub。成功计算完成后 60 秒内复用同一份 SQL 统计，此值不变，
 	// 不能当作请求时刻；wal 仍是每次调用各自的文件观测，两者不承诺同一时刻。
 	SqlObservedAt *int64 `protobuf:"varint,7,opt,name=sql_observed_at,json=sqlObservedAt,proto3,oneof" json:"sql_observed_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 尚未完成的历史清理作业数，与上面的 SQL 统计同一只读事务、同样随 60 秒复用。删除节点或探测任务时登记一个作业，
+	// 维护循环分块删掉它的时序行、复扫为零后作业才完成；非零表示还有已删节点或任务的行占着空间（它们不出现在任何
+	// 查询结果里）。满配节点（64 个任务、默认保留期）一个作业约需 9 个维护周期（分钟）排干；长期不降是清理在反复失败
+	// （原因见 hub 日志）或作业积压。缺席表示旧 hub。
+	CleanupPending *uint64 `protobuf:"varint,8,opt,name=cleanup_pending,json=cleanupPending,proto3,oneof" json:"cleanup_pending,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetStorageStatsResponse) Reset() {
@@ -8927,6 +8932,13 @@ func (x *GetStorageStatsResponse) GetWal() *WalFileObservation {
 func (x *GetStorageStatsResponse) GetSqlObservedAt() int64 {
 	if x != nil && x.SqlObservedAt != nil {
 		return *x.SqlObservedAt
+	}
+	return 0
+}
+
+func (x *GetStorageStatsResponse) GetCleanupPending() uint64 {
+	if x != nil && x.CleanupPending != nil {
+		return *x.CleanupPending
 	}
 	return 0
 }
@@ -11433,7 +11445,7 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\x06digest\x18\x02 \x01(\tR\x06digest\"3\n" +
 	"\x17GetThemePackageResponse\x12\x18\n" +
 	"\apackage\x18\x01 \x01(\fR\apackage\"\x18\n" +
-	"\x16GetStorageStatsRequest\"\x80\x03\n" +
+	"\x16GetStorageStatsRequest\"\xc2\x03\n" +
 	"\x17GetStorageStatsResponse\x12\x19\n" +
 	"\bdb_bytes\x18\x01 \x01(\x04R\adbBytes\x12+\n" +
 	"\x06tables\x18\x02 \x03(\v2\x13.heron.v1.TableRowsR\x06tables\x123\n" +
@@ -11441,10 +11453,12 @@ const file_heron_v1_admin_proto_rawDesc = "" +
 	"\rlast_prune_at\x18\x04 \x01(\x03H\x00R\vlastPruneAt\x88\x01\x01\x12)\n" +
 	"\x0elast_rollup_at\x18\x05 \x01(\x03H\x01R\flastRollupAt\x88\x01\x01\x12.\n" +
 	"\x03wal\x18\x06 \x01(\v2\x1c.heron.v1.WalFileObservationR\x03wal\x12+\n" +
-	"\x0fsql_observed_at\x18\a \x01(\x03H\x02R\rsqlObservedAt\x88\x01\x01B\x10\n" +
+	"\x0fsql_observed_at\x18\a \x01(\x03H\x02R\rsqlObservedAt\x88\x01\x01\x12,\n" +
+	"\x0fcleanup_pending\x18\b \x01(\x04H\x03R\x0ecleanupPending\x88\x01\x01B\x10\n" +
 	"\x0e_last_prune_atB\x11\n" +
 	"\x0f_last_rollup_atB\x12\n" +
-	"\x10_sql_observed_at\"\x89\x01\n" +
+	"\x10_sql_observed_atB\x12\n" +
+	"\x10_cleanup_pending\"\x89\x01\n" +
 	"\x12WalFileObservation\x12\x1f\n" +
 	"\vobserved_at\x18\x01 \x01(\x03R\n" +
 	"observedAt\x12\x16\n" +
