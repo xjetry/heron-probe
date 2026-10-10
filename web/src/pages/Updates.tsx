@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@connectrpc/connect-query";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { errorText } from "../api/auth";
 import { errorBanner, queryGateAll } from "../api/queryGate";
 import { MixedCheckbox } from "../components/MixedCheckbox";
@@ -20,6 +20,14 @@ const labels: Record<string, string> = {
   rolled_back: "已回滚", cancelled: "已取消", expired: "已过期", unconfirmed: "结果未确认",
 };
 const activeStates = new Set(["queued", "dispatched", "downloading", "stopping", "installing", "verifying", "rolling_back"]);
+// 任务的终态（成功、失败、已回滚、已取消、已过期、结果未确认）是历史，不是页面状态：hub 保存它供协议判定（防重放、过期、
+// Superseded），面板只对本页会话发起或取消过的目标显示它；首次进入或刷新后，带终态任务的机器与没有任务的机器显示相同，
+// 按版本对比陈述。进行中的任务对谁都显示：它们是正在发生的事实，别处发起的也要能看到并取消。
+function visibleTask(status: UpdateStatus | undefined, showResult: boolean) {
+  const task = status?.task;
+  if (!task || activeStates.has(task.state) || showResult) return task;
+  return undefined;
+}
 // 取产物的来源由节点安装时的 --update-source 决定（spec §4.10）；更新失败时先看它走的哪条路径。
 const sourceLabels: Record<string, string> = { github: "GitHub 直连", hub: "经 hub 中转" };
 function eligible(status: UpdateStatus | undefined, version: string) {
@@ -50,14 +58,15 @@ function UnsupportedReason({ reason }: { reason: string }) {
     : <span className="muted">不支持在线更新<code className="update-reason-raw">{reason}</code></span>;
 }
 
-function Progress({ status, target }: { status?: UpdateStatus; target: string }) {
+function Progress({ status, target, showResult }: { status?: UpdateStatus; target: string; showResult: boolean }) {
   if (!status) return <span className="muted">尚未收到更新能力，请先升级安装器与 agent。</span>;
+  const task = visibleTask(status, showResult);
   return <div className="update-progress">
     {!status.supported && <UnsupportedReason reason={status.reason} />}
-    {status.task && <><strong>{labels[status.task.state] ?? status.task.state}</strong><span className="muted">目标 {status.task.version}</span>
-      {status.task.state === "unconfirmed" && <span className="muted">下发后等待超时，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
-      {status.task.error && <span className="error">{status.task.error}</span>}</>}
-    {status.supported && !status.task && <span className="muted">{atTarget(status, target) ? "已是目标版本" : "可以在线更新"}</span>}
+    {task && <><strong>{labels[task.state] ?? task.state}</strong><span className="muted">目标 {task.version}</span>
+      {task.state === "unconfirmed" && <span className="muted">下发后等待超时，无法确认执行结果；后续上报仍会校正。重试由节点本机更新器检查是否可执行。</span>}
+      {task.error && <span className="error">{task.error}</span>}</>}
+    {status.supported && !task && <span className="muted">{atTarget(status, target) ? "已是目标版本" : "可以在线更新"}</span>}
   </div>;
 }
 
@@ -73,13 +82,16 @@ export function Updates() {
   const [submitting, setSubmitting] = useState<{ done: number; total: number } | null>(null);
   const busy = submitting !== null;
   const [results, setResults] = useState<string[]>([]);
+  // 提交进度与逐目标结果放在固定高度、内部滚动的弹窗里，而不是页面上逐行往下长的卡片：几十个目标的结果不该把节点表
+  // 顶出视口。提交期间弹窗不可关（busy），结束后由用户关闭；opener 是打开确认框的那个按钮，关闭后焦点回到它。
+  const [progress, setProgress] = useState<{ opener: HTMLElement } | null>(null);
+  // 本页会话发起或取消过更新的目标（hub 为 0n）：只有它们的任务终态会显示（见 visibleTask）。只在 hub 受理之后加入：
+  // 被拒的发起没有建任务，加入只会把别处留下的旧终态翻出来。
+  const [resultTargets, setResultTargets] = useState<Set<bigint>>(new Set());
+  const showResultFor = (id: bigint) => setResultTargets((old) => new Set(old).add(id));
   const check = useMutation(AdminService.method.getUpdates, { onSuccess: (data) => setLatest(data.latestVersion) });
   const start = useMutation(AdminService.method.startUpdate);
-  const cancel = useMutation(AdminService.method.cancelUpdate, { onSuccess: () => { void updates.refetch(); } });
-  const statusRef = useRef<HTMLDivElement>(null);
-  // 确认框关闭时 Modal 要把焦点还给触发按钮，但提交期间那个按钮已被 busy 禁用，focus() 不生效，焦点会落到 body 上；
-  // 改交给显示进度的状态区。
-  useEffect(() => { if (busy) statusRef.current?.focus(); }, [busy]);
+  const cancel = useMutation(AdminService.method.cancelUpdate, { onSuccess: (_data, req) => { if (req.nodeId !== undefined) showResultFor(req.nodeId); void updates.refetch(); } });
   const gate = queryGateAll(updates, nodes);
   if (!gate.ready) return gate.loading ?? errorBanner(...gate.errors);
   const targets = new Map(updates.data!.targets.map((target) => [target.nodeId, target.status]));
@@ -96,15 +108,16 @@ export function Updates() {
   const updatable = rows.filter((node) => eligible(targets.get(node.id), nodeTarget)).map((node) => node.id);
   const chosen = updatable.filter((id) => selected.has(id));
   const nameOf = (id: bigint) => id === 0n ? "Hub" : nodes.data!.nodes.find((node) => node.id === id)?.name ?? `节点 #${id}`;
-  // 确认框只负责确认：点了确认就关闭，逐个提交的进度与每个目标的结果显示在页面的状态区。目标与版本在关闭前取出，
+  // 确认框只负责确认：点了确认就关闭，逐个提交的进度与每个目标的结果显示在进度弹窗里。目标与版本在关闭前取出，
   // 之后的轮询与勾选变化不影响这次提交；提交期间 busy 禁止再打开确认框，同一批目标不会被重复提交。
   const execute = async () => {
     if (!confirmation || busy) return;
-    const { ids, version } = confirmation;
-    setConfirmation(null); setResults([]); setSubmitting({ done: 0, total: ids.length });
+    const { ids, version, opener } = confirmation;
+    setConfirmation(null); setResults([]); setSubmitting({ done: 0, total: ids.length }); setProgress({ opener });
     for (const id of ids) {
       try {
         await start.mutateAsync({ nodeId: id, version });
+        showResultFor(id);
         setResults((old) => [...old, `${nameOf(id)}：更新任务已提交，最终结果以状态回读为准。`]);
       } catch (error) {
         setResults((old) => [...old, `${nameOf(id)}：${errorText(error)}${id === 0n ? "。若连接已断开，请等待状态回读，不能据此判定更新成功或失败。" : ""}`]);
@@ -133,17 +146,13 @@ export function Updates() {
         <div><dt>官方最新正式版</dt><dd>{latest || "尚未检查"}</dd></div>
         <div><dt>绑定的 agent 版本</dt><dd>{updates.data!.boundAgentVersion || "—"}</dd></div>
       </dl>
-      <Progress status={hub} target={latest} />
+      <Progress status={hub} target={latest} showResult={resultTargets.has(0n)} />
       <div className="hub-card-description">
         <p className="muted">只安装 xjetry/heron-probe 正式 Release 中带官方签名的产物，不执行远程命令；节点按安装时的选择直接从 GitHub 或经 hub 中转取得。节点更新到 hub 绑定的 agent 版本；只改 hub 的版本不要求节点升级。</p>
         <p className="muted">首次启用需用新版安装器安装本机更新服务。Docker、OpenRC 与 macOS 请使用各自安装方式。</p>
       </div>
       </div>
     </section>
-    {(submitting || results.length > 0) && <div className="card" role="status" tabIndex={-1} ref={statusRef}>
-      {submitting && <p>正在提交更新任务：{submitting.done}/{submitting.total}</p>}
-      {results.map((result, i) => <p key={i}>{result}</p>)}
-    </div>}
     <div className="page-header"><div><h2>节点 Agent</h2><p className="muted">{nodeTarget ? `目标版本 ${nodeTarget}（hub 绑定的 agent 版本）。` : "这个 hub 没有绑定正式的 agent 版本（开发构建或预发布），不能在线更新节点。"}离线任务最多等待 24 小时；新版本成功上报后才算完成。</p></div>
       <button type="button" disabled={chosen.length === 0 || busy} onClick={(event) => setConfirmation({ ids: chosen, version: nodeTarget, opener: event.currentTarget })}>更新选中节点（{chosen.length}）</button>
     </div>
@@ -158,11 +167,18 @@ export function Updates() {
         <td data-label="节点">{node.name}<small className="muted"> #{String(node.id)}</small></td>
         <td data-label="当前版本"><code>{status?.version || "未知"}</code>{nodeTarget && olderThan(status?.version, nodeTarget) && <span className="badge-attention">低于 {nodeTarget}</span>}</td>
         <td data-label="来源">{sourceLabels[status?.source ?? ""] ?? status?.source ?? "—"}</td>
-        <td data-label="更新状态"><Progress status={status} target={nodeTarget} /></td><td data-label="操作">
+        <td data-label="更新状态"><Progress status={status} target={nodeTarget} showResult={resultTargets.has(node.id)} /></td><td data-label="操作">
           {status?.task?.state === "queued" && <button type="button" disabled={cancel.isPending || busy} onClick={() => cancel.mutate({ nodeId: node.id, id: status.task!.id })}>取消排队</button>}
         </td></tr>;
       })}</tbody>
     </table></div>}
+    {progress && <Modal title="提交更新任务" busy={busy} opener={progress.opener} onClose={() => setProgress(null)}>
+      <div className="modal-body">
+        <p role="status">{submitting ? `正在提交更新任务：${submitting.done}/${submitting.total}` : `已提交 ${results.length} 个目标，最终结果以状态回读为准。`}</p>
+        <ul className="update-results" aria-label="提交结果">{results.map((result, i) => <li key={i}>{result}</li>)}</ul>
+      </div>
+      <div className="modal-footer"><button type="button" disabled={busy} onClick={() => setProgress(null)}>关闭</button></div>
+    </Modal>}
     {confirmation && <Modal title={confirmation.ids[0] === 0n ? "确认更新 Hub" : "确认更新节点"} opener={confirmation.opener} onClose={() => setConfirmation(null)}>
       <div className="modal-body"><p>将 {confirmation.ids.map(nameOf).join("、")} 更新到 <strong>{confirmation.version}</strong>。</p>
         <p className="muted">{confirmation.ids[0] === 0n ? "Hub 将短暂断连。更新器会在停服后备份数据库，启动验证失败时恢复程序和数据库。请等待重新连接后的任务结果。" : "更新会短暂中断节点上报。已经下发的任务无法取消；失败时由本机更新器恢复旧程序。"}</p>

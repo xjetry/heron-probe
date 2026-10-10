@@ -68,10 +68,16 @@ it("批量更新逐目标显示部分失败", async () => {
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
   await screen.findByText(/西雅图：.*节点已在更新/);
   expect(screen.getByText(/东京：更新任务已提交/)).toBeInTheDocument();
+  // 进度与结果在固定高度的弹窗里而不是页面上；提交结束后才能关闭，关闭后弹窗消失、结果不再占页面。
+  const progress = screen.getByRole("dialog", { name: "提交更新任务" });
+  expect(within(progress).getByRole("list", { name: "提交结果" }).children).toHaveLength(2);
+  await waitFor(() => expect(within(progress).getByRole("button", { name: "关闭" })).toBeEnabled());
+  fireEvent.click(within(progress).getByRole("button", { name: "关闭" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "提交更新任务" })).toBeNull());
   expect(ids).toEqual([1n, 3n]);
 });
 
-it("确认后立即关闭确认框，提交进度与结果显示在页面上，提交期间不能再发起", async () => {
+it("确认后立即关闭确认框，提交进度与结果显示在进度弹窗里，提交期间不能关闭它也不能再发起", async () => {
   const ids: bigint[] = [];
   const releases: Array<() => void> = [];
   render({ startUpdate: (req) => new Promise((resolve) => { ids.push(req.nodeId); releases.push(() => resolve({})); }) });
@@ -80,11 +86,12 @@ it("确认后立即关闭确认框，提交进度与结果显示在页面上，�
   fireEvent.click(screen.getByRole("checkbox", { name: "选择 西雅图（#3）" }));
   fireEvent.click(screen.getByRole("button", { name: "更新选中节点（2）" }));
   fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
-  // 第一个请求还没有返回，确认框已经关闭，焦点交给显示进度的状态区。
+  // 第一个请求还没有返回，确认框已经关闭，取而代之的是进度弹窗；提交期间它不能关闭。
   await waitFor(() => expect(ids).toEqual([1n]));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  const status = screen.getByText("正在提交更新任务：0/2").closest<HTMLElement>('[role="status"]')!;
-  await waitFor(() => expect(status).toHaveFocus());
+  expect(screen.queryByRole("dialog", { name: "确认更新节点" })).toBeNull();
+  const progress = screen.getByRole("dialog", { name: "提交更新任务" });
+  expect(within(progress).getByText("正在提交更新任务：0/2")).toBeInTheDocument();
+  expect(within(progress).getByRole("button", { name: "关闭" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "更新选中节点（2）" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "检查官方新版本" })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "选择 东京（#1）" })).toBeDisabled();
@@ -125,19 +132,69 @@ it.each(["", "v0.8.0-rc.1"])("绑定非正式版时不标落后徽章（%s）", 
   expect(screen.queryAllByText(/^低于/)).toHaveLength(0);
 });
 
-it("仅排队任务可取消，回滚原因可见", async () => {
-  const cancelled: unknown[] = [];
-  render({ getUpdates: async () => ({ targets: [
-    { nodeId: 1n, status: { supported: true, version: "v0.2.0", task: { id: "queued-task", version: "v0.3.0", state: "queued" } } },
-    { nodeId: 3n, status: { supported: true, version: "v0.2.0", task: { id: "rollback-task", version: "v0.3.0", state: "rolled_back", error: "new process timeout" } } },
-  ], boundAgentVersion: "v0.3.0" }), cancelUpdate: async (req) => { cancelled.push({ nodeId: req.nodeId, id: req.id }); return {}; } });
-  fireEvent.click(await screen.findByRole("button", { name: "取消排队" }));
-  await waitFor(() => expect(cancelled).toEqual([{ nodeId: 1n, id: "queued-task" }]));
-  expect(screen.getByText("已回滚")).toBeInTheDocument();
-  expect(screen.getByText("new process timeout")).toBeInTheDocument();
-});
 
 type TargetsInit = NonNullable<Exclude<MessageInitShape<typeof GetUpdatesResponseSchema>, GetUpdatesResponse>["targets"]>;
+
+it("仅排队任务可取消；本页取消的任务，回读到的已取消终态显示出来", async () => {
+  const cancelled: unknown[] = [];
+  let current: TargetsInit = [
+    { nodeId: 1n, status: { supported: true, version: "v0.2.0", task: { id: "queued-task", version: "v0.3.0", state: "queued" } } },
+    { nodeId: 3n, status: { supported: true, version: "v0.2.0", task: { id: "rollback-task", version: "v0.3.0", state: "rolled_back", error: "new process timeout" } } },
+  ];
+  render({ getUpdates: async () => ({ targets: current, boundAgentVersion: "v0.3.0" }), cancelUpdate: async (req) => {
+    cancelled.push({ nodeId: req.nodeId, id: req.id });
+    current = current.map((t) => t.nodeId === 1n ? { ...t, status: { ...t.status, task: { id: "queued-task", version: "v0.3.0", state: "cancelled" } } } : t) as TargetsInit;
+    return {};
+  } });
+  fireEvent.click(await screen.findByRole("button", { name: "取消排队" }));
+  await waitFor(() => expect(cancelled).toEqual([{ nodeId: 1n, id: "queued-task" }]));
+  // 取消成功后页面重取状态：本页取消的东京显示已取消；西雅图的回滚是别处留下的历史，仍不显示。
+  expect(await within(screen.getByRole("row", { name: /东京/ })).findByText("已取消")).toBeInTheDocument();
+  expect(screen.queryByText("已回滚")).toBeNull();
+  expect(screen.queryByText("new process timeout")).toBeNull();
+});
+
+// 终态任务是 hub 保存的历史，不是页面状态：首次进入看到的只有进行中的任务与版本对比（Updates.tsx 的 visibleTask）。
+it("首次进入时不显示任务终态，带终态任务的机器按版本对比陈述；进行中的任务照常显示", async () => {
+  render({ getUpdates: async () => ({ targets: [
+    { nodeId: 0n, status: { supported: true, version: "v0.3.0", task: { id: "hub-task", version: "v0.3.0", state: "succeeded" } } },
+    { nodeId: 1n, status: { supported: true, version: "v0.3.0", task: { id: "done-task", version: "v0.3.0", state: "succeeded" } } },
+    { nodeId: 2n, status: { supported: true, version: "v0.2.0", task: { id: "failed-task", version: "v0.3.0", state: "failed", error: "read official release: context deadline exceeded" } } },
+    { nodeId: 3n, status: { supported: true, version: "v0.2.0", task: { id: "running-task", version: "v0.3.0", state: "downloading" } } },
+  ], latestVersion: "", boundAgentVersion: "v0.3.0" }) });
+  expect(within(await screen.findByRole("row", { name: /东京/ })).getByText("已是目标版本")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /香港/ })).getByText("可以在线更新")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /西雅图/ })).getByText("下载并校验")).toBeInTheDocument();
+  expect(screen.queryByText("更新成功")).toBeNull();
+  expect(screen.queryByText("更新失败")).toBeNull();
+  expect(screen.queryByText(/context deadline exceeded/)).toBeNull();
+  // 失败过的香港仍可再次发起：终态不占用资格。
+  expect(screen.getByRole("checkbox", { name: "选择 香港（#2）" })).toBeEnabled();
+});
+
+it("本页发起的更新，回读到的终态显示出来；别处的终态仍不显示", async () => {
+  let current: TargetsInit = [
+    { nodeId: 1n, status: { supported: true, version: "v0.2.0" } },
+    { nodeId: 3n, status: { supported: true, version: "v0.2.0", task: { id: "old-task", version: "v0.3.0", state: "failed", error: "old failure" } } },
+  ];
+  const { queryClient } = render({
+    getUpdates: async (req) => ({ targets: current, latestVersion: req.checkLatest ? "v0.3.0" : "", boundAgentVersion: "v0.3.0" }),
+    startUpdate: async (req) => {
+      current = current.map((t) => t.nodeId === req.nodeId ? { ...t, status: { ...t.status, task: { id: "new-task", version: "v0.3.0", state: "succeeded" } } } : t) as TargetsInit;
+      return {};
+    },
+  });
+  await check();
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 东京（#1）" }));
+  fireEvent.click(screen.getByRole("button", { name: "更新选中节点（1）" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "确认更新" }));
+  await screen.findByText(/东京：更新任务已提交/);
+  await act(async () => { await queryClient.refetchQueries({ queryKey: createConnectQueryKey({ schema: AdminService.method.getUpdates, cardinality: "finite" }) }); });
+  expect(await within(screen.getByRole("row", { name: /东京/ })).findByText("更新成功")).toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /西雅图/ })).getByText("可以在线更新")).toBeInTheDocument();
+  expect(screen.queryByText("更新失败")).toBeNull();
+  expect(screen.queryByText("old failure")).toBeNull();
+});
 const selectAll = () => screen.getByRole("checkbox", { name: "选择全部可更新节点" });
 const row = (name: string) => screen.getByRole("checkbox", { name: `选择 ${name}` });
 
