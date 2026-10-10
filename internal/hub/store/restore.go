@@ -160,9 +160,10 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 	}
 	// node 来自配置快照，始终由它决定哪些节点存在，与两层时刻的先后无关。
 	// schema 没有级联外键，整表替换也不能表达跨层清理；逐表显式删除并记录数量。
-	// nodeDependentTables 同时约束 DeleteNode，审计历史的排除口径不在恢复侧另列。
+	// 两份清单与 DeleteNode 共用，审计历史的排除口径不在恢复侧另列。时序行在这里同步删而不是登记作业：
+	// 节点可能在配置快照与指标快照之间被删且当时的清理已完成，配置层里没有它的作业，不能指望作业兜底。
 	result.Orphans = make(map[string]int64)
-	for _, table := range nodeDependentTables {
+	for _, table := range append(slices.Clone(nodeConfigTables), nodeHistoryTables...) {
 		res, e := tx.ExecContext(ctx, "DELETE FROM main."+table+" WHERE NOT EXISTS (SELECT 1 FROM main.node WHERE id = "+table+".node_id)")
 		if e != nil {
 			return result, e
@@ -172,6 +173,11 @@ func Restore(ctx context.Context, path, config, metrics, themesDir string, now t
 			return result, e
 		}
 		result.Orphans[table] = count
+	}
+	// 任务同样以配置层为准：指标层里配置快照没有的任务（在两次快照之间建或删）的行是孤儿。它们量大且读侧已按
+	// probe_task 过滤，所以登记作业交给维护循环，不在恢复事务里删。配置快照自带的作业已随 cleanup_job 整表恢复。
+	if err = enqueueOrphanTaskCleanup(ctx, tx, now.Unix()); err != nil {
+		return result, err
 	}
 	result.RestoredAt = now.Unix()
 	orphans, err := json.Marshal(result.Orphans)
@@ -470,6 +476,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			}
 		case 37:
 			// 离线变更代数表不属于任一备份层；目标库的那一行由 Restore 重新种子。
+		case 38:
+			// 清理作业在配置层；旧快照没有作业，它的删除在当时已同步清掉了历史。
+			if layer == "config" {
+				statements = migrationV38Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}

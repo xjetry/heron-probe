@@ -68,14 +68,21 @@ type family struct {
 	extraKey string
 	values   func() []string
 	aggs     func() []string
+	// live 把源行限定在配置层里仍存在的主体上：节点在 node 表里，探测行的任务在 probe_task 表里。删除节点或任务的
+	// 事务只删配置层并登记清理作业（cleanup.go），时序行在作业完成前仍在表里；所有历史读都经 rangeSQL 带上它，
+	// 与主体存在性判定在同一个读快照里，这些孤儿行因此不出现在任何查询结果里，与准入检查和读之间是否插进了删除无关。
+	// 它只过滤、不参与定位，没有占位符：每条源查询仍按 keyWhere 的前导键 SEARCH，读到的行（额度计数的对象）含孤儿行。
+	live string
 }
 
 var metricFamily = &family{name: "metric", tables: metricTables, states: []string{"", "5m", "1h"},
 	values: func() []string { return append(metricColumnNames(), "minutes", "observed", "both") },
-	aggs:   func() []string { return append(aggregates(), coverageAggregates()...) }}
+	aggs:   func() []string { return append(aggregates(), coverageAggregates()...) },
+	live:   "node_id IN (SELECT id FROM node)"}
 
 var probeFamily = &family{name: "probe", tables: probeTables, states: []string{"", "probe_5m", "probe_1h"},
-	extraKey: "task_id", values: probeValueColumns, aggs: probeAggregates}
+	extraKey: "task_id", values: probeValueColumns, aggs: probeAggregates,
+	live: "node_id IN (SELECT id FROM node) AND task_id IN (SELECT id FROM probe_task)"}
 
 // 水位各自独立，成功完成全部族时结果与顺序无关；Rollup 在首个错误处返回，
 // 前一族失败时后一族本轮不上卷。
@@ -365,7 +372,7 @@ func (f *family) rangeSQL(i int, shape queryShape) string {
 	if f == metricFamily {
 		columns = "node_id, ts, " + strings.Join(append(metricColumnNames(), coverageSource(i)...), ", ") + fmt.Sprintf(", %d AS source_width", levels[i].Bucket)
 	}
-	return "SELECT " + columns + " FROM " + f.tables[i] + byTaskHint(f, i, shape) + " WHERE " + shape.keyWhere + " AND ts >= ? AND ts <= ?"
+	return "SELECT " + columns + " FROM " + f.tables[i] + byTaskHint(f, i, shape) + " WHERE " + shape.keyWhere + " AND " + f.live + " AND ts >= ? AND ts <= ?"
 }
 
 // byTaskHint 给对比形状的每条源查询钉 INDEXED BY <表>_by_task。store 从不跑 ANALYZE，无统计时
@@ -557,7 +564,7 @@ func nextMaintenanceAt(wall time.Time) time.Time {
 	return wall.Truncate(MaintenanceInterval).Add(MaintenanceInterval + 2*time.Second)
 }
 
-// RunMaintenance 按分钟边界调度上卷与清理；一轮维护使用 Background，
+// RunMaintenance 按分钟边界调度上卷、清理与已删主体的历史清理；一轮维护使用 Background，
 // 因而取消只在等待下一轮时生效，已开始的一轮会完成后再退出。
 // AlertEvents 为零会以现在为截止点删除此前全部事件，不能视作禁用清理。
 // 本入口拒绝非法装配，不依赖调用方记得校验；serve 的 Validate 另提供启动时的友好错误。
@@ -586,6 +593,13 @@ func (s *Store) RunMaintenance(ctx context.Context, r Retention) {
 				s.log.Error("prune alert events failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("pruned expired alert events", "events", n)
+			}
+			// 已删主体的历史清理也不依赖上卷：被删的行不再有读者，上卷失败时照样清。放在上卷与 prune 之后：清理有
+			// 每轮预算（cleanupTimePerRound），排在前面会推迟本轮的上卷。
+			if round, err := s.CleanupDeleted(context.Background()); err != nil {
+				s.log.Error("listing cleanup jobs failed", "err", err)
+			} else if round.Slices > 0 || round.Completed > 0 || round.Failed > 0 {
+				s.log.Info("cleaned up deleted history", "slices", round.Slices, "completed_jobs", round.Completed, "failed_jobs", round.Failed)
 			}
 		}
 	}
@@ -625,9 +639,9 @@ func alignWindow(from, to, step int64) (int64, int64) {
 }
 
 // QueryProbes 与 QueryMetrics 共用级别校验与窗口对齐；每任务的桶按 TaskID、TS 升序返回。
-// 额度权重取每节点任务分配上限：这是对当前配置的计数，不是历史序列上限——删除任务的历史
-// 保留，任务更替频繁的节点在一个窗口里可以有远多于它的序列（ReadQuotaError 按实际行数裁决）。
-// seriesEstimate 是节点当前的任务数，只用来选首次池（0 退回上限）；它同样数不到已删任务的历史序列，
+// 额度权重取每节点任务分配上限：这是对当前配置的计数，不是历史序列上限——从节点撤下、仍存在的任务的历史照常可读，
+// 已删任务的行在清理完成前也被读到（只是不出现在结果里），任务更替频繁的节点在一个窗口里可以有远多于它的序列
+// （ReadQuotaError 按实际行数裁决）。seriesEstimate 是节点当前的任务数，只用来选首次池（0 退回上限）；它同样数不到这些序列，
 // 偏小时由轻池的封顶计数兜住（见 queryFamily）。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64, seriesEstimate int) ([]metric.ProbeRow, error) {
 	return s.queryProbes(ctx, requestRead, nodeID, from, to, lv, step, seriesEstimate)

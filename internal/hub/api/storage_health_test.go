@@ -41,9 +41,14 @@ func TestGetStorageStatsReportsHealthWithStaleness(t *testing.T) {
 	edge := now - 7*day - 60 - 60
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
+	// 探测历史只为存在的任务落库（WriteMinuteBatch 拒收不存在的任务的行）。
+	saved, _, err := h.store.SaveProbeTask(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: node, TS: edge - 60, CoverageStart: edge - 60, Bucket: b}},
-		Probes: []metric.ProbeRow{{NodeID: node, TS: edge, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
+		Probes: []metric.ProbeRow{{NodeID: node, TS: edge, TaskID: saved.Task.Id, Bucket: &metric.ProbeBucket{Sent: 1}}},
 	}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), batch); err != nil {
 		t.Fatal(err)
@@ -120,7 +125,12 @@ func TestGetStorageStatsUsesTheConfiguredRetention(t *testing.T) {
 	node, _ := h.createNode(t, "n")
 	now := h.clk.Now().Unix()
 	staleTS := now - 7*3600
-	batch := metric.Batch{Probes: []metric.ProbeRow{{NodeID: node, TS: staleTS, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}}}
+	// 探测历史只为存在的任务落库（WriteMinuteBatch 拒收不存在的任务的行）。
+	saved, _, err := h.store.SaveProbeTask(t.Context(), validProbeTask(), store.NodeSelector{AllNodes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := metric.Batch{Probes: []metric.ProbeRow{{NodeID: node, TS: staleTS, TaskID: saved.Task.Id, Bucket: &metric.ProbeBucket{Sent: 1}}}}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), batch); err != nil {
 		t.Fatal(err)
 	}

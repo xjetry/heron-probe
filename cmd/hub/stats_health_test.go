@@ -37,12 +37,16 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	task, _, err := st.SaveProbeTask(ctx, &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 60, TimeoutMs: 1000}, store.NodeSelector{AllNodes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ts := clk.Now().Add(-time.Hour).Unix()
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: node, TS: ts, CoverageStart: ts, Bucket: b}},
-		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
+		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: task.Task.Id, Bucket: &metric.ProbeBucket{Sent: 1}}},
 	}
 	if _, err := st.WriteMinuteBatch(ctx, batch); err != nil {
 		t.Fatal(err)

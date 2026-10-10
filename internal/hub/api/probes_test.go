@@ -161,15 +161,25 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 	h := newHarness(t, "")
 	h.login(t)
 	id, _ := h.createNode(t, "n")
+	// 探测历史只为存在的任务落库、只对存在的任务可读：三个任务按 7、9、8 的先后建，显示顺序即建立顺序。
+	var tasks []uint64
+	for range 3 {
+		saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{id}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasks = append(tasks, saved.Msg.GetTask().GetTask().GetId())
+	}
+	t7, t9, t8 := tasks[0], tasks[1], tasks[2]
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	rows := []metric.ProbeRow{
-		{NodeID: id, TS: base + 180, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 2, Errors: 2}},
-		{NodeID: id, TS: base + 120, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 900, RttMinUs: 900, RttMaxUs: 900}},
-		{NodeID: id, TS: base + 120, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1}},
-		{NodeID: id, TS: base + 60, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 2, Lost: 2}},
-		{NodeID: id, TS: base, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 4, Lost: 1, Errors: 1, RttN: 2, RttSumUs: 600, RttMinUs: 200, RttMaxUs: 400}},
-		{NodeID: id, TS: base + 60, TaskID: 9, Bucket: &metric.ProbeBucket{}},
-		{NodeID: id, TS: base, TaskID: 8, Bucket: &metric.ProbeBucket{}},
+		{NodeID: id, TS: base + 180, TaskID: t7, Bucket: &metric.ProbeBucket{Sent: 2, Errors: 2}},
+		{NodeID: id, TS: base + 120, TaskID: t9, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 900, RttMinUs: 900, RttMaxUs: 900}},
+		{NodeID: id, TS: base + 120, TaskID: t7, Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1}},
+		{NodeID: id, TS: base + 60, TaskID: t7, Bucket: &metric.ProbeBucket{Sent: 2, Lost: 2}},
+		{NodeID: id, TS: base, TaskID: t7, Bucket: &metric.ProbeBucket{Sent: 4, Lost: 1, Errors: 1, RttN: 2, RttSumUs: 600, RttMinUs: 200, RttMaxUs: 400}},
+		{NodeID: id, TS: base + 60, TaskID: t9, Bucket: &metric.ProbeBucket{}},
+		{NodeID: id, TS: base, TaskID: t8, Bucket: &metric.ProbeBucket{}},
 	}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
 		t.Fatal(err)
@@ -179,14 +189,17 @@ func TestQueryProbesGroupsPerTaskAndOmitsEmptyPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := &heronv1.QueryProbesResponse{Level: "1m", StepS: 60, Series: []*heronv1.ProbeSeries{
-		{TaskId: 7, Samples: []*heronv1.ProbeSample{
+		{TaskId: t7, Samples: []*heronv1.ProbeSample{
 			{Ts: base, Sent: 4, Lost: 1, Errors: 1, RttMeanUs: proto.Uint32(300), RttMinUs: proto.Uint32(200), RttMaxUs: proto.Uint32(400)},
 			{Ts: base + 60, Sent: 2, Lost: 2},
 			{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(0), RttMinUs: proto.Uint32(0), RttMaxUs: proto.Uint32(0)},
 			{Ts: base + 180, Sent: 2, Errors: 2},
 		}},
-		{TaskId: 9, Samples: []*heronv1.ProbeSample{{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(900), RttMinUs: proto.Uint32(900), RttMaxUs: proto.Uint32(900)}}},
+		{TaskId: t9, Samples: []*heronv1.ProbeSample{{Ts: base + 120, Sent: 1, RttMeanUs: proto.Uint32(900), RttMinUs: proto.Uint32(900), RttMaxUs: proto.Uint32(900)}}},
 	}}
+	for _, series := range resp.Msg.Series {
+		series.Kind, series.Target = 0, "" // 标注由 TestQueryProbesLabelsSeriesWithCurrentTaskConfig 覆盖，这里只比样本与分组
+	}
 	if !proto.Equal(resp.Msg, want) {
 		t.Fatalf("history=%v want=%v", resp.Msg, want)
 	}
@@ -236,8 +249,8 @@ func TestProbeAndMetricQueriesShareWindowValidation(t *testing.T) {
 }
 
 // 图例要的种类与目标随序列下发，取自查询时的任务清单：改过目标的任务按新目标标注，
-// 没分配给被查节点的任务照样标注（管理端口径与分配无关），
-// 清单里已没有的任务（删除后仍有历史）两者都空，由客户端退回编号。
+// 没分配给被查节点的任务照样标注（管理端口径与分配无关）。已删除的任务不出现：它的历史在清理完成前
+// 还在库里，但读侧按配置层判定任务存在，删除即对读者消失。
 func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, "")
@@ -258,7 +271,14 @@ func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	unassigned := other.Msg.GetTask().GetTask().GetId()
-	gone := task + 1000
+	deleted, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{
+		Task:    &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_TCP, Target: "10.0.0.2:22", IntervalS: 30, TimeoutMs: 1000},
+		NodeIds: []int64{id},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := deleted.Msg.GetTask().GetTask().GetId()
 	base := h.clk.Now().Truncate(time.Hour).Unix()
 	rows := []metric.ProbeRow{
 		{NodeID: id, TS: base, TaskID: task, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}},
@@ -266,6 +286,9 @@ func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
 		{NodeID: id, TS: base, TaskID: gone, Bucket: &metric.ProbeBucket{Sent: 1, Lost: 1}},
 	}
 	if _, err := h.store.WriteMinuteBatch(t.Context(), metric.Batch{Probes: rows}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admin.DeleteProbeTask(t.Context(), connect.NewRequest(&heronv1.DeleteProbeTaskRequest{Id: gone})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{
@@ -285,7 +308,6 @@ func TestQueryProbesLabelsSeriesWithCurrentTaskConfig(t *testing.T) {
 	want := map[uint64]label{
 		task:       {heronv1.ProbeKind_PROBE_KIND_ICMP, "192.0.2.1"},
 		unassigned: {heronv1.ProbeKind_PROBE_KIND_TCP, "10.0.0.1:22"},
-		gone:       {},
 	}
 	got := map[uint64]label{}
 	for _, s := range resp.Msg.GetSeries() {

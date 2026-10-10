@@ -30,6 +30,7 @@ func readsWithPoolHeld(t *testing.T, s *Store, held *sql.DB, name string, read f
 func TestProbeSeriesEstimatePicksFirstPool(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 1, 2)
 	id, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestProbeSeriesEstimatePicksFirstPool(t *testing.T) {
 func TestComparisonEstimateUsesNodeCount(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 7)
 	const base = int64(86400 * 10)
 	var nodes []int64
 	for i := range MaxComparisonNodes {

@@ -539,7 +539,9 @@ type QueryProbesResponse struct {
 	Level string `protobuf:"bytes,1,opt,name=level,proto3" json:"level,omitempty"`
 	// 每个点覆盖的秒数；是所选级别桶长的整数倍。
 	StepS uint32 `protobuf:"varint,2,opt,name=step_s,json=stepS,proto3" json:"step_s,omitempty"`
-	// 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除任务排在现有任务之后、按 task_id 升序。
+	// 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除的任务不出现：删除一提交，它的历史就不再返回，
+	// 库里的残留行由维护循环随后删掉。AdminService 上调用方看不到的任务（受限 token 的范围之外）排在可见任务之后、
+	// 按 task_id 升序。
 	Series        []*ProbeSeries `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -602,9 +604,9 @@ type ProbeSeries struct {
 	// 按 ts 升序；只包含 sent > 0 的点，缺失的 ts 表示该段没有结果。
 	Samples []*ProbeSample `protobuf:"bytes,2,rep,name=samples,proto3" json:"samples,omitempty"`
 	// 任务的种类与目标，查询时从任务清单读取；不标注时 kind 为 PROBE_KIND_UNSPECIFIED、target 为空串，
-	// 客户端退回用 task_id 称呼。AdminService.QueryProbes 按任务当前的配置标注：改过目标的任务整段历史按新目标标注，
-	// 已删除的任务不标注。PublicService.QueryProbes 只标注当前分配给被查节点的任务：节点公开即公开它正在探测的目标，
-	// 已从该节点撤下的任务，当前目标不一定被该节点探测过，不标注。
+	// 客户端退回用 task_id 称呼。AdminService.QueryProbes 按调用方可见的任务当前的配置标注：改过目标的任务整段历史按新目标
+	// 标注，调用方看不到的任务不标注（已删除的任务不出现在序列里）。PublicService.QueryProbes 只标注当前分配给被查节点的
+	// 任务：节点公开即公开它正在探测的目标，已从该节点撤下的任务，当前目标不一定被该节点探测过，不标注。
 	Kind          ProbeKind `protobuf:"varint,3,opt,name=kind,proto3,enum=heron.v1.ProbeKind" json:"kind,omitempty"`
 	Target        string    `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
 	unknownFields protoimpl.UnknownFields

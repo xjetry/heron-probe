@@ -20,11 +20,18 @@ var schemaV33 = append(slices.Clone(schemaV32),
 	`CREATE INDEX probe_1h_by_task ON probe_1h (task_id, node_id, ts)`,
 )
 
-// seedProbeByTask 给 32 版旧库留下一行探测历史：迁移只是加索引，旧行必须原样保留。
+// seedProbeByTask 给 32 版旧库留下一行探测历史：迁移只是加索引，旧行必须原样保留。节点与任务都存在，
+// 这行不是孤儿，迁移后的查询能读到它。
 func seedProbeByTask(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec("INSERT INTO probe_1m (node_id, ts, task_id, sent, lost, rtt_sum_us) VALUES (7, 60, 3, 2, 1, 300)"); err != nil {
-		t.Fatal(err)
+	for _, q := range []string{
+		"INSERT INTO node (id, name, token_hash, created_at) VALUES (7, 'kept', x'00', 1)",
+		"INSERT INTO probe_task (id, kind, target, interval_s, timeout_ms, created_at) VALUES (3, 1, 'example.com', 60, 1000, 1)",
+		"INSERT INTO probe_1m (node_id, ts, task_id, sent, lost, rtt_sum_us) VALUES (7, 60, 3, 2, 1, 300)",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -58,6 +65,7 @@ func TestRestoreMigratesV32MetricsSnapshotAndKeepsProbeByTaskIndexes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedProbeTasks(t, source, 5)
 	if _, err := source.WriteMinuteBatch(ctx, metric.Batch{Probes: []metric.ProbeRow{probeRow(id, 60, 5, []uint32{300}, 1, 0)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +85,7 @@ func TestRestoreMigratesV32MetricsSnapshotAndKeepsProbeByTaskIndexes(t *testing.
 			}
 		}
 	}
-	if _, err := old.Exec("UPDATE snapshot_meta SET schema_version = 32"); err != nil {
+	if _, err := old.Exec("DROP TABLE IF EXISTS cleanup_job; UPDATE snapshot_meta SET schema_version = 32"); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {

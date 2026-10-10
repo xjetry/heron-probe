@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -313,6 +314,7 @@ func TestProbeComparisonAcrossWatermarkBoundary(t *testing.T) {
 func TestProbeComparisonKeepsNullRttBuckets(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 3)
 	a, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
@@ -345,33 +347,55 @@ func TestProbeComparisonKeepsNullRttBuckets(t *testing.T) {
 	}
 }
 
-// 任务删除后历史仍在（§8.3），对比查询照旧按行返回；没有历史的任务结果为空。
-func TestProbeComparisonServesDeletedTaskHistory(t *testing.T) {
+// 删除任务或节点之后，它们的历史在清理作业完成前仍在表里，但对比查询立即看不到：读侧按配置层判定主体存在
+// （family.live），与准入检查是否早于删除无关。其余节点、其余任务的结果在删除前后、清理前后逐字相同。
+func TestProbeComparisonOmitsDeletedTaskAndNodeHistory(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
-	a, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
+	ctx := t.Context()
+	task, base, a, b := comparisonFixture(t, s)
+	other, _, err := s.SaveProbeTask(ctx, &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.2", IntervalS: 60, TimeoutMs: 1000}, NodeSelector{AllNodes: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := s.CreateNode(t.Context(), "b", Billing{}, hash(2))
-	if err != nil {
+	var rows []metric.ProbeRow
+	for i := range 10 {
+		rows = append(rows, probeRow(a, base+int64(i)*60, other.Task.Id, []uint32{700}, 0, 0), probeRow(b, base+int64(i)*60, other.Task.Id, []uint32{800}, 1, 0))
+	}
+	seedMinute(t, s, rows...)
+	query := func(task uint64, nodes ...int64) map[int64]map[int64]*metric.ProbeBucket {
+		t.Helper()
+		rows, err := s.QueryProbeComparison(ctx, task, nodes, base, base+3600, levels[0], 60)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return comparisonSamples(rows)
+	}
+	if got := query(task, a, b); len(got[a]) != 60 || len(got[b]) != 60 {
+		t.Fatalf("before delete: %d/%d buckets, want 60/60", len(got[a]), len(got[b]))
+	}
+	untouched := query(other.Task.Id, a)
+	if _, err := s.DeleteProbeTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	base := int64(3600)
-	seedMinute(t, s,
-		probeRow(a, base, 9, []uint32{900}, 0, 0),
-		probeRow(b, base, 9, []uint32{901}, 0, 0),
-	)
-	rows, err := s.QueryProbeComparison(t.Context(), 9, []int64{a, b}, base, base+3600, levels[0], 60)
-	if err != nil {
+	if got := query(task, a, b); len(got) != 0 {
+		t.Fatalf("deleted task's history answered a comparison before cleanup: %d nodes", len(got))
+	}
+	if err := s.DeleteNode(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	if got := comparisonSamples(rows); len(got[a]) != 1 || len(got[b]) != 1 {
-		t.Fatalf("deleted-task history must still answer: %+v", got)
+	if got := query(other.Task.Id, a, b); len(got[b]) != 0 || !reflect.DeepEqual(got[a], untouched[a]) {
+		t.Fatalf("after deleting node %d: got %d buckets for it; other node unchanged=%v", b, len(got[b]), reflect.DeepEqual(got[a], untouched[a]))
 	}
-	missing, err := s.QueryProbeComparison(t.Context(), 424242, []int64{a}, base, base+3600, levels[0], 60)
-	if err != nil || len(missing) != 0 {
-		t.Fatalf("task without history = %v %v, want empty", missing, err)
+	if _, err := s.CleanupDeleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := query(other.Task.Id, a); !reflect.DeepEqual(got, untouched) {
+		t.Fatalf("surviving series changed across cleanup: got %v want %v", got, untouched)
+	}
+	var left int
+	if err := s.r.QueryRow("SELECT count(*) FROM probe_1m WHERE task_id = ? OR node_id = ?", task, b).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("cleanup left %d rows of the deleted task and node (%v)", left, err)
 	}
 }
 
@@ -731,16 +755,18 @@ func TestAlertWindowStaysWithinQuota(t *testing.T) {
 	}
 	now := clk.Now().Unix()
 	var probes []metric.ProbeRow
-	// 65 个任务编号（64 个满配槽 + 1 个已删除残留）在最近 61 分钟里每分钟各有一行。
+	// 65 个任务编号（64 个满配槽 + 1 个已删除、清理尚未完成的残留）在最近 61 分钟里每分钟各有一行。残留行不出现在
+	// 结果里，但查询照样读到它们，额度按读到的行计。残留行绕过写入口直接写：写入口拒收已删任务的行。
+	for task := uint64(1); task <= 64; task++ {
+		seedProbeTasks(t, s, task)
+	}
 	for task := uint64(1); task <= 65; task++ {
 		for m := int64(0); m <= 60; m++ {
 			probes = append(probes, metric.ProbeRow{NodeID: id, TS: now - m*60, TaskID: task,
 				Bucket: &metric.ProbeBucket{Sent: 1, RttN: 1, RttSumUs: 100, RttMinUs: 100, RttMaxUs: 100}})
 		}
 	}
-	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: probes}); err != nil {
-		t.Fatal(err)
-	}
+	seedRawProbes(t, s, probes...)
 	minute, _ := LevelByName("1m")
 	// 与 engine.go 的调用同参：from = minuteTS-(for_minutes-1)*60，to = minuteTS+60，step 60。
 	rows, err := s.QueryProbes(ctx, id, now-59*60, now+60, minute, 60, 0)
@@ -748,8 +774,8 @@ func TestAlertWindowStaysWithinQuota(t *testing.T) {
 		t.Fatalf("alert-shaped window must stay within quota: %v", err)
 	}
 	// 窗口覆盖 m=0..59 共 60 分钟（to = minuteTS+60 是开区间端点）。
-	if len(rows) != 65*60 {
-		t.Fatalf("rows = %d, want %d", len(rows), 65*60)
+	if len(rows) != 64*60 {
+		t.Fatalf("rows = %d, want %d", len(rows), 64*60)
 	}
 }
 

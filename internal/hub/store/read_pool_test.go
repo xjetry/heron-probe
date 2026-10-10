@@ -371,6 +371,7 @@ func poolWaitsSince(s *Store, before []int64) string {
 func TestEvaluationReadsBypassRequestPools(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 1)
 	ctx := context.Background()
 	id, _, err := s.CreateNode(ctx, "a", Billing{}, hash(1))
 	if err != nil {

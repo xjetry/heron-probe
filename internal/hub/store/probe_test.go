@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 	for _, f := range families {
 		t.Run(f.name, func(t *testing.T) {
 			s, _ := open(t)
+			seedProbeTasks(t, s, 7)
 			id, _, err := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 			if err != nil {
 				t.Fatal(err)
@@ -73,6 +75,7 @@ func TestMinuteBatchUsesFamilyWatermarkKeys(t *testing.T) {
 func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 7, 8)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 先写一个只有丢包的桶：rtt_min/max 必须是 NULL 而不是 0。
@@ -133,6 +136,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 	for _, frozen := range []string{"probe_5m", "5m"} {
 		t.Run(frozen, func(t *testing.T) {
 			s, _ := open(t)
+			seedProbeTasks(t, s, 7)
 			ctx := t.Context()
 			id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 			if err := s.setRollupWatermark(t.Context(), frozen, 1200); err != nil {
@@ -157,6 +161,7 @@ func TestProbeWriterRejectsRowsBeforeProbeWatermarkOnly(t *testing.T) {
 func TestQueryProbesRebucketsPerTask(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 3, 9)
 	id, _, _ := s.CreateNode(t.Context(), "n", Billing{}, hash(1))
 	var input []metric.ProbeRow
 	for ts := int64(600); ts < 1200; ts += 60 {
@@ -383,7 +388,15 @@ func TestDeleteNodeRemovesProbeRowsAndAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTasks(t, s, version, []ProbeTaskRecord{{Task: saved.Task, NodeIDs: []int64{b}}})
+	// 分配随删除事务消失；时序行留给清理作业，作业跑完才少。
 	counts := rowCounts(t, s)
+	if counts["probe_task"] != 1 || counts["probe_task_node"] != 1 || counts["probe_1m"] != 2 {
+		t.Fatalf("right after delete: counts=%v, want one task, one assignment and both nodes' history", counts)
+	}
+	if _, err := s.CleanupDeleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	counts = rowCounts(t, s)
 	for _, table := range append(append([]string{}, probeTables...), "probe_task", "probe_task_node") {
 		if counts[table] != 1 {
 			t.Fatalf("%s count=%d, want 1", table, counts[table])
@@ -421,7 +434,8 @@ func seedProbeLevels(t *testing.T, s *Store, ids []int64) {
 	}
 }
 
-func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
+// 删除任务的事务不碰历史，历史由清理作业删光；任务 id 不复用，新任务不会接上旧任务的历史。
+func TestDeleteProbeTaskCleansHistoryAndNeverReusesID(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
 	ctx := t.Context()
@@ -441,7 +455,16 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 	counts := rowCounts(t, s)
 	for _, table := range probeTables {
 		if counts[table] != 1 {
-			t.Fatalf("task deletion erased %s history", table)
+			t.Fatalf("task deletion touched %s history inside its own transaction: %d rows, want 1", table, counts[table])
+		}
+	}
+	if _, err := s.CleanupDeleted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	counts = rowCounts(t, s)
+	for _, table := range append(slices.Clone(probeTables), "cleanup_job") {
+		if counts[table] != 0 {
+			t.Fatalf("after cleanup %s has %d rows, want 0", table, counts[table])
 		}
 	}
 }
@@ -449,6 +472,7 @@ func TestDeleteProbeTaskKeepsHistoryAndNeverReusesID(t *testing.T) {
 func TestMinuteBatchRollsBackBothFamilies(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 1)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	if err := s.write(ctx, func(tx *sql.Tx) error {

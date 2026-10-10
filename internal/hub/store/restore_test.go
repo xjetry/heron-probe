@@ -82,11 +82,26 @@ func TestRestoreThenRecordTransitionPreservesBatchSequence(t *testing.T) {
 	}
 }
 
+// 库里每张带 node_id 列的表恰好落在一类里：配置层从属（随 node 行同删）、时序（登记作业后分块清理）、删节点时
+// 保留。两份清单各自对齐：时序清单恰是两族的全部表，配置清单恰是其余带 node_id 的表减去保留的表。
 func TestNodeDependentTablesComplete(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
 	actual := tablesWithNodeID(t, s)
-	want := append(slices.Clone(nodeDependentTables), keptOnNodeDelete...)
+	history := append(slices.Clone(metricFamily.tables), probeFamily.tables...)
+	if got := slices.Sorted(slices.Values(nodeHistoryTables)); !slices.Equal(got, slices.Sorted(slices.Values(history))) {
+		t.Errorf("nodeHistoryTables must be exactly the time-series tables: got=%v want=%v", got, history)
+	}
+	var config []string
+	for _, table := range actual {
+		if !slices.Contains(history, table) && !slices.Contains(keptOnNodeDelete, table) {
+			config = append(config, table)
+		}
+	}
+	if got := slices.Sorted(slices.Values(nodeConfigTables)); !slices.Equal(got, config) {
+		t.Errorf("nodeConfigTables must be every other node_id table except the kept ones: got=%v want=%v", got, config)
+	}
+	want := slices.Concat(nodeConfigTables, nodeHistoryTables, keptOnNodeDelete)
 	slices.Sort(want)
 	if !slices.Equal(actual, want) {
 		t.Errorf("node-dependent classification must cover each node_id table exactly once: database=%v classified=%v", actual, want)
@@ -171,11 +186,11 @@ func TestRestoreRecordUnion(t *testing.T) {
 		for table := range result.Orphans {
 			actual = append(actual, table)
 		}
-		want := slices.Clone(nodeDependentTables)
+		want := slices.Concat(nodeConfigTables, nodeHistoryTables)
 		slices.Sort(actual)
 		slices.Sort(want)
 		if !slices.Equal(actual, want) {
-			t.Errorf("restore orphan summary must enumerate nodeDependentTables: got=%v want=%v", actual, want)
+			t.Errorf("restore orphan summary must enumerate both node lists: got=%v want=%v", actual, want)
 		}
 	}
 	db, err := sql.Open("sqlite", target.path)

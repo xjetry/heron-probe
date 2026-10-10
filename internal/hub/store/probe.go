@@ -415,7 +415,8 @@ func (s *Store) ReorderProbeTasks(ctx context.Context, ids []uint64) error {
 	return s.reorder(ctx, "probe_task", signed)
 }
 
-// DeleteProbeTask 删任务、分配、标签关联与该任务的证书观测并加版本；历史行不删（§8.3），到期由 prune 清理。
+// DeleteProbeTask 删任务、分配、标签关联与该任务的证书观测并加版本，并在同一事务里登记 kind=task 的清理作业；
+// 探测历史行由维护循环分块清理（cleanup.go），不在这个事务里删。
 // 被证书到期规则引用的任务由 checkAlertReferences 拦下，删不掉，probe_cert 行不会因删任务而成为孤儿。
 func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) {
 	var version int64
@@ -439,7 +440,11 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id uint64) (uint64, error) 
 		if err := deleteTaskCertsTx(tx, id); err != nil {
 			return err
 		}
-		v, err := bumpProbeVersion(tx, s.clk.Now().Unix())
+		now := s.clk.Now().Unix()
+		if err := enqueueCleanup(tx, cleanupKindTask, 0, int64(id), now); err != nil {
+			return err
+		}
+		v, err := bumpProbeVersion(tx, now)
 		version = v
 		return err
 	})
