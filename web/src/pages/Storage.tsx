@@ -34,6 +34,19 @@ function WalObservation({ wal }: { wal: ReturnType<typeof walObservationView> })
   );
 }
 
+// 旧 hub 没有这个读数：不显示，也不当成 0。
+function CleanupPending({ pending }: { pending: bigint | undefined }) {
+  if (pending === undefined) return null;
+  return (
+    <>
+      <p>待清理的已删除节点与任务：{String(pending)}</p>
+      <p className="muted">
+        删除节点或探测任务后，它们的历史行由维护循环每分钟分块删除一部分；删除一生效这些行就不再出现在任何查询里，只是还占着空间。满配节点约 9 分钟清完，长期不降是清理在反复失败（原因见 hub 日志）或积压。
+      </p>
+    </>
+  );
+}
+
 export function Storage() {
   const stats = useQuery(AdminService.method.getStorageStats, {});
   const gate = queryGate(stats);
@@ -54,6 +67,7 @@ export function Storage() {
       <p>
         上次清理完成：{finished(s.lastPruneAt)}；上次上卷完成：{finished(s.lastRollupAt)}
       </p>
+      <CleanupPending pending={s.cleanupPending} />
       <p className="muted">
         清理停了只表现为库慢慢变大，上卷停了只表现为长窗口的图变空。最老桶对照保留期，标红表示超期的行没有被清掉（细一级只清理已上卷的部分，上卷停了它也会标红）；水位对照当前时刻，标红表示上卷停了，新库第一轮上卷之前也会标红约一分钟。
       </p>
