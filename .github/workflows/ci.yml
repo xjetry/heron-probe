@@ -27,10 +27,10 @@ jobs:
         with:
           setup_only: true
       - run: shellcheck --version
-      # lint 里的 buf breaking 对照 BUF_AGAINST_BRANCH：pull_request 的检出没有本地 main，对照 origin/main；push 到 main 时与本地 main（自己）比较。
+      # lint 里的 buf breaking 对照 BUF_AGAINST_REF：pull_request 的检出没有本地 main，对照 origin/main；push 到 main 时与本地 main（自己）比较。
       - run: make ci
         env:
-          BUF_AGAINST_BRANCH: ${{ github.event_name == 'pull_request' && 'origin/main' || 'main' }}
+          BUF_AGAINST_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || 'main' }}
       - run: pnpm --dir web exec playwright install --with-deps chromium firefox webkit
       - run: make web-e2e
       # 完整 E2E 在 amd64 运行器上实际运行 amd64、arm64 两个 agent。

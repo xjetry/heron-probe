@@ -40,6 +40,16 @@ jobs:
       - uses: bufbuild/buf-action@8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3 # v1
         with:
           setup_only: true
+      # lint 里的 buf breaking 要一个对照 ref。这里的检出是 detached 的 tag，没有本地分支（branch=main 在这里找不到），
+      # 而发出去的 proto 要与已经发出去的兼容：对照上一个发布 tag，由 make release-breaking-base 判定。写进 GITHUB_ENV，
+      # 之后每一步 make 都读到同一个值。
+      - run: |
+          base=$(make -s release-breaking-base VERSION="$GITHUB_REF_NAME")
+          case "$base" in
+            v*) ;;
+            *) echo "make release-breaking-base printed '$base'" >&2; exit 1 ;;
+          esac
+          echo "BUF_AGAINST_REF=$base" >> "$GITHUB_ENV"
       - run: make ci
       # 发布种类只由 scripts/releasekind 判定（spec §14.1）：先取判定，再调用对应的发布目标；后续步骤读
       # 同一个输出。

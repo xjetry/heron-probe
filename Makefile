@@ -37,7 +37,7 @@ check_version = if [ -z "$$VERSION" ]; then echo "VERSION is required, e.g. VERS
 	if [ "$$(printf '%s/' "$$VERSION" | LC_ALL=C tr -d 'A-Za-z0-9_.-')" != / ] || [ -z "$${VERSION\#\#[.-]*}" ] || [ $${\#VERSION} -gt 128 ]; then \
 	  echo "VERSION '$$VERSION' cannot be an image tag: only [A-Za-z0-9_.-], not starting with . or -, at most 128 characters, no + build metadata" >&2; exit 1; fi
 
-.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e bound-agent-e2e fixtures web-install web-lint web-test web-e2e web release-full release-hub-only release-kind agent-version script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
+.PHONY: gen lint test build hub-binary binaries ci e2e e2e-matrix compat-e2e bound-agent-e2e fixtures web-install web-lint web-test web-e2e web release-full release-hub-only release-kind release-breaking-base agent-version script-test docker docker-smoke release-channel docker-registry docker-push docker-readback docker-promote
 
 web-install:
 	pnpm --dir web install --frozen-lockfile
@@ -46,13 +46,16 @@ web-install:
 gen: web-install
 	buf generate
 
-# buf breaking 对照的分支：本地默认是本仓库的 main（任务分支在工作树里跑 lint 就能发现破坏兼容的 proto 改动）；
-# CI 的 pull_request 检出没有本地 main，由 ci.yml 传 origin/main。在 main 自身上跑是与自己比较，恒通过。
-BUF_AGAINST_BRANCH ?= main
+# buf breaking 的对照 ref。lint 判定的是"这棵树相对它的基线没有破坏兼容的 proto 改动"，基线随检出的形状不同：
+# 本地默认本仓库的 main（任务分支在工作树里跑 lint 就能发现；在 main 自身上跑是与自己比较，恒通过）；
+# ci.yml 的 pull_request 检出没有本地 main，传 origin/main；release.yml 的检出是 detached 的 tag，没有任何本地分支，
+# 传上一个发布 tag（release-breaking-base）——发出去的 proto 要与已经发出去的兼容。
+# 用 ref= 而不是 branch=：branch= 只认本地分支名，tag 与 remote-tracking ref 都只能经 ref= 给出。
+BUF_AGAINST_REF ?= main
 lint:
 	go mod tidy -diff
 	buf lint
-	buf breaking --against ".git#branch=$(BUF_AGAINST_BRANCH)"
+	buf breaking --against ".git#ref=$(BUF_AGAINST_REF)"
 	@unformatted="$$(gofmt -l $$(git ls-files '*.go'))"; if [ -n "$$unformatted" ]; then printf 'gofmt: %s\n' $$unformatted >&2; exit 1; fi
 	shellcheck -s sh deploy/install.sh deploy/install-hub.sh deploy/install-macos.sh deploy/openrc/heron-agent scripts/docker-smoke.sh scripts/docker-readback.sh scripts/docker-readback-test.sh scripts/release-rules-test.sh scripts/release-assets-test.sh scripts/image-platform-ref.sh scripts/docker-builder.sh
 	shellcheck -s sh scripts/compat-download.sh scripts/compat-e2e.sh scripts/compat-download-test.sh
@@ -304,6 +307,12 @@ release-channel:
 release-kind:
 	@$(check_version)
 	@go run ./scripts/releasekind -version "$$VERSION" -agent "$$AGENT_VERSION"
+
+# 发布树做 buf breaking 的基线：VERSION 之前历史可达的最近一个发布 tag（hub-only 与预发布都算发布）。release.yml 把它写进
+# BUF_AGAINST_REF。没有基线（第一个 tag）就失败而不退回 main：release 检出里没有本地分支，退回只是换一种失败。
+release-breaking-base:
+	@$(check_version)
+	@git describe --tags --abbrev=0 --match 'v*' "$$VERSION^"
 
 # 发布流水线的回读读它（release.yml 里安装脚本回读取绑定版本），不在 workflow 里另读一遍仓库文件。
 agent-version:
