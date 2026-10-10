@@ -688,6 +688,8 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 
 自动续期：扫描时对开着自动续期且到期日早于今天的节点，`while 到期日 < 今天: 到期日 += 周期月数`（1/3/6/12/24/36），落库并记一行日志。日号超过目标月天数时钳到月末（1 月 31 日 + 1 月 = 2 月 28/29 日），钳过之后日号停在钳后的值不再回到 31：接受这个漂移，它是提醒日期不是账单日期。周期为空的节点不推后（保存入口已拒绝这种组合，扫描里再守一次，不依赖入口）。
 
+手动续费：`RenewNodeBilling(node_id)`（只接受会话；API token 经 `ExecuteChange.renew_node_billing`，登记为 `renew_node_billing`、节点种类、配置权限）是面板续费日历的"已续费"。推后与自动续期是同一段步进（`alert.stepExpiry`）：先推后一个周期，仍早于今天就继续步进到不早于今天——未过期的节点恰好推后一个周期，已过期的与自动续期落在同一天，保留账单日；不要求开着自动续期，手动续费的主要对象正是没开它的节点。今天取 `--timezone`，与 `days_left` 同一口径；推后的日期只在 hub 算，浏览器不重算。写回与自动续期共用一个条件写谓词（周期与旧到期日未变，`store.renewExpiryTx`），自动续期另加 `auto_renew = 1`：读到之后计费被并发修改时什么都不写，回答 `FailedPrecondition` 让调用方刷新；没有周期或到期日回答 `InvalidArgument` 并点名字段。写入后与 `UpdateNode` 改计费一样立刻扫描一次（§9.2）。
+
 公开：`PublicNode` 带 `PublicBilling`，由 `Billing` 按 §10 的投影规则生成（投影为此扩展到枚举字段：两侧必须引用同一个枚举类型），价格、币种、周期、到期日与 `days_left` 同号放行，自动续期是运维开关，号与名都 reserved——对不齐在构造期就 panic，与 `PublicFacts`、`PublicMetrics` 同一机制。Agent 侧协议不涉及这些字段。
 
 ### 9.5 维护静默
@@ -727,6 +729,7 @@ agent 强制执行、hub 侧同步校验（两侧各有断言）：探测间隔 
 - 管理面板的 API token 页：列表显示名称、创建时间、最后使用时间；创建后明文只显示一次；删除需确认；可下载技能文件（§5.6，面板上叫「Agent 技能文件（SKILL.md）」）；可复制油猴脚本（`web/src/assets/heron-quick-node.user.js` 随面板打包，复制时占位符换成本站 origin，创建带"创建节点"权限的 token 后另有一份预填明文的一键复制）——粘贴进脚本管理器后任意站点出现悬浮按钮，在 IDC 页面看着价格与到期经 `ExecuteChange` 一步建节点并给出安装命令。
 - 注册窗口开启后，面板在 key 旁给出一行安装命令（curl 与 wget 各一条）。hub 地址取浏览器当前的 origin，并注明 agent 若经另一地址访问 hub 需替换；hub 为正式版本（`hub_version` 是带 `v` 前缀的合法 semver，与节点落后判定用同一个解析）时，脚本取自该版本的 release（`hub_version` 经 `GetSnapshotResponse.hub_version` 下发），该 release 里的 agent 安装脚本装的是这个 hub 版本绑定的 agent（§14.1），命令旁写明绑定的版本号（油猴脚本的结果面板同样写明，绑定版本取自同一个 `GetSnapshotResponse`）；开发构建取最新 release 的脚本，并提示将安装最新 release。origin 为 http 且主机不是 loopback IP 字面量时，命令带 `--insecure-http` 并注明它意味着 token 与指标明文传输（判定与 agent 的传输规则同一口径，§5.7）。面板旁注明安装命令的可信来源是 README 与 GitHub Release：面板由 hub 提供，hub 失守时这里的命令不可信。命令区域在 `hub_version` 到达之前不渲染。
 - 安装命令区（注册窗口、添加节点与换发凭据的弹窗共用一个组件，油猴脚本的结果面板另有一份同样的拼法，测试逐字对照）有"国内主机"开关，每次打开默认关闭。打开后命令加 `--update-source hub`（§4.10），并给出首次安装用的 SSH 反代参数 `-t -R 127.0.0.1:<端口>:127.0.0.1:<端口> '<设 http_proxy、https_proxy、all_proxy 指向该端口>; exec $SHELL -l'`：运维在开着代理的电脑上把它接在 `ssh root@<主机>` 之后登录，在这个 shell 里执行安装命令。端口是运维本机代理的端口，默认 7897，按浏览器（油猴脚本按脚本管理器的存储）记住；它拼进可复制的 shell 命令，只接受不带前导零的十进制 1–65535，否则不出参数。开关只影响生成的命令，hub 不记录：节点实际的取产物来源由更新器上报（`UpdateStatus.source`）。OpenRC 主机不支持在线更新，安装脚本拒绝 `--update-source`，面板旁注明需删掉。
+- 续费日历（面板「监控」组，`/admin/renewals`）：按月看节点的到期日，数据只来自 `ListNodes` 的 `billing`。日历日与"今天"都是 hub 时区的：今天由同一次响应里任一节点的 `expires_on − days_left` 反推（`ListNodes` 只读一次钟，所有节点的 `days_left` 出自同一个今天），日期运算是与日期选择器共用的 UTC 日历运算（`web/src/lib/ymd.ts`），浏览器的时钟与时区一处都不读；没有任何节点带 `days_left` 时只给空态。点日期列出当日到期的节点，可进节点编辑抽屉改计费；有周期与到期日的节点有"已续费"（两段式确认），调 `RenewNodeBilling`（§9.4），推后的日期取 hub 的回答。公开页不展示。
 - 未构建前端时 hub 照常编译与启动，页面路径返回"前端未构建"的说明；`go build` 与 `go test` 不依赖 Node。
 
 公开页与 `PublicService` 的细节：
