@@ -8,13 +8,17 @@ import (
 	"slices"
 )
 
-// NotifyList 标识一个通知渠道选择列表：备份失败通知（§6.7）与登录通知（§5.3）各一个，编码与保存语义相同（见
+// NotifyList 标识一个通知渠道选择列表：备份失败通知（§6.7）、登录通知（§5.3）与流量报告（§9.3）各一个，编码与保存
+// 语义相同（见
 // saveChannelIDs、parseStoredChannels）。值是它在 setting 表里的键，是库里的持久标识，改名要迁移。
 type NotifyList string
 
 const (
 	BackupNotifyList NotifyList = "notify.backup_channels"
 	LoginNotifyList  NotifyList = "notify.login_channels"
+	// TrafficReportNotifyList 是流量报告的渠道。它属于 traffic_report 这一组（整组替换时与四个开关、时刻一起写），
+	// 键仍按 notify.* 命名、登记在 NotifyLists：删渠道的摘除与面板的删除确认对每个列表一视同仁。
+	TrafficReportNotifyList NotifyList = "notify.traffic_report_channels"
 )
 
 // NotifyListSpec 登记一个通知渠道选择列表：List 是它的键，settings 给出 readSettings 把它解码到 Settings 的哪个字段。
@@ -30,9 +34,10 @@ type NotifyListSpec struct {
 var NotifyLists = []NotifyListSpec{
 	{List: BackupNotifyList, settings: func(s *Settings) *[]int64 { return &s.Backup.Channels }},
 	{List: LoginNotifyList, settings: func(s *Settings) *[]int64 { return &s.LoginChannelIDs }},
+	{List: TrafficReportNotifyList, settings: func(s *Settings) *[]int64 { return &s.TrafficReport.Channels }},
 }
 
-// ChannelListError 是保存一个通知渠道选择列表失败：SaveSettings 在一个事务里可能同时保存两个列表，List 指明是哪一个，
+// ChannelListError 是保存一个通知渠道选择列表失败：SaveSettings 在一个事务里可能同时保存几个列表，List 指明是哪一个，
 // 调用方据此点名字段。Err 是原因，列表里的 ID 指向不存在的渠道时是 NotFoundError（errors.As 可取出）。
 type ChannelListError struct {
 	List NotifyList

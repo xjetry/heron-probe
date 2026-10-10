@@ -127,14 +127,16 @@ const (
 	// TransitionBackupDisabled 收尾一段已通知、但因备份被停用而不会再有恢复的配置层故障。它不是恢复：停用前的故障
 	// 可能仍在，只是 hub 不再观察。
 	TransitionBackupDisabled Transition = "backup_disabled"
+	// TransitionTrafficReport 是一条周期流量报告（§9.3）：一个事件覆盖这一次到期的各种周期，摘要是整条报告的原文。
+	TransitionTrafficReport Transition = "traffic_report"
 )
 
 // SystemEventKind 判定 transition 是否属于系统事件并给出它的种类。系统事件是 hub 自身的事件，不属于任何
 // 规则×节点，rule_id 与 node_id 都是 0；0/0 只说明它是系统事件，说明不了是哪一种，种类由 transition 决定。
 // 表外的 transition 不是系统事件。
 //
-// 写侧据此把关：RecordLoginEvent 只收登录的 transition、RecordBackupEvent 只收备份的 transition，两者都把
-// rule_id、node_id 写成 0；RecordTransition 不收系统事件的 transition，且经 setAlertState 要求规则与节点存在，
+// 写侧据此把关：RecordLoginEvent 只收登录的 transition、RecordBackupEvent 只收备份的 transition、
+// RecordTrafficReportEvent 只写流量报告的 transition，三者都把 rule_id、node_id 写成 0；RecordTransition 不收系统事件的 transition，且经 setAlertState 要求规则与节点存在，
 // 两张表的 id 都从 1 起，它写的行不会是 0/0。所以库里 0/0 的行都带系统事件的 transition，规则事件的行都不带。
 // 读侧（投递队列、面板）按 transition 给出标签与种类，不按 0/0 推断。
 func SystemEventKind(t Transition) (kind string, ok bool) {
@@ -143,14 +145,17 @@ func SystemEventKind(t Transition) (kind string, ok bool) {
 		return SystemKindLogin, true
 	case TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled, TransitionBackupSuccess, TransitionBackupRestored:
 		return SystemKindBackup, true
+	case TransitionTrafficReport:
+		return SystemKindTrafficReport, true
 	}
 	return "", false
 }
 
-// SystemKindLogin、SystemKindBackup 是系统事件的种类，投递时作为消息的 Kind。
+// SystemKindLogin、SystemKindBackup、SystemKindTrafficReport 是系统事件的种类，投递时作为消息的 Kind。
 const (
-	SystemKindLogin  = "login"
-	SystemKindBackup = "backup"
+	SystemKindLogin         = "login"
+	SystemKindBackup        = "backup"
+	SystemKindTrafficReport = "traffic_report"
 )
 
 type AlertEvent struct {
@@ -798,7 +803,7 @@ func (s *Store) RecordLoginEvent(ctx context.Context, ev AlertEvent) (AlertEvent
 	return ev, nil
 }
 
-// systemTargets 是系统事件（登录、备份）的投递目标：每个选定的渠道新开一批。合批是告警转换的投递策略（alert 包的
+// systemTargets 是系统事件（登录、备份、流量报告）的投递目标：每个选定的渠道新开一批。合批是告警转换的投递策略（alert 包的
 // Engine.apply 按渠道、评估周期、规则与转换方向决定加入哪一批）；系统事件各自单独成批，与所有批次一样受渠道的节奏
 // 上限约束（Queue.rateSlot）。
 func systemTargets(channels []int64) []DeliveryTarget {

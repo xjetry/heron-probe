@@ -66,7 +66,7 @@ func TestSystemEventTransitionsStayWithTheirWriter(t *testing.T) {
 	for tr, want := range map[Transition]string{
 		TransitionLoginSuccess: SystemKindLogin, TransitionLoginLocked: SystemKindLogin,
 		TransitionBackupFailed: SystemKindBackup, TransitionBackupRecovered: SystemKindBackup, TransitionBackupDisabled: SystemKindBackup,
-		TransitionFiring: "", TransitionRecovered: "", "": "",
+		TransitionTrafficReport: SystemKindTrafficReport, TransitionFiring: "", TransitionRecovered: "", "": "",
 	} {
 		if kind, ok := SystemEventKind(tr); kind != want || ok != (want != "") {
 			t.Errorf("SystemEventKind(%q) = %q, %v; want %q", tr, kind, ok, want)
@@ -78,17 +78,17 @@ func TestSystemEventTransitionsStayWithTheirWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := saveRule(t, s, AlertRule{Name: "offline", Kind: KindOffline, AllNodes: true})
-	for _, tr := range []Transition{TransitionFiring, TransitionRecovered, TransitionBackupFailed, ""} {
+	for _, tr := range []Transition{TransitionFiring, TransitionRecovered, TransitionBackupFailed, TransitionTrafficReport, ""} {
 		if _, err := s.RecordLoginEvent(t.Context(), AlertEvent{At: s.clk.Now(), Transition: tr}); err == nil {
 			t.Errorf("login event accepted transition %q", tr)
 		}
 	}
-	for _, tr := range []Transition{TransitionFiring, TransitionRecovered, TransitionLoginLocked, ""} {
+	for _, tr := range []Transition{TransitionFiring, TransitionRecovered, TransitionLoginLocked, TransitionTrafficReport, ""} {
 		if _, err := s.RecordBackupEvent(t.Context(), tr, "backup", s.clk.Now()); err == nil {
 			t.Errorf("backup event accepted transition %q", tr)
 		}
 	}
-	for _, tr := range []Transition{TransitionLoginSuccess, TransitionLoginLocked, TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled} {
+	for _, tr := range []Transition{TransitionLoginSuccess, TransitionLoginLocked, TransitionBackupFailed, TransitionBackupRecovered, TransitionBackupDisabled, TransitionTrafficReport} {
 		if _, err := s.RecordTransition(t.Context(), r.ID, ids[0], StateFiring, "", time.Time{}, AlertEvent{At: s.clk.Now(), Transition: tr}, systemTargets(channels)); err == nil {
 			t.Errorf("rule event accepted the system transition %q", tr)
 		}
@@ -114,6 +114,10 @@ func TestSystemEventsCheckChannelReferences(t *testing.T) {
 			_, err := s.RecordBackupEvent(t.Context(), TransitionBackupFailed, "config 失败", s.clk.Now())
 			return err
 		}},
+		"traffic report": {TrafficReportNotifyList, func(s *Store) error {
+			_, err := s.RecordTrafficReportEvent(t.Context(), []ReportPeriod{{ReportDaily, day(2026, 1, 1)}}, "流量报告")
+			return err
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _, cs, _ := alertFixture(t)
@@ -126,6 +130,8 @@ func TestSystemEventsCheckChannelReferences(t *testing.T) {
 			}
 			assertAlertRows(t, s, "alert_event", "1=1", 0)
 			assertAlertRows(t, s, "alert_delivery", "1=1", 0)
+			// 流量报告的周期标记与事件同一事务：事件没写成，这一期就没发过。
+			assertAlertRows(t, s, "maintenance_state", "1=1", 0)
 		})
 	}
 }

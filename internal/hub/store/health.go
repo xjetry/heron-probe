@@ -15,6 +15,16 @@ const (
 	MaintenanceBackupMetrics = "backup_metrics"
 )
 
+// 流量报告（§9.3）每种周期最近一次已发的那一期也记在 maintenance_state：它与上面几项一样是"某件周期性的事做到了
+// 哪里"的簿记，hub 重启读回它才不重发。这几行的 finished_at 不是时刻，而是周期键（ReportPeriod.Key 那一日的 UTC 零点
+// 的 Unix 秒），只经 RecordTrafficReportEvent 写、TrafficReportSent 读；存储健康面（lastMaintenance）只读清理与上卷
+// 两行，不会把周期键当成完成时刻展示。
+const (
+	MaintenanceTrafficReportDaily   = "traffic_report.daily"
+	MaintenanceTrafficReportWeekly  = "traffic_report.weekly"
+	MaintenanceTrafficReportMonthly = "traffic_report.monthly"
+)
+
 // recordMaintenance 记下 name 这一轮整轮成功完成的时刻，取写协程执行时的时钟。调用方只在整轮成功之后调用
 // （Rollup、Prune 与备份上传及保留的末尾）：中途失败若也写，一直失败与正常运行读出的都是一个新鲜的时刻，读侧无法把两者分开。
 func (s *Store) recordMaintenance(ctx context.Context, name string) error {
@@ -89,9 +99,10 @@ func seriesHealth(ctx context.Context, tx *sql.Tx, oldest map[string]*int64) ([]
 	return out, nil
 }
 
-// lastMaintenance 读出各维护任务最近一次整轮成功的完成时刻；没有行的任务不在映射里（从未成功跑过）。
+// lastMaintenance 读出存储健康面展示的两项维护任务（清理、上卷）最近一次整轮成功的完成时刻；没有行的任务不在映射里
+// （从未成功跑过）。按名字取而不是整表读：表里另有备份的完成时刻与流量报告的周期键，后者不是时刻。
 func lastMaintenance(ctx context.Context, tx *sql.Tx) (map[string]int64, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT name, finished_at FROM maintenance_state")
+	rows, err := tx.QueryContext(ctx, "SELECT name, finished_at FROM maintenance_state WHERE name IN (?, ?)", MaintenancePrune, MaintenanceRollup)
 	if err != nil {
 		return nil, err
 	}
