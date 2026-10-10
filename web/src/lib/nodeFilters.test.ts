@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { liveById } from "./adminStatus";
-import { applyScope, canonicalTagFilter, isScoped, nodeListReturnPath, nodeListReturnState, paramsWithScope, paramsWithSearch, paramsWithTagFilter, scopeFromParams, searchFromParams, tagFilterFromParams } from "./nodeFilters";
+import { applyScope, canonicalTagFilter, facetsFromParams, isFaceted, isScoped, NO_FACETS, nodeFacetOptions, nodeListReturnPath, nodeListReturnState, paramsWithFacets, paramsWithRegions, paramsWithScope, paramsWithSearch, paramsWithTagFilter, paramsWithTagMatch, regionsFromParams, scopeFromParams, searchFromParams, tagFilterFromParams, tagMatchFromParams, type NodeFacets, type ScopeFilters } from "./nodeFilters";
 
 it("URL 参数解析：合法值进入筛选，非法值被忽略而不是变成空列表", () => {
   expect(scopeFromParams(new URLSearchParams("status=offline&expiring=1&lagging=1"))).toEqual({ status: "offline", expiring: true, lagging: true });
@@ -14,22 +14,83 @@ it("回写只动自己的三个键，其余参数保留；空值删键", () => {
 });
 
 const nodes = [
-  { id: 1n, name: "on", maintenance: false, facts: { agentVersion: "v0.7.0" }, billing: { daysLeft: 5 } },
-  { id: 2n, name: "off", maintenance: false, facts: { agentVersion: "v0.8.0" } },
-  { id: 3n, name: "unknown", maintenance: false },
-  { id: 4n, name: "maint", maintenance: true },
+  { id: 1n, name: "on", country: "JP", tags: ["db"], maintenance: false, facts: { agentVersion: "v0.7.0" }, billing: { daysLeft: 5 } },
+  { id: 2n, name: "off", country: "HK", tags: ["DB", "web"], maintenance: false, facts: { agentVersion: "v0.8.0" } },
+  { id: 3n, name: "unknown", country: "", tags: ["web"], maintenance: false },
+  { id: 4n, name: "maint", country: "JP", tags: [], maintenance: true },
 ] as never[];
 const live = liveById([{ id: 1n, online: true, lastSeenAt: 1n }, { id: 2n, online: false, lastSeenAt: 1n }, { id: 4n, online: true, lastSeenAt: 1n }] as never);
 
 it("按状态 / 到期 / 落后过滤；未知状态只在不按状态筛时出现；筛选可叠加搜索", () => {
-  const names = (scope: Parameters<typeof applyScope>[3], search = "") => applyScope(nodes, live, "v0.8.0", scope, search).map((n: { name: string }) => n.name);
+  const names = (scope: Parameters<typeof applyScope>[3], search = "") => applyScope(nodes, live, "v0.8.0", scope, search, NO_FACETS).map((n: { name: string }) => n.name);
   expect(names({ status: null, expiring: false, lagging: false })).toEqual(["on", "off", "unknown", "maint"]);
   expect(names({ status: "offline", expiring: false, lagging: false })).toEqual(["off"]);
   expect(names({ status: "maintenance", expiring: false, lagging: false })).toEqual(["maint"]);
   expect(names({ status: null, expiring: true, lagging: false })).toEqual(["on"]);
   expect(names({ status: null, expiring: false, lagging: true })).toEqual(["on"]);
   expect(names({ status: "online", expiring: true, lagging: true }, "on")).toEqual(["on"]);
-  expect(applyScope(nodes, live, undefined, { status: null, expiring: false, lagging: true }, "")).toEqual([]);
+  expect(applyScope(nodes, live, undefined, { status: null, expiring: false, lagging: true }, "", NO_FACETS)).toEqual([]);
+});
+
+const noScope: ScopeFilters = { status: null, expiring: false, lagging: false };
+const faceted = (facets: Partial<NodeFacets>, search = "", scope = noScope) =>
+  applyScope(nodes, live, "v0.8.0", scope, search, { ...NO_FACETS, ...facets }).map((n: { name: string }) => n.name);
+
+it("地区之间取并集，未知地区是空码；空选择不过滤", () => {
+  expect(faceted({ regions: ["JP", "HK"] })).toEqual(["on", "off", "maint"]);
+  expect(faceted({ regions: [""] })).toEqual(["unknown"]);
+  expect(faceted({ regions: [] })).toEqual(["on", "off", "unknown", "maint"]);
+});
+
+it("标签默认同时满足、可切满足任一，名字按折叠比较；空选择不过滤", () => {
+  expect(faceted({ tags: { kind: "tags", names: ["db", "web"] } })).toEqual(["off"]);
+  expect(faceted({ tags: { kind: "tags", names: ["db", "web"] }, tagMatch: "any" })).toEqual(["on", "off", "unknown"]);
+  expect(faceted({ tags: { kind: "tags", names: ["db"] }, tagMatch: "all" })).toEqual(["on", "off"]);
+  expect(faceted({ tags: { kind: "tags", names: [] }, tagMatch: "any" })).toEqual(["on", "off", "unknown", "maint"]);
+});
+
+it("无标签只留没有任何标签的节点；地区、标签与搜索、状态彼此取交集", () => {
+  expect(faceted({ tags: { kind: "untagged" } })).toEqual(["maint"]);
+  expect(faceted({ tags: { kind: "untagged" }, regions: ["HK"] })).toEqual([]);
+  expect(faceted({ regions: ["JP"], tags: { kind: "tags", names: ["db"] } })).toEqual(["on"]);
+  expect(faceted({ regions: ["JP", "HK"] }, "o")).toEqual(["on", "off"]);
+  expect(faceted({ regions: ["JP", "HK"] }, "", { status: "offline", expiring: false, lagging: false })).toEqual(["off"]);
+});
+
+it("地区与匹配方式在 URL 里往返：地区可重复、未知写空值、小写换大写、非法与重复丢弃；匹配方式缺省同时满足、不写进 URL", () => {
+  expect(regionsFromParams(new URLSearchParams("region=jp&region=&region=JP&region=JPN&region=1A&region=hk"))).toEqual(["JP", "", "HK"]);
+  expect(paramsWithRegions(new URLSearchParams("q=a&region=US"), ["JP", ""]).toString()).toBe("q=a&region=JP&region=");
+  expect(regionsFromParams(paramsWithRegions(new URLSearchParams(), ["JP", ""]))).toEqual(["JP", ""]);
+  expect(tagMatchFromParams(new URLSearchParams("match=any"))).toBe("any");
+  for (const raw of ["", "match=all", "match=ANY", "match=or"]) expect(tagMatchFromParams(new URLSearchParams(raw))).toBe("all");
+  expect(paramsWithTagMatch(new URLSearchParams("q=a"), "any").toString()).toBe("q=a&match=any");
+  expect(paramsWithTagMatch(new URLSearchParams("q=a&match=any"), "all").toString()).toBe("q=a");
+});
+
+it("地区与标签整组读写：标签按清单换写法；清空只删自己的键，其余参数保留", () => {
+  const params = new URLSearchParams("status=offline&region=JP&tag=DB&match=any");
+  const facets = facetsFromParams(params, ["db"]);
+  expect(facets).toEqual({ regions: ["JP"], tags: { kind: "tags", names: ["db"] }, tagMatch: "any" });
+  expect(paramsWithFacets(params, facets).toString()).toBe("status=offline&match=any&region=JP&tag=db");
+  expect(paramsWithFacets(new URLSearchParams("status=offline&region=JP&untagged=1&match=any"), NO_FACETS).toString()).toBe("status=offline");
+  expect(isFaceted(NO_FACETS)).toBe(false);
+  expect(isFaceted({ ...NO_FACETS, tagMatch: "any" })).toBe(false);
+  expect([{ regions: [""] }, { tags: { kind: "untagged" } }, { tags: { kind: "tags", names: ["db"] } }].map((f) => isFaceted({ ...NO_FACETS, ...f } as NodeFacets))).toEqual([true, true, true]);
+});
+
+it("面板选项按全部节点计数；已选却不在选项里的地区与标签列在最后、可取消", () => {
+  const options = nodeFacetOptions(nodes, ["db", "web", "idle"], { ...NO_FACETS, regions: ["US", "JP"], tags: { kind: "tags", names: ["gone"] } });
+  expect(options.regions).toEqual([
+    { value: "HK", label: "香港", count: 1 }, { value: "JP", label: "日本", count: 2 }, { value: "", label: "未知", count: 1 },
+    { value: "US", label: "美国", count: 0 },
+  ]);
+  expect(options.tags).toEqual([
+    { value: "db", label: "db", count: 2 }, { value: "web", label: "web", count: 2 }, { value: "idle", label: "idle", count: 0 },
+    { value: "gone", label: "gone", count: 0 },
+  ]);
+  // 清单未到：只有已选的标签，计数照样按节点算。
+  expect(nodeFacetOptions(nodes, undefined, { ...NO_FACETS, tags: { kind: "tags", names: ["web"] } }).tags).toEqual([{ value: "web", label: "web", count: 2 }]);
+  expect(nodeFacetOptions(nodes, undefined, { ...NO_FACETS, tags: { kind: "untagged" } }).tags).toEqual([]);
 });
 
 it("标签过滤与搜索词在 URL 里往返；无标签优先于 tag，空的 tag 丢弃；写入时保留其他参数", () => {

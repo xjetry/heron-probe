@@ -543,8 +543,8 @@ test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字
   }
 
   // 标签也进 URL；进详情（中途切 tab）再点返回，搜索词与标签都还原。
-  await page.getByRole('button', { name: /^标签/ }).click();
-  await page.getByRole('checkbox', { name: tag, exact: true }).check();
+  await page.getByRole('button', { name: /^标签 / }).click();
+  await page.getByRole('group', { name: '标签' }).getByRole('button', { name: new RegExp(`^${tag} \\d+$`) }).click();
   await page.keyboard.press('Escape');
   await expect.poll(() => params().getAll('tag')).toEqual([tag]);
   await row(0).click();
@@ -554,7 +554,7 @@ test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字
   await expect(box).toHaveValue(names[0]);
   expect(params().get('q')).toBe(names[0]);
   expect(params().getAll('tag')).toEqual([tag]);
-  await expect(page.getByRole('button', { name: `移除 ${tag}` })).toBeVisible();
+  await expect(page.getByRole('button', { name: `标签 ${tag}`, exact: true })).toBeVisible();
 
   // 快捷键：焦点不在输入框时 / 打开快速搜索；在输入框里 / 照常输入；⌘K / Ctrl+K 在输入框里也打开。
   const dialog = page.getByRole('dialog', { name: '搜索节点' });

@@ -7,6 +7,8 @@ import { renderWithAdmin, type AdminImpl } from "../test/harness";
 import { Nodes } from "./Nodes";
 import { AddressSource, AdminService, CountrySource, GetSnapshotResponseSchema, GetRegisterWindowResponseSchema, type ListNodesRequest } from "../gen/heron/v1/admin_pb";
 import { sameTag } from "../lib/tags";
+import { NODE_FACET_MODE_KEYS, nodeListReturnPath } from "../lib/nodeFilters";
+import { PUBLIC_FACET_MODE_KEYS } from "../public/prefs";
 import { withId as withIdLabel } from "../lib/ids";
 import { AddressDetectionState, BillingCycle } from "../gen/heron/v1/types_pb";
 import { fillSegments, segmentsValue } from "../test/fields";
@@ -22,16 +24,28 @@ const rowAction = (label: string, action: string) => {
 };
 const openRowAction = (label: string, action: string) => fireEvent.click(rowAction(label, action));
 
-const filterBox = (name: string) => {
-  const trigger = screen.getByRole("button", { name: /^标签/ });
+// 地区与标签筛选入口：点开面板（已展开则不动），在面板里定位。普通胶囊的可访问名称是「名称 计数」，「无标签」是
+// 「无标签节点 计数」——与名为「无标签」的标签分开。
+type FacetLabel = "地区" | "标签";
+const facetPanel = (label: FacetLabel) => {
+  const trigger = screen.getByRole("button", { name: new RegExp(`^${label} `) });
   if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
-  return screen.getByRole("checkbox", { name });
+  return within(screen.getByRole("group", { name: label }));
 };
-const findFilterBox = async (name: string) => {
-  const trigger = screen.getByRole("button", { name: /^标签/ });
-  if (trigger.getAttribute("aria-expanded") !== "true") fireEvent.click(trigger);
-  return screen.findByRole("checkbox", { name });
+const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const facetChip = (label: FacetLabel, name: string) => facetPanel(label).getByRole("button", { name: new RegExp(`^${literal(name)} \\d+$`) });
+const tagChip = (name: string) => facetChip("标签", name);
+const regionChip = (name: string) => facetChip("地区", name);
+const untaggedChip = () => facetPanel("标签").getByRole("button", { name: /^无标签节点 \d+$/ });
+const chooseFacetMode = (label: FacetLabel, mode: "单选" | "多选") => fireEvent.click(within(facetPanel(label).getByRole("group", { name: "选择方式" })).getByRole("button", { name: mode }));
+const chooseTagMatch = (match: "满足任一" | "同时满足") => fireEvent.click(within(facetPanel("标签").getByRole("group", { name: "匹配方式" })).getByRole("button", { name: match }));
+// 筛选在浏览器里做：节点页只发不带条件的 ListNodes。
+const onlyUnfiltered = (listNodes: { mock: { calls: unknown[][] } }) => {
+  expect(listNodes.mock.calls.length).toBeGreaterThan(0);
+  for (const [request] of listNodes.mock.calls) expect(request).toEqual(expect.objectContaining({ tags: [], untagged: false }));
 };
+// 选择方式记在 localStorage，用例之间不能互相带过去。
+afterEach(() => { localStorage.clear(); });
 const two = [
   { id: 1n, name: "a", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, offlineGraceS: 90 },
   { id: 2n, name: "b", public: true, note: "db", sortOrder: 1, createdAt: 0n, trafficResetDay: 1 },
@@ -303,13 +317,14 @@ describe("Nodes", () => {
     expect(screen.getByRole("link", { name: "b（#2）" })).toBeInTheDocument();
   });
 
-  // 门控只罩节点表格：创建、搜索与标签过滤都不读节点列表，不等它就绪。
-  it("列表挂起时表格处显示加载中，创建、搜索与标签过滤照常显示", async () => {
-    renderNodes({ listNodes: () => new Promise(() => {}), listTags: async () => ({ tags: [{ name: "db", nodeCount: 0 }] }) });
+  // 门控只罩节点表格：创建、搜索与地区、标签入口都不等节点列表就绪；计数在列表到达前是 0。
+  it("列表挂起时表格处显示加载中，创建、搜索与地区、标签入口照常显示", async () => {
+    renderNodes({ listNodes: () => new Promise(() => {}), listTags: async () => ({ tags: [{ name: "db", nodeCount: 3 }] }) });
     expect(await screen.findByText("加载中…")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "节点管理" })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "搜索节点" })).toBeInTheDocument();
-    expect(await findFilterBox("db")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "地区 全部" })).toBeInTheDocument();
+    await waitFor(() => expect(tagChip("db")).toHaveAccessibleName("db 0"));
     expect(screen.getByRole("button", { name: "添加节点" })).toBeInTheDocument();
   });
 
@@ -1064,7 +1079,8 @@ describe("Nodes", () => {
       { id: 4n, name: "delta", public: false, note: "", sortOrder: 3, createdAt: 0n, trafficResetDay: 1, tags: [] },
     ];
     // 按 hub 的语义应答：untagged 为真只返回无标签节点且与非空 tags 互斥（同时给出按参数错误拒绝），否则返回
-    // 同时带有全部所选标签的节点，名字大小写不敏感，空选择返回全部。数据集可替换，供需要额外标签的用例复用同一替身。
+    // 同时带有全部所选标签的节点，名字大小写不敏感，空选择返回全部。页面只应发不带条件的请求（onlyUnfiltered）；替身仍按
+    // 语义应答，页面若改回发带条件的请求，结果也会跟着变。数据集可替换，供需要额外标签的用例复用同一替身。
     const listByTags = (data: typeof tagged = tagged) => vi.fn(async (req: ListNodesRequest) => {
       if (req.untagged) {
         if (req.tags.length > 0) throw new ConnectError("untagged 与非空 tags 互斥", Code.InvalidArgument);
@@ -1075,9 +1091,6 @@ describe("Nodes", () => {
     const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
     const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
 
-    // "无标签"选项的可访问名称与标签项分开，才能与名为"无标签"的标签同时定位。
-    const untaggedBox = () => screen.getByRole("checkbox", { name: "只看没有标签的节点" });
-
     it("名称格显示节点标签，没有标签时不渲染列表", async () => {
       renderNodes({ listNodes: async () => ({ nodes: [tagged[1], two[0]] }), listTags: tagList });
       const row = async (name: string) => within((await screen.findByRole("link", { name })).closest("tr")!);
@@ -1085,18 +1098,21 @@ describe("Nodes", () => {
       expect((await row("a（#1）")).queryByRole("list", { name: "标签 a（#1）" })).toBeNull();
     });
 
-    it("多选过滤按所选全部标签请求 hub 并列出交集，过滤中禁用排序，清除后恢复全部", async () => {
+    it("标签多选默认同时满足、可切满足任一，在浏览器里过滤、只发不带条件的请求；过滤中禁用排序，清除后恢复全部", async () => {
       const listNodes = listByTags();
       const reorderNodes = vi.fn(async () => ({}));
       renderNodes({ listNodes, listTags: tagList, reorderNodes });
       await screen.findByRole("link", { name: "gamma（#3）" });
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db"] }), expect.anything());
-      fireEvent.click(filterBox("web"));
-      await waitFor(() => expect(shown()).toEqual(["beta"]));
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["db", "web"] }), expect.anything());
+      chooseFacetMode("标签", "多选");
+      fireEvent.click(tagChip("db"));
+      expect(shown()).toEqual(["alpha", "beta"]);
+      fireEvent.click(tagChip("web"));
+      expect(shown()).toEqual(["beta"]);
+      expect(screen.getByRole("button", { name: "标签 已选 2 个" })).toBeInTheDocument();
+      expect(facetPanel("标签").getByText("只显示同时带有全部所选标签的节点。")).toBeInTheDocument();
+      chooseTagMatch("满足任一");
+      expect(shown()).toEqual(["alpha", "beta", "gamma"]);
+      expect(facetPanel("标签").getByText("显示带有任一所选标签的节点。")).toBeInTheDocument();
       expect(screen.getByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
@@ -1105,10 +1121,52 @@ describe("Nodes", () => {
       await act(async () => {});
       expect(reorderNodes).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
+      expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
+      // 清除筛选连同匹配方式一起回到缺省（同时满足）；选择方式是浏览器偏好，不随清除改变。
+      expect(within(facetPanel("标签").getByRole("group", { name: "匹配方式" })).getByRole("button", { name: "同时满足" })).toHaveAttribute("aria-pressed", "true");
+      expect(within(facetPanel("标签").getByRole("group", { name: "选择方式" })).getByRole("button", { name: "多选" })).toHaveAttribute("aria-pressed", "true");
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
       openRowAction("alpha（#1）", "下移一位");
       await waitFor(() => expect(reorderNodes).toHaveBeenCalledWith(expect.objectContaining({ ids: [2n, 1n, 3n, 4n] }), expect.anything()));
+      onlyUnfiltered(listNodes);
+    });
+
+    it("胶囊计数按全部节点算，不用 ListTags 的 nodeCount；不随其他筛选变化", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: async () => ({ tags: [{ name: "db", nodeCount: 99 }, { name: "WEB", nodeCount: 99 }] }) });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      expect(tagChip("db")).toHaveAccessibleName("db 2");
+      // 清单的写法与节点上的不同（WEB / web）：按折叠比较计进同一个选项。
+      expect(tagChip("WEB")).toHaveAccessibleName("WEB 2");
+      expect(untaggedChip()).toHaveAccessibleName("无标签节点 1");
+      fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "alpha" } });
+      expect(tagChip("WEB")).toHaveAccessibleName("WEB 2");
+    });
+
+    it("标签多于 12 个时面板出搜索框，先按名字收窄再点；全部与无标签不随搜索收窄", async () => {
+      const many = Array.from({ length: 13 }, (_, i) => ({ name: `t${i}`, nodeCount: 0 }));
+      renderNodes({ listNodes: async () => ({ nodes: [{ ...tagged[0], tags: ["t1"] }, tagged[3]] }), listTags: async () => ({ tags: many }) });
+      await screen.findByRole("link", { name: "alpha（#1）" });
+      fireEvent.change(facetPanel("标签").getByRole("searchbox", { name: "搜索标签" }), { target: { value: "t1" } });
+      expect(facetPanel("标签").getAllByRole("button", { name: /^t\d+ \d+$/ }).map((chip) => chip.textContent)).toEqual(["t1 1", "t10 0", "t11 0", "t12 0"]);
+      expect(facetPanel("标签").getByRole("button", { name: "全部" })).toBeInTheDocument();
+      expect(untaggedChip()).toBeInTheDocument();
+      fireEvent.click(tagChip("t1"));
+      expect(shown()).toEqual(["alpha"]);
+    });
+
+    it("Escape 收起面板并把焦点还给入口；面板在 DOM 里紧跟入口", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      const trigger = screen.getByRole("button", { name: "标签 全部" });
+      fireEvent.click(tagChip("db"));
+      expect(trigger).toHaveAccessibleName("标签 db");
+      const panel = screen.getByRole("group", { name: "标签" });
+      expect(trigger.nextElementSibling).toBe(panel);
+      expect(trigger).toHaveAttribute("aria-controls", panel.id);
+      fireEvent.keyDown(tagChip("db"), { key: "Escape" });
+      expect(screen.queryByRole("group", { name: "标签" })).toBeNull();
+      expect(trigger).toHaveFocus();
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
     });
 
     it("标签过滤与搜索框取交集：只列同时满足两者的节点", async () => {
@@ -1117,7 +1175,7 @@ describe("Nodes", () => {
       const search = screen.getByRole("searchbox", { name: "搜索节点" });
       fireEvent.change(search, { target: { value: "alpha" } });
       expect(shown()).toEqual(["alpha"]);
-      fireEvent.click(filterBox("web"));
+      fireEvent.click(tagChip("web"));
       // alpha 命中搜索但没有 web 标签；web 的节点（beta、gamma）不命中搜索。
       await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。"));
       expect(shown()).toEqual([]);
@@ -1155,131 +1213,89 @@ describe("Nodes", () => {
 
     it("标签管理：确认后删除标签，刷新列表并从过滤条件里去掉它", async () => {
       let tags = [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }];
-      const deleteTag = vi.fn(async (req: { name: string }) => { tags = tags.filter((t) => t.name !== req.name); return {}; });
-      const listNodes = listByTags();
-      renderNodes({ listNodes, listTags: async () => ({ tags }), deleteTag });
+      let nodes = tagged;
+      const deleteTag = vi.fn(async (req: { name: string }) => {
+        tags = tags.filter((t) => t.name !== req.name);
+        nodes = nodes.map((n) => ({ ...n, tags: n.tags.filter((t) => !sameTag(t, req.name)) }));
+        return {};
+      });
+      renderNodes({ listNodes: async () => ({ nodes }), listTags: async () => ({ tags }), deleteTag });
       const manager = within(await screen.findByRole("region", { name: "标签" }));
       expect(manager.getByText("db").parentElement).toHaveTextContent("db 2 个节点");
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      await screen.findByRole("link", { name: "gamma（#3）" });
+      fireEvent.click(tagChip("db"));
+      expect(shown()).toEqual(["alpha", "beta"]);
       fireEvent.click(manager.getByRole("button", { name: "删除标签 db" }));
       expect(deleteTag).not.toHaveBeenCalled();
       fireEvent.click(manager.getByRole("button", { name: "确认删除标签 db" }));
       await waitFor(() => expect(deleteTag).toHaveBeenCalledWith(expect.objectContaining({ name: "db" }), expect.anything()));
-      await waitFor(() => expect(screen.queryByRole("checkbox", { name: "db" })).toBeNull());
+      await waitFor(() => expect(facetPanel("标签").queryByRole("button", { name: /^db \d+$/ })).toBeNull());
       await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+      expect(screen.getByRole("button", { name: "标签 全部" })).toBeInTheDocument();
       expect(manager.queryByText("db")).toBeNull();
     });
 
-    it("已选的标签在别处被删掉后仍列在过滤器里并可取消", async () => {
+    it("已选的标签在别处被删掉后仍列在面板里并可取消", async () => {
       let tags = [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }];
-      const listNodes = listByTags();
-      renderNodes({ listNodes, listTags: async () => ({ tags }), updateNode: async () => { tags = [tags[1]]; return {}; } });
+      renderNodes({ listNodes: listByTags(), listTags: async () => ({ tags }), updateNode: async () => { tags = [tags[1]]; return {}; } });
       await screen.findByRole("link", { name: "gamma（#3）" });
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
+      fireEvent.click(tagChip("db"));
+      expect(shown()).toEqual(["alpha", "beta"]);
       openRowAction("alpha（#1）", "编辑");
       fireEvent.click(screen.getByRole("button", { name: "保存" }));
       await waitFor(() => expect(screen.queryByRole("region", { name: "标签" })).not.toHaveTextContent("db"));
-      expect(filterBox("db")).toBeChecked();
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [] }), expect.anything());
+      expect(tagChip("db")).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(tagChip("db"));
+      expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
     });
 
-    // 过滤条件是查询的输入：新条件的请求失败时它们必须还在，用户才能改回去。hub 的错误原文照常显示，
-    // 页面不另抄"至多 16 个"的规则，第 17 个照样发给 hub。
-    it("勾满 17 个标签，hub 回 InvalidArgument：错误原文可见，过滤器仍在，取消一个即恢复", async () => {
-      const seventeen = Array.from({ length: 17 }, (_, i) => ({ name: `t${i}`, nodeCount: i === 0 ? 1 : 0 }));
-      const alpha = { ...tagged[0], tags: ["t0"] };
-      const listNodes = vi.fn(async (req: ListNodesRequest) => {
-        if (req.tags.length > 16) throw new ConnectError(`tags: at most 16 distinct tags (case-insensitive); got ${req.tags.length}`, Code.InvalidArgument);
-        return { nodes: req.tags.every((t) => t === "t0") ? [alpha] : [] };
-      });
-      renderNodes({ listNodes, listTags: async () => ({ tags: seventeen }) });
-      await screen.findByRole("link", { name: "alpha（#1）" });
-      for (const t of seventeen) {
-        fireEvent.click(filterBox(t.name));
-        await waitFor(() => expect(filterBox(t.name)).toBeChecked());
-      }
-      expect(await screen.findByRole("alert")).toHaveTextContent("tags: at most 16 distinct tags (case-insensitive); got 17");
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: seventeen.map((t) => t.name) }), expect.anything());
-      fireEvent.click(filterBox("t16"));
-      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-      expect(filterBox("t16")).not.toBeChecked();
-      expect(screen.getByRole("status")).toHaveTextContent("没有匹配的节点。");
-    });
-
-    it("单个标签过滤时 hub 暂时不可用：错误原文可见，过滤器、上一份结果与未保存的草稿都在", async () => {
-      const listNodes = vi.fn(async (req: ListNodesRequest) => {
-        if (req.tags.length > 0) throw new ConnectError("hub unavailable", Code.Unavailable);
-        return { nodes: tagged };
-      });
+    // 过滤条件只在浏览器里：切换它不发新请求，也就不会因为请求失败卸载列表或未保存的草稿。
+    it("切换标签筛选不发带条件的请求，正在编辑的草稿不受影响", async () => {
+      const listNodes = listByTags();
       renderNodes({ listNodes, listTags: tagList });
       await screen.findByRole("link", { name: "gamma（#3）" });
       openRowAction("alpha（#1）", "编辑");
       const input = screen.getByLabelText("名称 alpha（#1）");
       fireEvent.change(input, { target: { value: "尚未保存" } });
-      fireEvent.click(filterBox("web"));
-      expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
-      expect(filterBox("web")).toBeChecked();
+      fireEvent.click(tagChip("web"));
+      expect(shown()).toEqual(["beta", "gamma"]);
       expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);
       expect(input).toHaveValue("尚未保存");
+      fireEvent.click(tagChip("web"));
       expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
-      fireEvent.click(filterBox("web"));
-      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-      expect(screen.getByLabelText("名称 alpha（#1）")).toBe(input);
       expect(input).toHaveValue("尚未保存");
+      onlyUnfiltered(listNodes);
     });
 
-    // 排序要求全部 id 的完整排列。沿用的结果属于上一个条件，即使当前条件为空，它也可能只是子集。
-    it("当前条件还没有自己的结果时，沿用的上一份结果不开放排序", async () => {
-      let fail = false;
-      const byTags = listByTags();
-      const listNodes = vi.fn(async (req: ListNodesRequest) => {
-        if (fail) throw new ConnectError("hub unavailable", Code.Unavailable);
-        return byTags(req);
-      });
-      const reorderNodes = vi.fn(async () => ({}));
-      const { queryClient } = renderNodes({ listNodes, listTags: tagList, reorderNodes });
-      await screen.findByRole("link", { name: "gamma（#3）" });
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
-      // 空条件的缓存已回收（离开它超过 gcTime），清除过滤后的请求又失败：显示的仍是 db 的结果。
-      queryClient.removeQueries({ predicate: (q) => {
-        const key = q.queryKey[1] as { methodName?: string; input?: object };
-        return key.methodName === "ListNodes" && Object.keys(key.input ?? {}).length === 0;
-      } });
-      fail = true;
-      fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent("hub unavailable");
-      expect(shown()).toEqual(["alpha", "beta"]);
-      expect(screen.getByText("列表还不是当前条件下的结果，暂时无法排序。")).toBeInTheDocument();
-      for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
-        expect(button).toBeDisabled();
-        fireEvent.click(button);
-      }
-      await act(async () => {});
-      expect(reorderNodes).not.toHaveBeenCalled();
-    });
-
-    it("标签清单取不到时节点列表照常显示，过滤器处说明原因", async () => {
+    it("标签清单取不到时节点列表照常显示，过滤器处说明原因；「无标签」照常可选", async () => {
       renderNodes({ listNodes: async () => ({ nodes: tagged }), listTags: async () => { throw new ConnectError("tags unavailable", Code.Unavailable); } });
       await screen.findByRole("link", { name: "gamma（#3）" });
       expect(await screen.findByRole("alert")).toHaveTextContent("无法取得标签清单：");
       expect(screen.getByRole("alert")).toHaveTextContent("tags unavailable");
       expect(screen.queryByRole("region", { name: "标签" })).toBeNull();
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
     });
 
-    it("勾'无标签'只列无标签节点，请求带 untagged 不带标签，排序禁用", async () => {
+    it("没有任何标签、也没选无标签时不出标签入口", async () => {
+      renderNodes({ listNodes: async () => ({ nodes: two }), listTags: async () => ({ tags: [] }) });
+      await screen.findByRole("link", { name: "a（#1）" });
+      expect(screen.getByRole("button", { name: "地区 全部" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^标签 / })).toBeNull();
+    });
+
+    it("选「无标签」只列无标签节点，入口写「标签 无标签」，排序禁用；不发带条件的请求", async () => {
       const listNodes = listByTags();
       const reorderNodes = vi.fn(async () => ({}));
       renderNodes({ listNodes, listTags: tagList, reorderNodes });
       await screen.findByRole("link", { name: "delta（#4）" });
-      fireEvent.click(untaggedBox());
-      await waitFor(() => expect(shown()).toEqual(["delta"]));
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: true }), expect.anything());
+      // 「无标签」排在「全部」之后、各标签之前。
+      expect(facetPanel("标签").getAllByRole("button", { name: /\d$|^全部$/ }).map((chip) => chip.getAttribute("aria-label") ?? chip.textContent)).toEqual(["全部", "无标签节点 1", "db 2", "web 2"]);
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "true");
+      expect(facetPanel("标签").getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "false");
+      expect(screen.getByRole("button", { name: "标签 无标签" })).toBeInTheDocument();
       expect(screen.getByText("筛选时不能用拖动或上下移（它们保存完整排列）；可用行菜单的「移动到…」按全序名次移动，或清除筛选后再调整。")).toBeInTheDocument();
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) {
         expect(button).toBeDisabled();
@@ -1287,67 +1303,82 @@ describe("Nodes", () => {
       }
       await act(async () => {});
       expect(reorderNodes).not.toHaveBeenCalled();
+      // 再点选中的「无标签」回到全部。
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
+      onlyUnfiltered(listNodes);
     });
 
-    it("已选标签后勾'无标签'清掉标签选择，只按无标签请求", async () => {
-      const listNodes = listByTags();
-      renderNodes({ listNodes, listTags: tagList });
+    it("多选下已选标签后选「无标签」清掉标签选择", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
       await screen.findByRole("link", { name: "delta（#4）" });
-      fireEvent.click(filterBox("db"));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta"]));
-      fireEvent.click(untaggedBox());
-      await waitFor(() => expect(shown()).toEqual(["delta"]));
-      expect(filterBox("db")).not.toBeChecked();
-      expect(filterBox("web")).not.toBeChecked();
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: true }), expect.anything());
+      chooseFacetMode("标签", "多选");
+      fireEvent.click(tagChip("db"));
+      fireEvent.click(tagChip("web"));
+      expect(shown()).toEqual(["beta"]);
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
+      expect(tagChip("db")).toHaveAttribute("aria-pressed", "false");
+      expect(tagChip("web")).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("无标签状态下勾一个标签：'无标签'取消，只按该标签请求", async () => {
-      const listNodes = listByTags();
-      renderNodes({ listNodes, listTags: tagList });
+    it("「无标签」状态下点一个标签：无标签取消，只按该标签过滤；点「全部」同样取消", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
       await screen.findByRole("link", { name: "delta（#4）" });
-      fireEvent.click(untaggedBox());
-      await waitFor(() => expect(shown()).toEqual(["delta"]));
-      fireEvent.click(filterBox("web"));
-      await waitFor(() => expect(shown()).toEqual(["beta", "gamma"]));
-      expect(untaggedBox()).not.toBeChecked();
-      expect(filterBox("web")).toBeChecked();
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["web"], untagged: false }), expect.anything());
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
+      fireEvent.click(tagChip("web"));
+      expect(shown()).toEqual(["beta", "gamma"]);
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "false");
+      expect(tagChip("web")).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(untaggedChip());
+      fireEvent.click(facetPanel("标签").getByRole("button", { name: "全部" }));
+      expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("无标签状态下'清除筛选'可见，清除后恢复全部并恢复排序", async () => {
-      const listNodes = listByTags();
-      renderNodes({ listNodes, listTags: tagList });
+    it("「无标签」状态下「清除筛选」可见，清除后恢复全部并恢复排序", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
       await screen.findByRole("link", { name: "delta（#4）" });
-      fireEvent.click(untaggedBox());
-      await waitFor(() => expect(shown()).toEqual(["delta"]));
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
       fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
-      await waitFor(() => expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]));
-      expect(untaggedBox()).not.toBeChecked();
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: [], untagged: false }), expect.anything());
+      expect(shown()).toEqual(["alpha", "beta", "gamma", "delta"]);
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "false");
       for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
     });
 
-    // 用户可能真的建一个叫"无标签"的标签；它的可访问名与"只看没有标签的节点"必须分开，勾它走标签过滤而不是 untagged。
-    it("名为'无标签'的标签与'无标签'选项可分别勾选，勾标签不触发 untagged", async () => {
+    // 运维可能真的建一个叫「无标签」的标签；它的胶囊与「无标签」选项的可访问名称必须分开，选它走标签过滤而不是无标签。
+    it("名为「无标签」的标签与「无标签」选项可分别选择，选标签不触发无标签", async () => {
       const named = { id: 9n, name: "named", public: false, note: "", sortOrder: 0, createdAt: 0n, trafficResetDay: 1, tags: ["无标签"] };
-      const listNodes = listByTags([...tagged, named]);
-      renderNodes({ listNodes, listTags: async () => ({ tags: [{ name: "无标签", nodeCount: 1 }] }) });
+      renderNodes({ listNodes: listByTags([...tagged, named]), listTags: async () => ({ tags: [{ name: "无标签", nodeCount: 1 }] }) });
       await screen.findByRole("link", { name: "named（#9）" });
-      expect(untaggedBox()).not.toBeChecked();
-      fireEvent.click(filterBox("无标签"));
-      await waitFor(() => expect(shown()).toEqual(["named"]));
-      expect(untaggedBox()).not.toBeChecked();
-      expect(listNodes).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["无标签"], untagged: false }), expect.anything());
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(tagChip("无标签"));
+      expect(shown()).toEqual(["named"]);
+      expect(untaggedChip()).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(untaggedChip());
+      expect(shown()).toEqual(["delta"]);
+      expect(tagChip("无标签")).toHaveAttribute("aria-pressed", "false");
     });
 
-    it("已选中节点时切换'无标签'会清空选择", async () => {
+    it("已选中节点时切换「无标签」会清空选择", async () => {
       renderNodes({ listNodes: listByTags(), listTags: tagList });
       await screen.findByRole("link", { name: "delta（#4）" });
       fireEvent.click(screen.getByRole("checkbox", { name: "选择 delta（#4）" }));
       expect(screen.getByText("已选择 1 个节点")).toBeInTheDocument();
-      fireEvent.click(untaggedBox());
+      fireEvent.click(untaggedChip());
       await waitFor(() => expect(screen.queryByRole("toolbar", { name: "批量操作" })).toBeNull());
+    });
+
+    it("「选择当前结果全部节点」按过滤后的列表算", async () => {
+      renderNodes({ listNodes: listByTags(), listTags: tagList });
+      await screen.findByRole("link", { name: "delta（#4）" });
+      fireEvent.click(tagChip("web"));
+      fireEvent.click(screen.getByRole("checkbox", { name: "选择当前结果全部节点" }));
+      expect(screen.getByText("已选择 2 个节点")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "选择 beta（#2）" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "选择 gamma（#3）" })).toBeChecked();
     });
   });
 });
@@ -1383,48 +1414,86 @@ it("维护中的节点在状态列标注，编辑里的维护开关随整体替�
 
 describe("筛选由 URL 持有", () => {
   const tagged = [
-    { ...two[0], tags: ["db"] },
-    { ...two[1], tags: [] },
+    { ...two[0], country: "JP", tags: ["db"] },
+    { ...two[1], country: "", tags: [] },
   ];
   const routes = [{ path: "/nodes", Component: Nodes }, { path: "/nodes/:id", Component: () => <p>详情页</p> }];
   const open = (path: string, impl: AdminImpl = {}) => renderWithAdmin({
     getSnapshot: snapshotOf("v1.1.0"), listTags: async () => ({ tags: [{ name: "db", nodeCount: 1 }] }), listNodes: async () => ({ nodes: tagged }), ...impl,
   }, routes, path);
   const search = (router: { state: { location: { search: string } } }) => new URLSearchParams(router.state.location.search);
+  const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
 
-  it("带筛选的 URL 打开即生效：搜索词回填，URL 里大小写不同的标签按清单写法请求并显示胶囊", async () => {
-    const requests: ListNodesRequest[] = [];
-    open("/nodes?q=a&tag=DB", { listNodes: async (request: ListNodesRequest) => { requests.push(request); return { nodes: tagged }; } });
+  it("带筛选的 URL 打开即生效：搜索词回填，URL 里大小写不同的标签按清单写法显示为已选，地区小写换大写", async () => {
+    const listNodes = vi.fn(async () => ({ nodes: tagged }));
+    open("/nodes?q=a&tag=DB&region=jp", { listNodes });
     expect(await screen.findByRole("searchbox", { name: "搜索节点" })).toHaveValue("a");
-    expect(await screen.findByRole("button", { name: "移除 db" })).toBeInTheDocument();
-    await waitFor(() => expect(requests.at(-1)?.tags).toEqual(["db"]));
-    expect(screen.getByRole("link", { name: withIdLabel("a", 1n) })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: withIdLabel("b", 2n) })).toBeNull();
+    expect(await screen.findByRole("button", { name: "标签 db" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "地区 日本" })).toBeInTheDocument();
+    expect(tagChip("db")).toHaveAttribute("aria-pressed", "true");
+    expect(shown()).toEqual(["a"]);
+    onlyUnfiltered(listNodes);
   });
 
-  it("搜索、标签、无标签与状态的改动写进 URL；无标签与标签同时出现时按无标签", async () => {
+  it("地区、标签、无标签、匹配方式、搜索与状态的改动写进 URL；无标签与标签同时出现时按无标签；清除筛选全部去掉", async () => {
     const { router } = open("/nodes?untagged=1&tag=db");
-    expect(await screen.findByRole("checkbox", { name: "只看没有标签的节点" })).toBeChecked();
-    fireEvent.click(screen.getByRole("checkbox", { name: "只看没有标签的节点" }));
+    expect(await screen.findByRole("button", { name: "标签 无标签" })).toBeInTheDocument();
+    expect(untaggedChip()).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(untaggedChip());
     await waitFor(() => expect(search(router).get("untagged")).toBeNull());
     expect(search(router).getAll("tag")).toEqual([]);
-    fireEvent.click(await findFilterBox("db"));
+    fireEvent.click(tagChip("db"));
     await waitFor(() => expect(search(router).getAll("tag")).toEqual(["db"]));
+    chooseFacetMode("标签", "多选");
+    chooseTagMatch("满足任一");
+    await waitFor(() => expect(search(router).get("match")).toBe("any"));
+    chooseTagMatch("同时满足");
+    await waitFor(() => expect(search(router).get("match")).toBeNull());
+    chooseTagMatch("满足任一");
+    fireEvent.click(regionChip("未知"));
+    await waitFor(() => expect(search(router).getAll("region")).toEqual([""]));
+    fireEvent.click(regionChip("日本"));
+    await waitFor(() => expect(search(router).getAll("region")).toEqual(["JP"]));
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索节点" }), { target: { value: "a" } });
     await waitFor(() => expect(search(router).get("q")).toBe("a"));
     chooseOption("状态", "离线");
     await waitFor(() => expect(search(router).get("status")).toBe("offline"));
     expect(search(router).get("q")).toBe("a");
     expect(search(router).getAll("tag")).toEqual(["db"]);
+    expect(search(router).get("match")).toBe("any");
     fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     await waitFor(() => expect(router.state.location.search).toBe(""));
     expect(screen.getByRole("searchbox", { name: "搜索节点" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "地区 全部" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "标签 全部" })).toBeInTheDocument();
   });
 
-  it("URL 里清单没有的标签显示为可移除的胶囊，移除后 URL 不再带它", async () => {
-    const { router } = open("/nodes?tag=gone");
-    fireEvent.click(await screen.findByRole("button", { name: "移除 gone" }));
+  // 匹配方式单独不收窄列表，但它是非缺省的筛选：「清除筛选」要能把它还原，排序照常可用。
+  it("只有 match=any 时出「清除筛选」，排序不禁用", async () => {
+    const { router } = open("/nodes?match=any");
+    await screen.findByRole("link", { name: withIdLabel("a", 1n) });
+    expect(screen.queryByText(/筛选时不能用拖动或上下移/)).toBeNull();
+    for (const button of screen.getAllByRole("button", { name: /^调整顺序/ })) expect(button).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(screen.queryByRole("button", { name: "清除筛选" })).toBeNull();
+  });
+
+  it("URL 里不认识的地区与匹配方式当没写；节点里没有的地区与清单里没有的标签显示为可取消的胶囊", async () => {
+    const { router } = open("/nodes?region=XYZ&match=or");
+    await screen.findByRole("link", { name: withIdLabel("b", 2n) });
+    expect(screen.getByRole("button", { name: "地区 全部" })).toBeInTheDocument();
+    expect(shown()).toEqual(["a", "b"]);
+    expect(screen.queryByRole("button", { name: "清除筛选" })).toBeNull();
+    await act(async () => { await router.navigate("/nodes?region=US&tag=gone"); });
+    expect(await screen.findByRole("button", { name: "地区 美国" })).toBeInTheDocument();
+    expect(regionChip("美国")).toHaveAccessibleName("美国 0");
+    expect(tagChip("gone")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(tagChip("gone"));
     await waitFor(() => expect(search(router).getAll("tag")).toEqual([]));
+    fireEvent.click(regionChip("美国"));
+    await waitFor(() => expect(search(router).getAll("region")).toEqual([]));
+    expect(shown()).toEqual(["a", "b"]);
   });
 
   it("名称链接与「查看详情」都把列表的查询串带进详情的导航 state", async () => {
@@ -1437,6 +1506,70 @@ describe("筛选由 URL 持有", () => {
     await screen.findByText("详情页");
     expect(router.state.location.state).toEqual({ nodeListSearch: "?q=b" });
   });
+
+  it("从详情返回列表时地区、无标签与匹配方式原样还原", async () => {
+    const { router } = open("/nodes?region=&untagged=1&match=any");
+    fireEvent.click(await screen.findByRole("link", { name: withIdLabel("b", 2n) }));
+    await screen.findByText("详情页");
+    await act(async () => { await router.navigate(nodeListReturnPath(router.state.location.state)); });
+    expect(await screen.findByRole("button", { name: "地区 未知" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "标签 无标签" })).toBeInTheDocument();
+    expect(shown()).toEqual(["b"]);
+    expect(search(router).get("match")).toBe("any");
+  });
+});
+
+describe("地区", () => {
+  const placed = [
+    { ...two[0], id: 1n, name: "tokyo", country: "JP", tags: [] },
+    { ...two[0], id: 2n, name: "hk", country: "HK", tags: [] },
+    { ...two[0], id: 3n, name: "osaka", country: "JP", tags: [] },
+    { ...two[0], id: 4n, name: "lost", country: "", tags: [] },
+  ];
+  const shown = () => screen.queryAllByRole("link").map((link) => link.textContent);
+
+  it("胶囊按代码排序、未知最后，计数按全部节点；单选点一个只看它、再点回到全部；入口写选中项的中文名", async () => {
+    const listNodes = vi.fn(async () => ({ nodes: placed }));
+    renderNodes({ listNodes });
+    await screen.findByRole("link", { name: "lost（#4）" });
+    expect(facetPanel("地区").getAllByRole("button", { name: /\d$/ }).map((chip) => chip.textContent)).toEqual(["香港 1", "日本 2", "未知 1"]);
+    fireEvent.click(regionChip("日本"));
+    expect(shown()).toEqual(["tokyo", "osaka"]);
+    expect(screen.getByRole("button", { name: "地区 日本" })).toBeInTheDocument();
+    fireEvent.click(regionChip("香港"));
+    expect(shown()).toEqual(["hk"]);
+    fireEvent.click(regionChip("香港"));
+    expect(shown()).toEqual(["tokyo", "hk", "osaka", "lost"]);
+    expect(screen.getByRole("button", { name: "地区 全部" })).toBeInTheDocument();
+    onlyUnfiltered(listNodes);
+  });
+
+  it("多选的地区之间取并集；地区没有匹配方式；切回单选只留按选项顺序最前的已选项", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: placed }) });
+    await screen.findByRole("link", { name: "lost（#4）" });
+    chooseFacetMode("地区", "多选");
+    expect(facetPanel("地区").queryByRole("group", { name: "匹配方式" })).toBeNull();
+    expect(facetPanel("地区").getByText("显示属于任一所选地区的节点。")).toBeInTheDocument();
+    fireEvent.click(regionChip("未知"));
+    fireEvent.click(regionChip("日本"));
+    expect(shown()).toEqual(["tokyo", "osaka", "lost"]);
+    expect(screen.getByRole("button", { name: "地区 已选 2 个" })).toBeInTheDocument();
+    chooseFacetMode("地区", "单选");
+    expect(shown()).toEqual(["tokyo", "osaka"]);
+    expect(screen.getByRole("button", { name: "地区 日本" })).toBeInTheDocument();
+  });
+
+  it("选择方式按浏览器记住，键与公开页分开；地区与标签各记各的", async () => {
+    renderNodes({ listNodes: async () => ({ nodes: [{ ...placed[0], tags: ["db"] }, placed[1]] }), listTags: async () => ({ tags: [{ name: "db", nodeCount: 1 }] }) });
+    await screen.findByRole("link", { name: "hk（#2）" });
+    chooseFacetMode("地区", "多选");
+    expect(localStorage.getItem(NODE_FACET_MODE_KEYS.region)).toBe("multi");
+    expect(localStorage.getItem(NODE_FACET_MODE_KEYS.tag)).toBeNull();
+    expect(Object.values(NODE_FACET_MODE_KEYS)).not.toContain(PUBLIC_FACET_MODE_KEYS.region);
+    expect(Object.values(NODE_FACET_MODE_KEYS)).not.toContain(PUBLIC_FACET_MODE_KEYS.tag);
+    // 标签面板还是单选：点一个只看它。
+    expect(within(facetPanel("标签").getByRole("group", { name: "选择方式" })).getByRole("button", { name: "单选" })).toHaveAttribute("aria-pressed", "true");
+  });
 });
 
 describe("移动到指定位置", () => {
@@ -1448,10 +1581,7 @@ describe("移动到指定位置", () => {
     { id: 4n, name: "d", public: false, note: "", sortOrder: 3, createdAt: 0n, trafficResetDay: 1, tags: ["web"], position: 4 },
   ];
   const tagList = async () => ({ tags: [{ name: "db", nodeCount: 2 }, { name: "web", nodeCount: 2 }] });
-  const listHub = vi.fn(async (req: ListNodesRequest) => {
-    if (req.tags.length === 0) return { nodes: positioned };
-    return { nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
-  });
+  const listHub = vi.fn(async () => ({ nodes: positioned }));
   // 行首序号：手柄按钮里唯一的文字就是序号。
   const positionOf = (label: string) => screen.getByRole("button", { name: `调整顺序 ${label}` }).textContent;
 
@@ -1468,26 +1598,8 @@ describe("移动到指定位置", () => {
     await screen.findByRole("link", { name: "a（#1）" });
     expect(positionOf("a（#1）")).toBe("1");
     expect(positionOf("d（#4）")).toBe("4");
-    fireEvent.click(filterBox("db"));
+    fireEvent.click(tagChip("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
-    expect(positionOf("a（#1）")).toBe("1");
-    expect(positionOf("c（#3）")).toBe("3");
-  });
-
-  it("显示的不是当前完整列表时序号用服务端名次，不按行下标", async () => {
-    // 完整列表 {tags: []} 一直读不到自己的数据：先选 db 看到 a、c，取消后沿用旧结果，
-    // 行还是 a、c，序号必须是全序名次 1、3 而不是下标 1、2。
-    const listNodes = vi.fn((req: ListNodesRequest) => {
-      if (req.tags.length === 0) return new Promise<never>(() => {});
-      return Promise.resolve({ nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) });
-    });
-    renderNodes({ listNodes, listTags: tagList });
-    await findFilterBox("db");
-    fireEvent.click(filterBox("db"));
-    await screen.findByRole("link", { name: "c（#3）" });
-    fireEvent.click(filterBox("db"));
-    await screen.findByText("列表还不是当前条件下的结果，暂时无法排序。");
-    expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull();
     expect(positionOf("a（#1）")).toBe("1");
     expect(positionOf("c（#3）")).toBe("3");
   });
@@ -1522,7 +1634,7 @@ describe("移动到指定位置", () => {
     const moveNodes = vi.fn(async () => ({}));
     renderNodes({ listNodes: listHub, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "d（#4）" });
-    fireEvent.click(filterBox("db"));
+    fireEvent.click(tagChip("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
     // 可见只剩 a、c 两行；N = 4、k = 1，上限仍是 4。
     openRowAction("c（#3）", "移动到…");
@@ -1618,18 +1730,15 @@ describe("移动到指定位置", () => {
 
   it("全部节点总数读取失败时入口禁用并说明原因", async () => {
     const moveNodes = vi.fn(async () => ({}));
-    // 初始成功、之后完整列表读取失败：主列表可用而 N 拿不到，入口应禁用并说明原因。
+    // 初始成功、之后刷新失败：列表沿用上一份数据照常显示，但 N 不再是当前值，入口应禁用并说明原因。
     let broken = false;
-    const listNodes = vi.fn(async (req: ListNodesRequest) => {
-      if (req.tags.length === 0) {
-        if (broken) throw new ConnectError("无法读取节点总数", Code.Unavailable);
-        return { nodes: positioned };
-      }
-      return { nodes: positioned.filter((n) => req.tags.every((t) => n.tags.some((x) => sameTag(x, t)))) };
+    const listNodes = vi.fn(async () => {
+      if (broken) throw new ConnectError("无法读取节点总数", Code.Unavailable);
+      return { nodes: positioned };
     });
     const { queryClient } = renderNodes({ listNodes, listTags: tagList, moveNodes });
     await screen.findByRole("link", { name: "c（#3）" });
-    fireEvent.click(filterBox("db"));
+    fireEvent.click(tagChip("db"));
     await waitFor(() => expect(screen.queryByRole("link", { name: "b（#2）" })).toBeNull());
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 c（#3）" }));
     expect(screen.getByRole("button", { name: "移动到…" })).toBeEnabled();

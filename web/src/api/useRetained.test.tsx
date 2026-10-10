@@ -88,7 +88,7 @@ it("带新 identity 的 transition 渲染被挂起丢弃后重试，不沿用上
   expect(screen.getByTestId("result")).toHaveTextContent("b:undefined");
 });
 
-it("不传 identity 时行为不变：调用点本身就是身份，Nodes 页换过滤条件属于这一种", () => {
+it("不传 identity 时行为不变：调用点本身就是身份，同一个列表换过滤条件属于这一种", () => {
   const initialProps: Q = { data: 1, error: null };
   const { result, rerender } = renderHook((q: Q) => useRetained(q), { initialProps });
   rerender({ data: undefined, error: null });
