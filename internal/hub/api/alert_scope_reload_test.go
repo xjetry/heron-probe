@@ -25,7 +25,7 @@ func TestDeletedAlertScopeRemainsListedAfterReload(t *testing.T) {
 	if _, err := h.admin.DeleteNode(t.Context(), connect.NewRequest(&heronv1.DeleteNodeRequest{Id: id})); err != nil {
 		t.Fatal(err)
 	}
-	e := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.live, h.clk, slog.Default())
+	e := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.store.Evaluation(), h.live, h.clk, slog.Default())
 	if err := e.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}

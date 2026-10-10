@@ -50,7 +50,7 @@ func (s *Store) QueryProbeComparison(ctx context.Context, taskID uint64, nodeIDs
 		seriesLimit: int64(MaxComparisonNodes),
 		byTaskIndex: true,
 	}
-	return queryFamily(ctx, s, probeFamily, shape, from, to, lv, step,
+	return queryFamily(ctx, s, requestRead, probeFamily, shape, from, to, lv, step,
 		func(rows *sql.Rows) ([]metric.ProbeRow, error) { return scanComparisonRows(rows, taskID) }, nil)
 }
 

@@ -144,7 +144,7 @@ func TestTrafficQuotaCrashBeforeFlushKeepsCommittedFiring(t *testing.T) {
 	if err := book.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.live, h.clk, slog.Default())
+	engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.store.Evaluation(), h.live, h.clk, slog.Default())
 	engine.SetTraffic(book)
 	if err := engine.Load(t.Context()); err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestTrafficQuotaReportCommitAndAllResponses(t *testing.T) {
 			if err := book.Load(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.live, h.clk, slog.Default())
+			engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, h.store, h.store.Evaluation(), h.live, h.clk, slog.Default())
 			engine.SetTraffic(book)
 			if err := engine.Load(t.Context()); err != nil {
 				t.Fatal(err)

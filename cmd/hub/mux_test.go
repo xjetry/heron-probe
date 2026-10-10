@@ -67,7 +67,7 @@ func newTestServicesOn(t *testing.T, st *store.Store, clk clock.Clock) (http.Han
 	reg := probe.New(st, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, time.UTC, slog.Default())
-	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, l, clk, slog.Default())
+	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, st, st.Evaluation(), l, clk, slog.Default())
 	// 通知与国家查询的 HTTP 后端共用一个出站客户端，与 serve 的装配相同。
 	client := outbound.NewClient(alert.NotifyTimeout)
 	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: slog.Default()})

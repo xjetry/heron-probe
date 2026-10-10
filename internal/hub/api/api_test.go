@@ -157,7 +157,7 @@ func newZonedHarness(t *testing.T, trusted string, loc *time.Location, retention
 	reg := probe.New(st, slog.Default())
 	l := live.New(clk, 30*time.Second)
 	book := traffic.New(st, clk, loc, slog.Default())
-	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, l, clk, slog.Default())
+	alerts := alert.New(alert.Config{TTL: 30 * time.Second, Location: loc}, st, st.Evaluation(), l, clk, slog.Default())
 	alerts.SetTraffic(book)
 	// 通知与国家查询共用一个出站客户端，与 serve 的装配相同。
 	client := outbound.NewClient(alert.NotifyTimeout)

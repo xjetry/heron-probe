@@ -2,8 +2,8 @@
 //
 // 不变式：所有写都经 runWriter 串行执行，w 只在那个协程里被使用。SQLite 同一
 // 时刻只允许一个写者，应用内串行化从根上避免写者之间的 SQLITE_BUSY；读走
-// 两个各自有上限的只读连接池（query_only）：大扫描走 hr，其余走 r（见 readPoolFor），
-// WAL 下读不阻塞写。
+// 三个各自有上限的只读连接池（query_only）：请求驱动的大扫描走 hr，其余请求读走 r，
+// hub 自己的告警评估读走 ev（见 readPoolFor），WAL 下读不阻塞写。
 // 写请求返回错误意味着事务未应用，返回 nil 意味着已提交；这是 auth 只在
 // 写成功后更新内存映射、保持映射与库一致的前提。
 package store
@@ -42,9 +42,10 @@ type Store struct {
 	closeMu       sync.RWMutex
 	closed        bool
 	w             *sql.DB
-	// r 是轻读池，hr 是大扫描池；分工、上限与"不跨池等待"的约束见 readPoolFor。
+	// r 是轻读池，hr 是大扫描池，ev 是评估池；分工、上限与"不跨池等待"的约束见 readPoolFor。
 	r      *sql.DB
 	hr     *sql.DB
+	ev     *sql.DB
 	stats  storageStatsCache
 	clk    clock.Clock
 	log    *slog.Logger
@@ -152,10 +153,19 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 		return nil, err
 	}
 	configureReadPool(hr, historyPoolSize())
+	ev, err := sql.Open("sqlite", dsn(path, "&_pragma=query_only(1)"))
+	if err != nil {
+		hr.Close()
+		r.Close()
+		w.Close()
+		return nil, err
+	}
+	configureReadPool(ev, evaluationPoolSize())
 	// 打开时读一次设置，同时满足两件事：总闸的内存副本从库加载（不变式见 SaveSettings）；设置里有必须合法才能解释的
 	// 编码（两个开关只认 0 / 1，备份的数值有范围，渠道列表是 JSON 数组，见 readSettings），库里有非法值就拒绝打开。
 	settings, err := readSettings(context.Background(), r)
 	if err != nil {
+		ev.Close()
 		hr.Close()
 		r.Close()
 		w.Close()
@@ -163,6 +173,7 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	}
 	statsDB, err := sql.Open("sqlite", dsn(path, "&_pragma=query_only(1)"))
 	if err != nil {
+		ev.Close()
 		hr.Close()
 		r.Close()
 		w.Close()
@@ -170,33 +181,38 @@ func openStore(path string, clk clock.Clock, log *slog.Logger, policy SchemaPoli
 	}
 	statsDB.SetMaxOpenConns(1)
 	statsCtx, cancelStats := context.WithCancel(context.Background())
-	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, hr: hr, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1),
+	s := &Store{path: path, files: osFileStatter{}, w: w, r: r, hr: hr, ev: ev, clk: clk, log: log, writes: make(chan writeReq, 1024), done: make(chan struct{}), themeChanges: make(chan struct{}, 1),
 		stats: storageStatsCache{db: statsDB, ctx: statsCtx, cancel: cancelStats}, external: cfg.external}
 	s.publicEnabled.Store(settings.Site.PublicEnabled)
 	go s.runWriter()
 	return s, nil
 }
 
-// 读连接分成两个池（r 与 hr），各自有上限，空闲保留等于上限。
+// 读连接分成三个池（r、hr、ev），各自有上限，空闲保留等于上限。
 //
 // 为什么要有上限：WAL 下读者不阻塞写者，但每个连接是一个文件句柄加一份页缓存。database/sql 默认不限连接数，
 // 开环过载时连接数随在飞读请求增长（比较查询负载台记录到约 310 个），内存与 fd 随之无界。
 //
-// 为什么分两个池：database/sql 的等待者随机出队（putConnDBLocked 的 TakeRandom），单池满时轻读与大扫描抽同一个签，
+// 为什么分池：database/sql 的等待者随机出队（putConnDBLocked 的 TakeRandom），单池满时轻读与大扫描抽同一个签，
 // 轻读要等一整条扫描结束。同时在飞的大扫描没有上界——api 的 historyGate 只限每来源，来源数不限——单池上限多大都能
 // 被它占满。同机对照（GOMAXPROCS=16，32 个大扫描 + 16 个轻读者闭环，延迟只作同机比较）：单池上限 16 时轻读 p50
 // 104ms，拆池后 4.8ms、轻池零排队；只有大扫描时，大扫描池的吞吐与单池不限相近（1118 vs 1182 次）。
 //
-// 哪些读走 hr：queryFamily 按 scanEstimate 判定，预计扫描量超过 lightScanRows 的走 hr，其余以及所有不经 queryFamily 的
-// 读走 r。按查询自身的扫描量分，不按入口或调用方：同一个 QueryProbes，告警评估的一小时窗口留在 r，公开页的长窗口进 hr。
-// 新加的查询若读取与时间窗口成正比的行数，要经 queryFamily 或同样按 scanEstimate 选池，否则它就是轻池里的大扫描。
+// 哪个读走哪个池，按两条原则：
+//   - 请求驱动的读按查询自身的扫描量分 r / hr，不按入口或调用方：queryFamily 按 scanEstimate 判定，预计扫描量超过
+//     lightScanRows 的走 hr，其余以及所有不经 queryFamily 的读走 r。同一个 QueryProbes，面板的一小时窗口留在 r，
+//     公开页的长窗口进 hr。新加的查询若读取与时间窗口成正比的行数，要经 queryFamily 或同样按 scanEstimate 选池，
+//     否则它就是轻池里的大扫描。
+//   - hub 自己的告警评估读按调用方进 ev，只经 Evaluation 返回的读者：评估的时效是告警承诺的一部分，不该随请求负载
+//     变化。r 与 hr 的排队长度都由外部请求决定，评估读排在哪个池里，告警判定就随那个池的负载变慢。
 //
-// 同一调用链不得持一个读连接再等另一个读连接，不论同池还是跨池：跨池时两个池都满，持 r 等 hr 的与持 hr 等 r 的互相
-// 等到 ctx 取消；同池时上限个这样的调用就把池占死。现有路径满足它：历史请求的准入读（NodeExists、NodeIsPublic、
-// ListComparisonNodes）在 r 上读完、归还之后才进 queryFamily，queryFamily 的 scan 与 summarize 回调只用它自己的事务。
-// 两个池都设为 1 个连接跑 store、api、cmd/hub 的全部测试可以复核这一点：违反它的路径会挂住。
+// 同一调用链不得持一个读连接再等另一个读连接，不论同池还是跨池：跨池时两个池都满，持甲池连接等乙池的与持乙池连接
+// 等甲池的互相等到 ctx 取消；同池时上限个这样的调用就把池占死。现有路径满足它：历史请求的准入读（NodeExists、
+// NodeIsPublic、ListComparisonNodes）在 r 上读完、归还之后才进 queryFamily；告警引擎的节点与任务读
+// （ListMonitoringNodes、ProbeTaskNodeIDs）在 r 上读完、归还之后才经评估读者读历史；queryFamily 的 scan 与 summarize
+// 回调只用它自己的事务。三个池都设为 1 个连接跑 store、api、cmd/hub 的全部测试可以复核这一点：违反它的路径会挂住。
 //
-// readPoolFor 给出预计扫描量为 estimate 的查询该用的池，分界见 lightScanRows。
+// readPoolFor 给出请求驱动、预计扫描量为 estimate 的查询该用的池，分界见 lightScanRows。
 func (s *Store) readPoolFor(estimate int64) *sql.DB {
 	if estimate > lightScanRows {
 		return s.hr
@@ -218,21 +234,27 @@ func readPoolSize() int { return max(4, 2*runtime.GOMAXPROCS(0)) }
 // 超出的在池里排队，不另开连接。
 func historyPoolSize() int { return max(2, runtime.GOMAXPROCS(0)) }
 
-// readConnMaxIdle 是池里连接空闲多久才回收，两个池同一个值。面板每 2 秒、流量每 10 秒轮询（web/src/lib/poll.ts），
+// evaluationPoolSize 是评估池上限：2，不随核数。Evaluation 的调用方只有告警引擎（cmd/hub/serve.go 装配），经它的读
+// 只发生在 alert.Engine 的 EvaluateResources 与 EvaluateProbes 里，两者全程持 Engine.writeMu：同一个引擎同一时刻
+// 至多一条评估读在飞、只占一个连接。多出的一个留给这条互斥之外的调用（测试、将来第二个引擎实例），它们不必与引擎
+// 排队。上限随核数增长不会让评估更快，只多留空闲连接与页缓存。Evaluation 有了新的调用方、或评估入口不再持
+// writeMu，这个上限要重新论证。
+func evaluationPoolSize() int { return 2 }
+
+// readConnMaxIdle 是池里连接空闲多久才回收，三个池同一个值。面板每 2 秒、流量每 10 秒轮询（web/src/lib/poll.ts），
 // database/sql 优先复用最近归还的连接，持续有人看面板时轮询用到的那几个连接空闲时长到不了它；只有突发时多开、之后
 // 不再用到的连接才在 5 分钟后关掉，把页缓存还回去。轮询之间不关连接靠的是空闲保留等于上限（见 configureReadPool），
 // 这个时长决定的只是突发过后多久缩回去。
 const readConnMaxIdle = 5 * time.Minute
 
-// lightScanRows 是轻读与大扫描的分界，单位是 scanEstimate 的源行数。两个前提定它的下限：
-//   - 告警评估读要留在轻池，告警时效不随公开端的历史负载变化：窗口是 ForMinutes 分钟的 1m 行（alert/rule.go 在保存
-//     规则时校验 1–60），探测族按每节点任务上限 probelimit.MaxTasksPerNode=64 计序列，至多 60×64=3840。库里若有绕过
-//     校验、窗口更长的规则，它的评估读按成本进大扫描池，这是按量分类的自然结果。
-//   - 面板与公开页的几档历史（web/src/components/History.tsx 的 RANGES 经 ChooseLevel 选级）单序列 1h、6h、24h、7d、30d
-//     分别是 60、360、288、2016、720 行，指标族全部在分界之下；探测族与对比按序列上限计，1h 之后的几档走大扫描池。
+// lightScanRows 是轻读与大扫描的分界，单位是 scanEstimate 的源行数。分界只由请求驱动的读的几档窗口决定（告警评估读
+// 不在 r / hr 上，与它无关）：面板与公开页的几档历史（web/src/components/History.tsx 的 RANGES 经 ChooseLevel 选级）
+// 单序列 1h、6h、24h、7d、30d 分别是 60、360、288、2016、720 行，指标族全部在分界之下；探测族与对比按序列上限计，
+// 一小时窗口满配 64 个任务（probelimit.MaxTasksPerNode）是 60×64=3840 行，1h 之后的几档走大扫描池。
 //
-// 取 3840 之上的 4096。同机单次扫描（单序列指标、1m 级、无并发）4096 行 p50 16ms、p99 19ms，轻池里的读至多排在这个量级
-// 的扫描后面；12000 行（单序列读量额度）约 40ms，多序列、天级以上的扫描到数百毫秒，这些才值得隔离。
+// 取 3840 之上的 4096，一小时的探测图留在轻池。同机单次扫描（单序列指标、1m 级、无并发）4096 行 p50 16ms、p99 19ms，
+// 轻池里的读至多排在这个量级的扫描后面；12000 行（单序列读量额度）约 40ms，多序列、天级以上的扫描到数百毫秒，
+// 这些才值得隔离。
 const lightScanRows = 4096
 
 // scanEstimate 是 queryFamily 一次查询预计读取的源行数：请求级每桶一行、至多 seriesLimit 条序列。按桶长而不按 step 算，
@@ -269,7 +291,7 @@ func (s *Store) Close() error {
 	}
 	close(s.writes)
 	<-s.done
-	return errors.Join(s.stats.db.Close(), s.hr.Close(), s.r.Close(), s.w.Close())
+	return errors.Join(s.stats.db.Close(), s.ev.Close(), s.hr.Close(), s.r.Close(), s.w.Close())
 }
 
 func (s *Store) runWriter() {

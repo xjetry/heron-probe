@@ -406,14 +406,33 @@ type queryShape struct {
 // 每级计数的 LIMIT 是剩余额度 + 1，命中即超额返回，不必数完全表；未超额时每级计数恰为该级
 // 实际行数。计数只约束实际要读的源行，不从窗口跨度或水位落后时长推算：未来时刻没有数据，
 // 空库与新库不会被拒，维护长期停滞或细级尾巴过长则按实际行数被拒（ReadQuotaError）。
-func queryFamily[T any](ctx context.Context, s *Store, f *family, shape queryShape, from, to int64, lv Level, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
+func queryFamily[T any](ctx context.Context, s *Store, route readRoute, f *family, shape queryShape, from, to int64, lv Level, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
 	i, err := checkStep(lv, step)
 	if err != nil {
 		return nil, err
 	}
 	from, to = alignWindow(from, to, step)
-	// 按预计扫描量选池（见 readPoolFor）；scan 与 summarize 只用这个事务，持着它再取别的读连接会违反两池不互等的约束。
-	tx, err := s.readPoolFor(scanEstimate(from, to, lv, shape.seriesLimit)).BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	db := s.ev
+	if route == requestRead {
+		db = s.readPoolFor(scanEstimate(from, to, lv, shape.seriesLimit))
+	}
+	return readFamily(ctx, db, f, shape, i, from, to, step, scan, summarize)
+}
+
+// readRoute 是 queryFamily 的选池方式，两条原则见 readPoolFor。
+type readRoute int
+
+const (
+	// requestRead 是请求驱动的读：按预计扫描量在 r / hr 之间选池。
+	requestRead readRoute = iota
+	// evaluationRead 是 hub 自己的告警评估读：固定走 ev，只经 EvaluationReader 发出。
+	evaluationRead
+)
+
+// readFamily 在 db 上的一个只读事务里完成 queryFamily 的计数与聚合，i 是已校验的级别下标，窗口已对齐。
+// scan 与 summarize 只用这个事务，持着它再取别的读连接会违反读池不互等的约束（见 readPoolFor）。
+func readFamily[T any](ctx context.Context, db *sql.DB, f *family, shape queryShape, i int, from, to, step int64, scan func(*sql.Rows) ([]T, error), summarize func(*sql.Tx, string, []any) error) ([]T, error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +497,11 @@ const quotaRowsPerSeries = 12000
 // 最新桶只含已刷出的分钟行，不读取 live 中尚未刷出的当前分钟。
 // 指标族每节点每时刻一行，额度权重为 1。
 func (s *Store) QueryMetrics(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
-	return queryFamily(ctx, s, metricFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, seriesLimit: 1},
+	return s.queryMetrics(ctx, requestRead, nodeID, from, to, lv, step)
+}
+
+func (s *Store) queryMetrics(ctx context.Context, route readRoute, nodeID int64, from, to int64, lv Level, step int64) ([]metric.Row, error) {
+	return queryFamily(ctx, s, route, metricFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, seriesLimit: 1},
 		from, to, lv, step,
 		func(rows *sql.Rows) ([]metric.Row, error) { return scanBucketRows(rows, nodeID) }, nil)
 }
@@ -564,7 +587,11 @@ func alignWindow(from, to, step int64) (int64, int64) {
 // 额度权重取每节点任务分配上限：这是对当前配置的计数，不是历史序列上限——删除任务的历史
 // 保留，任务更替频繁的节点在一个窗口里可以有远多于它的序列（ReadQuotaError 按实际行数裁决）。
 func (s *Store) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	return queryFamily(ctx, s, probeFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, groupKey: "task_id", seriesLimit: probelimit.MaxTasksPerNode},
+	return s.queryProbes(ctx, requestRead, nodeID, from, to, lv, step)
+}
+
+func (s *Store) queryProbes(ctx context.Context, route readRoute, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
+	return queryFamily(ctx, s, route, probeFamily, queryShape{keyWhere: "node_id = ?", keyArgs: []any{nodeID}, groupKey: "task_id", seriesLimit: probelimit.MaxTasksPerNode},
 		from, to, lv, step,
 		func(rows *sql.Rows) ([]metric.ProbeRow, error) { return scanProbeRows(rows, nodeID) }, nil)
 }

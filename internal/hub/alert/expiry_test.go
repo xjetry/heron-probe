@@ -550,7 +550,7 @@ func TestRunExpirySweepSweepsAgainAtTheDayBoundary(t *testing.T) {
 	f := newFixture(t)
 	f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true})
 	clk := tickingClock{base: time.Date(2026, 9, 24, 23, 59, 59, 500_000_000, f.loc), start: time.Now()}
-	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
+	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.st.Evaluation(), f.l, clk, f.log)
 	must(t, e.Load(t.Context()))
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
@@ -604,7 +604,7 @@ func TestRunExpirySweepDoesNotSkipADayBoundaryCrossedDuringASweep(t *testing.T) 
 			f := newFixture(t)
 			f.billing(t, f.ids[0], store.Billing{Cycle: store.CycleMonthly, ExpiresOn: "2026-09-24", AutoRenew: true})
 			clk := &scriptedClock{before: time.Date(2026, 9, 24, 23, 59, 59, 900_000_000, f.loc), after: time.Date(2026, 9, 25, 0, 0, 0, 100_000_000, f.loc), beforeReads: beforeReads}
-			e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
+			e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.st.Evaluation(), f.l, clk, f.log)
 			must(t, e.Load(t.Context()))
 			clk.arm()
 			ctx, cancel := context.WithCancel(t.Context())
@@ -649,7 +649,7 @@ func TestNewRequiresLocation(t *testing.T) {
 			t.Fatalf("panic = %v", r)
 		}
 	}()
-	New(Config{TTL: time.Second}, nil, nil, nil, nil)
+	New(Config{TTL: time.Second}, nil, nil, nil, nil, nil)
 }
 
 // 下一次扫描的时刻：没有失败时是下一个日界；连续失败 n 次时是扫描开始后 1 分钟 × 2^(n-1)，上限 1 小时，日界先到就取
@@ -758,7 +758,7 @@ func TestRunExpirySweepRetriesAFailedSweepWithBackoff(t *testing.T) {
 	renewalFails(t, f)
 	start := time.Date(2026, 9, 24, 12, 0, 0, 0, f.loc)
 	clk := &scriptedClock{before: start, after: start.Add(time.Minute - time.Nanosecond), beforeReads: 1}
-	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.l, clk, f.log)
+	e := New(Config{TTL: 30 * time.Second, Location: f.loc}, f.st, f.st.Evaluation(), f.l, clk, f.log)
 	must(t, e.Load(t.Context()))
 	clk.arm()
 	ctx, cancel := context.WithCancel(t.Context())

@@ -36,7 +36,7 @@ func TestTrafficStartupLoadsBeforeEvaluating(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		book := traffic.New(s, clk, time.UTC, slog.Default())
-		engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, s, live.New(clk, 30*time.Second), clk, slog.Default())
+		engine := alert.New(alert.Config{TTL: 30 * time.Second, Location: time.UTC}, s, s.Evaluation(), live.New(clk, 30*time.Second), clk, slog.Default())
 		engine.SetTraffic(book)
 		if err := loadTrafficAlerts(t.Context(), book, engine); err != nil {
 			t.Fatal(err)

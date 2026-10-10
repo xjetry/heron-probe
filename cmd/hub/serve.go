@@ -284,7 +284,7 @@ func newHub(opts serveOptions, clk clock.Clock, log *slog.Logger) (_ *hub, resul
 	reg := probe.New(st, log)
 	l := live.New(clk, ttl)
 	book := traffic.New(st, clk, loc, log)
-	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, l, clk, log)
+	alerts := alert.New(alert.Config{TTL: ttl, Location: loc}, st, st.Evaluation(), l, clk, log)
 	alerts.SetTraffic(book)
 	notifier := alert.NewQueue(alert.QueueConfig{}, alert.QueueDeps{Store: st, Channels: alerts.Channels, Client: client, Clock: clk, Log: log})
 	alerts.SetSender(notifier)
