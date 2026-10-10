@@ -50,7 +50,7 @@ func TestRelayAcceptFetch(t *testing.T) {
 	if arch == "arm" {
 		arch = "armv7"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), hubFetchLimit)
 	defer cancel()
 	a, err := NewHubSource(func() ([]byte, error) { return cfg, nil }).Fetch(ctx, Request{ID: in.TaskID, Version: in.Version}, "agent", arch)
 	var bin []byte

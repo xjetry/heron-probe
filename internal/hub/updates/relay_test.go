@@ -247,3 +247,20 @@ func TestRelaySweepReleasesUnreferenced(t *testing.T) {
 		t.Fatalf("bytes=%d attempts=%d after the task ended", h.relay.cachedBytes(), h.relay.attemptCount(taskA))
 	}
 }
+
+// 中转从 GitHub 取的总上限与更新器直连同一个 update.DownloadLimit；它比节点经 hub 的期限短，节点才收得到这里的错误。
+func TestRelayFetchUsesDownloadLimit(t *testing.T) {
+	got := make(chan time.Duration, 1)
+	h := newHarness(t, func(ctx context.Context, _, _ string) (update.Artifacts, error) {
+		d, _ := ctx.Deadline()
+		got <- time.Until(d)
+		return artifacts(10), nil
+	}, nil)
+	h.tasks.set(1, taskA, "v1.0.0", "dispatched", now.Unix()+60)
+	if _, err := h.relay.Get(context.Background(), 1, taskA, "amd64"); err != nil {
+		t.Fatal(err)
+	}
+	if d := <-got; d > update.DownloadLimit || d < update.DownloadLimit-5*time.Second {
+		t.Fatalf("relay fetch deadline %v, want update.DownloadLimit %v", d, update.DownloadLimit)
+	}
+}

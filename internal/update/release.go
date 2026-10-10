@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/xjetry/heron-probe/internal/githubtransport"
 	"github.com/xjetry/heron-probe/internal/releasesig"
@@ -29,12 +30,17 @@ const (
 
 // OfficialSource 只从固定官方仓库的下载目录取回产物字节，不做任何接受判定（见 Accept），
 // 不接收外部下载地址或摘要。
-type OfficialSource struct{ http *http.Client }
+type OfficialSource struct {
+	http *http.Client
+	// stall 是读正文的停滞期限，正式构造固定为 stallTimeout；只有包内测试会把它缩短。
+	stall time.Duration
+}
 
-// NewOfficialSource 的客户端不设总时限，只有 githubtransport 的建连、握手与等响应头时限；期限由调用方的 ctx
-// 给出（更新器 downloadTimeout、hub 中转 fetchTimeout、后台查最新版本 15 秒），get 拒绝没有期限的 ctx（见 source）。
+// NewOfficialSource 的客户端不设总时限，只有 githubtransport 的建连、握手与等响应头时限；总上限由调用方的 ctx
+// 给出（更新器与 hub 中转都是 DownloadLimit，后台查最新版本 15 秒），get 拒绝没有期限的 ctx（见 source），
+// 停滞由 get 读正文时判定（见 transfer.go）。
 func NewOfficialSource() *OfficialSource {
-	return &OfficialSource{http: githubtransport.NewClient(0)}
+	return &OfficialSource{http: githubtransport.NewClient(0), stall: stallTimeout}
 }
 
 type officialRelease struct {
@@ -49,7 +55,11 @@ type officialRelease struct {
 
 func (s *OfficialSource) release(ctx context.Context, suffix string) (officialRelease, error) {
 	var release officialRelease
-	body, err := s.get(ctx, officialAPI+suffix, "application/vnd.github+json", maxMetadata)
+	budget, err := timeLimit(ctx)
+	if err != nil {
+		return release, err
+	}
+	body, err := s.get(ctx, budget, officialAPI+suffix, "application/vnd.github+json", maxMetadata)
 	if err != nil {
 		return release, err
 	}
@@ -82,15 +92,19 @@ func (s *OfficialSource) Fetch(ctx context.Context, task Request, role, arch str
 	if !ValidVersion(task.Version) {
 		return Artifacts{}, errors.New("invalid stable version")
 	}
+	budget, err := timeLimit(ctx)
+	if err != nil {
+		return Artifacts{}, err
+	}
 	base := officialDownloads + task.Version + "/"
 	var a Artifacts
-	if a.Sums, err = s.get(ctx, base+"SHA256SUMS", "application/octet-stream", releasesig.MaxSums); err != nil {
+	if a.Sums, err = s.get(ctx, budget, base+"SHA256SUMS", "application/octet-stream", releasesig.MaxSums); err != nil {
 		return Artifacts{}, err
 	}
-	if a.Signature, err = s.get(ctx, base+"SHA256SUMS.sig", "application/octet-stream", releasesig.MaxFile); err != nil {
+	if a.Signature, err = s.get(ctx, budget, base+"SHA256SUMS.sig", "application/octet-stream", releasesig.MaxFile); err != nil {
 		return Artifacts{}, err
 	}
-	if a.Archive, err = s.get(ctx, base+asset, "application/octet-stream", maxArchive); err != nil {
+	if a.Archive, err = s.get(ctx, budget, base+asset, "application/octet-stream", maxArchive); err != nil {
 		return Artifacts{}, err
 	}
 	return a, nil
@@ -114,17 +128,26 @@ func archiveName(role, arch string) (string, error) {
 	return "heron-" + role + "_linux_" + arch + ".tar.gz", nil
 }
 
-func (s *OfficialSource) get(ctx context.Context, endpoint, accept string, limit int64) ([]byte, error) {
-	if err := requireTimeLimit(ctx); err != nil {
+// get 取回一个地址的正文。budget 是调用方给整次取回的总时长，只用于文案，期限本身在 ctx 上；停滞计时从收到响应头
+// 开始，覆盖读正文的全程。
+func (s *OfficialSource) get(ctx context.Context, budget time.Duration, endpoint, accept string, limit int64) ([]byte, error) {
+	if _, err := timeLimit(ctx); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	// 零值的停滞期限会让计时器立刻到点、任何正文都判停滞；它只可能来自绕开 NewOfficialSource 的构造，显式拒绝。
+	if s.stall <= 0 {
+		return nil, errors.New("official source has no stall timeout")
+	}
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "heron-official-updater")
+	start := time.Now()
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download official release: %w", err)
@@ -136,14 +159,16 @@ func (s *OfficialSource) get(ctx context.Context, endpoint, accept string, limit
 	if resp.ContentLength > limit {
 		return nil, fmt.Errorf("official response exceeds size limit")
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	body := &watchedBody{r: resp.Body, stall: s.stall, timer: time.AfterFunc(s.stall, func() { cancel(errStalled) })}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	body.timer.Stop()
 	if err != nil {
-		return nil, fmt.Errorf("read official release: %w", err)
+		return nil, readError(err, context.Cause(reqCtx), s.stall, budget, body.n, resp.ContentLength, time.Since(start))
 	}
-	if int64(len(body)) > limit {
+	if int64(len(data)) > limit {
 		return nil, fmt.Errorf("official response exceeds size limit")
 	}
-	return body, nil
+	return data, nil
 }
 
 func checksum(body []byte, asset string) ([32]byte, error) {

@@ -40,20 +40,30 @@ func parseSourceConfig(b []byte) (string, error) {
 // 主机悄悄改走必然失败的路径——而是让更新器不支持更新，原因带上文件路径。
 func chooseSource(role string, read func() ([]byte, error), github, hub source) sourceChoice {
 	if role != "agent" {
-		return sourceChoice{name: "github", src: github}
+		return githubChoice(github)
 	}
 	b, err := read()
 	if errors.Is(err, fs.ErrNotExist) {
-		return sourceChoice{name: "github", src: github}
+		return githubChoice(github)
 	}
 	if err == nil {
 		var name string
 		if name, err = parseSourceConfig(b); err == nil {
 			if name == "hub" {
-				return sourceChoice{name: "hub", src: hub}
+				return hubChoice(hub)
 			}
-			return sourceChoice{name: "github", src: github}
+			return githubChoice(github)
 		}
 	}
 	return sourceChoice{err: fmt.Sprintf("update source config %s is unusable: %v; rerun the installer with --update-source", sourceConfigPath, err)}
+}
+
+// githubChoice 与 hubChoice 让来源名与交给来源的总上限成对出现：引擎按 limit 给 ctx 期限，limit 为零的选择会让
+// 取回立刻到期。
+func githubChoice(src source) sourceChoice {
+	return sourceChoice{name: "github", src: src, limit: DownloadLimit}
+}
+
+func hubChoice(src source) sourceChoice {
+	return sourceChoice{name: "hub", src: src, limit: hubFetchLimit}
 }

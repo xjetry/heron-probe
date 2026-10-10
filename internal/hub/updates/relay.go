@@ -17,7 +17,6 @@ const (
 	MaxAttemptsPerTask = 3
 	// MaxCacheBytes 是缓存总字节上限，为单个归档上限（128 MiB）的两倍。
 	MaxCacheBytes = 256 << 20
-	fetchTimeout  = 5 * time.Minute
 )
 
 var (
@@ -107,9 +106,11 @@ func (r *Relay) Get(ctx context.Context, node int64, taskID, arch string) (updat
 	}
 }
 
-// load 用独立的上下文取回：发起请求的节点断开不能让同键上等待的其他节点一起失败。
+// load 用独立的上下文取回：发起请求的节点断开不能让同键上等待的其他节点一起失败。总上限与更新器直连 GitHub
+// 是同一个 update.DownloadLimit，停滞判定在 fetch（正式装配为 update.OfficialSource.Fetch）读正文时做；节点侧
+// 经 hub 的期限比它长（见 update 包 hubFetchLimit），这里先到期，节点才收得到这里的错误文案。
 func (r *Relay) load(k relayKey, e *relayEntry) {
-	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), update.DownloadLimit)
 	defer cancel()
 	a, err := r.fetch(ctx, k.version, k.arch)
 	if err == nil {

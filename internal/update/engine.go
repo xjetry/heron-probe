@@ -12,31 +12,24 @@ import (
 	"time"
 )
 
-// downloadTimeout 是更新器一次取回的期限，经 ctx 交给来源（见 source），GitHub 与 hub 两种来源同一个值。
-const downloadTimeout = 5 * time.Minute
-
-// source 只取回产物字节。取回的期限只归调用方：ctx 必须带期限，来源的连接不另设总时限。连接上的总时限覆盖
+// source 只取回产物字节。取回的总上限只归调用方：ctx 必须带期限，来源的连接不另设总时限。连接上的总时限覆盖
 // 读完正文、按请求各自计时（GitHub 来源一次取回是三个顺序请求），只要比调用方的期限短，就取代期限成为归档实际
-// 能用的上限，大归档在慢链路上先撞它；期限只放在调用方一处，两种来源才确定是同一个上限。连接不设总时限后，
-// 已开始传输的正文卡住时只有期限能结束它，所以来源对没有期限的 ctx 返回 errUnbounded，不发请求。
+// 能用的上限，大归档在慢链路上先撞它；总上限只放在调用方一处（sourceChoice.limit），才确定是推导出的那个值。
+// 连接不设总时限后，已开始传输的正文卡住时只有期限或停滞判定能结束它，所以来源对没有期限的 ctx 返回
+// errUnbounded，不发请求（timeLimit）。
 type source interface {
 	Fetch(context.Context, Request, string, string) (Artifacts, error)
 }
 
 var errUnbounded = errors.New("release fetch refused: context has no time limit")
 
-func requireTimeLimit(ctx context.Context) error {
-	if _, ok := ctx.Deadline(); !ok {
-		return errUnbounded
-	}
-	return nil
-}
-
 // sourceChoice 是更新器启动时按本机安装参数选定的取产物来源（spec §4.10）。
 type sourceChoice struct {
 	// name 是 "github" 或 "hub"，随状态上报（Status.Source）。
 	name string
 	src  source
+	// limit 是交给 src 的总上限，只由 githubChoice / hubChoice 与 name 成对给出（见 DownloadLimit、hubFetchLimit）。
+	limit time.Duration
 	// err 非空表示来源配置读不出：更新器照常运行、回答状态，但不支持更新，原因写进状态。
 	// 不让进程退出——崩溃循环在面板上只表现为"没有上报更新能力"，看不出原因。
 	err string
@@ -283,7 +276,7 @@ func (e *Engine) execute() error {
 		return err
 	}
 	j := e.status().Job
-	downloadCtx, cancelDownload := context.WithTimeout(e.ctx, downloadTimeout)
+	downloadCtx, cancelDownload := context.WithTimeout(e.ctx, e.choice.limit)
 	a, err := e.choice.src.Fetch(downloadCtx, j.Request, e.role, e.arch)
 	cancelDownload()
 	if err != nil {

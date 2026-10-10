@@ -33,7 +33,7 @@ func testSource(t *testing.T, routes map[string][]byte) *OfficialSource {
 			t.Fatalf("unexpected request headers: %v", r)
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Header: make(http.Header), Request: r}, nil
-	}), time.Second)}
+	}), time.Second), stall: stallTimeout}
 }
 
 // boundedCtx 给取回调用一个期限：来源不设自己的总时限，没有期限的 ctx 会被拒绝（见 source）。
@@ -63,7 +63,7 @@ func TestOfficialSourceTimeLimitComesFromCaller(t *testing.T) {
 	counting := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
-	}), 0)}
+	}), 0), stall: stallTimeout}
 	if _, err := counting.Fetch(context.Background(), Request{Version: "v0.3.0"}, "hub", "amd64"); !errors.Is(err, errUnbounded) || calls != 0 {
 		t.Fatalf("fetch without a time limit: err=%v calls=%d", err, calls)
 	}
@@ -72,7 +72,7 @@ func TestOfficialSourceTimeLimitComesFromCaller(t *testing.T) {
 	}
 	stalled := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, ContentLength: -1, Body: stallingBody{r.Context()}, Header: make(http.Header), Request: r}, nil
-	}), 0)}
+	}), 0), stall: stallTimeout}
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
@@ -276,7 +276,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 					return nil, tc.err
 				}
 				return &http.Response{StatusCode: tc.status, ContentLength: tc.length, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: r}, nil
-			}), time.Second)}
+			}), time.Second), stall: stallTimeout}
 			if _, err := s.Fetch(boundedCtx(t), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want %s", err, tc.want)
 			}
@@ -288,7 +288,7 @@ func TestOfficialHTTPBoundaries(t *testing.T) {
 			s := &OfficialSource{http: githubtransport.WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls++
 				return &http.Response{StatusCode: 302, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{destination}}, Request: r}, nil
-			}), time.Second)}
+			}), time.Second), stall: stallTimeout}
 			if _, err := s.Fetch(boundedCtx(t), Request{Version: "v0.3.0"}, "hub", "amd64"); err == nil || calls != 1 {
 				t.Fatalf("redirect err=%v, calls=%d", err, calls)
 			}
