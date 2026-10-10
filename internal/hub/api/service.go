@@ -215,7 +215,7 @@ func New(cfg Config, deps Deps) *Service {
 	return &Service{
 		cfg: cfg, store: deps.Store, auth: deps.Auth, live: deps.Live, nodes: deps.Nodes, traffic: deps.Traffic, probes: deps.Probes,
 		alerts: deps.Alerts, notifier: deps.Notifier, clk: deps.Clock, log: deps.Log,
-		history:   history{store: deps.Store, log: deps.Log, gate: newHistoryGate()},
+		history:   history{store: deps.Store, probes: deps.Probes, log: deps.Log, gate: newHistoryGate()},
 		heartbeat: cfg.Heartbeat,
 		access:    accessTable(heronv1.File_heron_v1_admin_proto.Services().ByName("AdminService")),
 		uploading: make(chan struct{}, 1),

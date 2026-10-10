@@ -19,7 +19,7 @@ func (e *EvaluationReader) QueryMetrics(ctx context.Context, nodeID int64, from,
 	return e.s.queryMetrics(ctx, evaluationRead, nodeID, from, to, lv, step)
 }
 
-// QueryProbes 的语义同 Store.QueryProbes。
+// QueryProbes 的语义同 Store.QueryProbes。不收序列数：评估池不按预计扫描量选池，估计无处可用。
 func (e *EvaluationReader) QueryProbes(ctx context.Context, nodeID int64, from, to int64, lv Level, step int64) ([]metric.ProbeRow, error) {
-	return e.s.queryProbes(ctx, evaluationRead, nodeID, from, to, lv, step)
+	return e.s.queryProbes(ctx, evaluationRead, nodeID, from, to, lv, step, 0)
 }

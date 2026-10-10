@@ -243,7 +243,7 @@ func TestLightScanCapRetriesStalledTailsOnHistoryPool(t *testing.T) {
 	setWatermark(t, s, "probe_5m", upto5m)
 
 	trace := tracePools(t, s)
-	got, err := s.QueryProbes(t.Context(), id, from, to, lv, 3600)
+	got, err := s.QueryProbes(t.Context(), id, from, to, lv, 3600, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,3 +272,71 @@ func countLightCounts(events []poolEvent) int {
 	return n
 }
 
+// 任务更替：节点当前只有 2 个任务（调用方按它估，30 天 1h 级 720 桶 × 2 = 1440 行，在分界之下），窗口里却留着 50 个
+// 历史 task_id 的行。三层（1h 主体 + 5m 尾 + 1m 尾）合计远超 lightScanRows：轻池上只计数、按跨层累计的余量封顶，
+// 第三层触顶后回滚，聚合只在历史池执行；结果与同一数据按序列上限估、直接走历史池的结果逐行相同。
+func TestLightScanCapCatchesTaskTurnover(t *testing.T) {
+	t.Parallel()
+	s, _ := open(t)
+	id, _, err := s.CreateNode(t.Context(), "a", Billing{}, hash(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const (
+		base    = int64(86400 * 100)
+		days    = 30
+		perTS   = 4
+		tasks   = 50
+		current = 2
+		coarseH = 20 * 24
+		tailM5  = 6 * 12
+		tailM1  = 12 * 60
+	)
+	lv, _ := LevelByName("1h")
+	from, to := base, base+days*86400
+	if est := scanEstimate(from, to-1, lv, current); est > lightScanRows || scanEstimate(from, to-1, lv, 64) <= lightScanRows {
+		t.Fatalf("the current-task estimate %d must start on the light pool and the 64-series one %d on the history pool (cutoff %d)", est, scanEstimate(from, to-1, lv, 64), lightScanRows)
+	}
+	upto1h := base + coarseH*3600
+	upto5m := upto1h + tailM5*300
+	coarse := fillProbeLevel(t, s, "probe_1h", id, base, 3600, coarseH, perTS, tasks)
+	m5 := fillProbeLevel(t, s, "probe_5m", id, upto1h, 300, tailM5, perTS, tasks)
+	m1 := fillProbeLevel(t, s, "probe_1m", id, upto5m, 60, tailM1, perTS, tasks)
+	if coarse+m5 > lightScanRows || coarse+m5+m1 <= lightScanRows {
+		t.Fatalf("fixture must trip the cap on the third level: coarse %d + 5m %d, 1m %d", coarse, m5, m1)
+	}
+	setWatermark(t, s, "probe_1h", upto1h)
+	setWatermark(t, s, "probe_5m", upto5m)
+
+	trace := tracePools(t, s)
+	got, err := s.QueryProbes(t.Context(), id, from, to, lv, 3600, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := trace.snapshot()
+	checkCappedRetry(t, events)
+	if n := countLightCounts(events); n != 3 {
+		t.Errorf("light pool ran %d quota counts, want 3 (two coarse levels pass, the third trips)", n)
+	}
+	taskIDs := map[uint64]bool{}
+	for _, r := range got {
+		taskIDs[r.TaskID] = true
+	}
+	if len(taskIDs) != tasks {
+		t.Errorf("result has %d distinct tasks, want the %d historical ones", len(taskIDs), tasks)
+	}
+
+	trace.reset()
+	want, err := s.QueryProbes(t.Context(), id, from, to, lv, 3600, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range trace.snapshot() {
+		if e.pool != "history" {
+			t.Errorf("64-series estimate must go straight to the history pool, saw %+v", e)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("capped-and-retried result differs from the direct history read: got %d rows, want %d", len(got), len(want))
+	}
+}

@@ -301,7 +301,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatalf("second prune = %d %v, want 0 nil", n, err)
 	}
 	for _, node := range []int64{id, orphan} {
-		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
+		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60, 0)
 		if err != nil || len(left) != 9 || left[0].TS != now.Unix()-8*86400 {
 			t.Fatalf("probe consumption boundary: node=%d rows=%s err=%v, want 9 from %d", node, formatProbeRows(left), err, now.Unix()-8*86400)
 		}
@@ -313,7 +313,7 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatalf("consumed probe prune=%d err=%v, want 2", n, err)
 	}
 	for _, node := range []int64{id, orphan} {
-		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60)
+		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60, 0)
 		if err != nil || len(left) != 8 || left[0].TS != now.Unix()-7*86400 {
 			t.Fatalf("probe retention boundary: node=%d rows=%s err=%v, want 8 from %d", node, formatProbeRows(left), err, now.Unix()-7*86400)
 		}
@@ -539,7 +539,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 			t.Fatalf("independent watermark %s=%d, want %d", state, got, base+900)
 		}
 	}
-	first, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300)
+	first, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300, 0)
 	if err != nil || len(first) != 6 {
 		t.Fatalf("probe_5m rows=%d err=%v, want 6", len(first), err)
 	}
@@ -566,7 +566,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300)
+	second, err := s.QueryProbes(ctx, id, base, base+900, levels[1], 300, 0)
 	if err != nil || !reflect.DeepEqual(first, second) {
 		t.Fatalf("repeated rollup changed rows: first=%s second=%s err=%v", formatProbeRows(first), formatProbeRows(second), err)
 	}
@@ -574,7 +574,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 	if err := s.Rollup(ctx); err != nil {
 		t.Fatal(err)
 	}
-	hour, err := s.QueryProbes(ctx, id, base, base+3600, levels[2], 3600)
+	hour, err := s.QueryProbes(ctx, id, base, base+3600, levels[2], 3600, 0)
 	want := []metric.ProbeRow{
 		{NodeID: id, TS: base, TaskID: 7, Bucket: &metric.ProbeBucket{Sent: 45, Lost: 15, Errors: 15, RttN: 15, RttSumUs: 1605, RttMinUs: 100, RttMaxUs: 114}},
 		{NodeID: id, TS: base, TaskID: 9, Bucket: &metric.ProbeBucket{Sent: 30, Lost: 30}},
@@ -621,7 +621,7 @@ func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 			if err != nil || len(sums) != 1 || sums[0] != float64(i+1) {
 				t.Fatalf("metric query read wrong level %s: sums=%v err=%v, want [%d]", lv.Name, sums, err, i+1)
 			}
-			probes, err := s.QueryProbes(ctx, id, 0, lv.Bucket, lv, lv.Bucket)
+			probes, err := s.QueryProbes(ctx, id, 0, lv.Bucket, lv, lv.Bucket, 0)
 			if err != nil || len(probes) != 1 || probes[0].Bucket.RttSumUs != uint64(i+1) {
 				t.Fatalf("probe query read wrong level %s: rows=%s err=%v, want sum %d", lv.Name, formatProbeRows(probes), err, i+1)
 			}

@@ -123,7 +123,7 @@ func NewPublic(cfg PublicConfig, deps PublicDeps) *Public {
 	projections := publicProjections()
 	return &Public{
 		cfg: cfg, store: deps.Store, live: deps.Live, traffic: deps.Traffic, probes: deps.Probes, clk: deps.Clock, log: deps.Log,
-		history: history{store: deps.Store, log: deps.Log, gate: newHistoryGate()},
+		history: history{store: deps.Store, probes: deps.Probes, log: deps.Log, gate: newHistoryGate()},
 		facts:   projections.facts, metrics: projections.metrics, billing: projections.billing,
 		limit:  ratelimit.New[netip.Addr](publicBurst, publicRefill),
 		maxAge: cachePolicy(probeServices()),

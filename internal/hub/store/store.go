@@ -251,20 +251,21 @@ const readConnMaxIdle = 5 * time.Minute
 
 // lightScanRows 是轻读与大扫描的分界，单位是 scanEstimate 的源行数。分界只由请求驱动的读的几档窗口决定（告警评估读
 // 不在 r / hr 上，与它无关）：面板与公开页的几档历史（web/src/components/History.tsx 的 RANGES 经 ChooseLevel 选级）
-// 单序列 1h、6h、24h、7d、30d 分别是 60、360、288、2016、720 行，指标族全部在分界之下；探测族与对比按序列上限计，
-// 一小时窗口满配 64 个任务（probelimit.MaxTasksPerNode）是 60×64=3840 行，1h 之后的几档走大扫描池。
+// 单序列 1h、6h、24h、7d、30d 分别是 60、360、288、2016、720 行，指标族全部在分界之下；探测族按节点的任务数、对比按
+// 节点数计序列，一小时窗口满配 64 个任务（probelimit.MaxTasksPerNode）是 60×64=3840 行。
 //
-// 取 3840 之上的 4096，一小时的探测图留在轻池。同机单次扫描（单序列指标、1m 级、无并发）4096 行 p50 16ms、p99 19ms，
+// 取 3840 之上的 4096，任务满配的一小时探测图也留在轻池。同机单次扫描（单序列指标、1m 级、无并发）4096 行 p50 16ms、p99 19ms，
 // 轻池里的读至多排在这个量级的扫描后面；12000 行（单序列读量额度）约 40ms，多序列、天级以上的扫描到数百毫秒，
 // 这些才值得隔离。
 const lightScanRows = 4096
 
-// scanEstimate 是 queryFamily 一次查询预计读取的源行数：请求级每桶一行、至多 seriesLimit 条序列。按桶长而不按 step 算，
-// 因为 step 是桶长的整数倍、源行按桶长存，输出点数会低估读量。估计只定首次池：偏大只多排队；偏小（任务更替留下的
-// 历史序列，或不计入的细级尾巴在维护停滞时变长）由 queryFamily 在 r 上的封顶计数兜住，r 上完成的扫描不超过
-// lightScanRows。读量本身由额度（ReadQuotaError）按实际行数裁决，与估计无关。
-func scanEstimate(from, to int64, lv Level, seriesLimit int64) int64 {
-	return ceilDiv(to-from, lv.Bucket) * seriesLimit
+// scanEstimate 是 queryFamily 一次查询预计读取的源行数：请求级每桶一行、series 条序列（queryShape.estimatedSeries：
+// 调用方给出的实际序列数，不知道时按序列上限）。按桶长而不按 step 算，因为 step 是桶长的整数倍、源行按桶长存，
+// 输出点数会低估读量。估计只定首次池：偏大只多排队；偏小（任务更替留下的历史序列，或不计入的细级尾巴在维护停滞时
+// 变长）由 queryFamily 在 r 上的封顶计数兜住，r 上完成的扫描不超过 lightScanRows。读量本身由额度（ReadQuotaError）
+// 按实际行数裁决，与估计无关。
+func scanEstimate(from, to int64, lv Level, series int64) int64 {
+	return ceilDiv(to-from, lv.Bucket) * series
 }
 
 // configureReadPool 让空闲保留等于上限：连接的打开成本是重跑 DSN 里的 pragma、页缓存从冷开始，归还时关掉、下次再开

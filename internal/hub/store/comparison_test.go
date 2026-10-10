@@ -182,7 +182,7 @@ func TestProbeComparisonMatchesSingleNodeAcrossLevels(t *testing.T) {
 		}
 		got := comparisonSamples(rows)
 		for _, node := range []int64{a, b} {
-			single, err := s.QueryProbes(t.Context(), node, from, to, levels[1], 3600)
+			single, err := s.QueryProbes(t.Context(), node, from, to, levels[1], 3600, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +225,7 @@ func TestProbeComparisonMatchesSingleNodeAcrossLevels(t *testing.T) {
 			}
 			got := comparisonSamples(rows)
 			for _, node := range []int64{a, b} {
-				single, err := s.QueryProbes(t.Context(), node, c.from, c.to, c.lv, c.step)
+				single, err := s.QueryProbes(t.Context(), node, c.from, c.to, c.lv, c.step, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -257,7 +257,7 @@ func TestProbeComparisonAlignsUnalignedWindowEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	single, err := s.QueryProbes(t.Context(), a, base+130, base+700, levels[0], 300)
+	single, err := s.QueryProbes(t.Context(), a, base+130, base+700, levels[0], 300, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestProbeComparisonAcrossWatermarkBoundary(t *testing.T) {
 	}
 	got := comparisonSamples(rows)
 	for _, node := range []int64{a, b} {
-		single, err := s.QueryProbes(t.Context(), node, from, to, levels[1], 300)
+		single, err := s.QueryProbes(t.Context(), node, from, to, levels[1], 300, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -456,7 +456,7 @@ func TestReadQuotaRejectsBeforeAggregation(t *testing.T) {
 	end := (int64(rows) + 1) * 3600
 	setWatermark(t, s, "probe_1h", end)
 	setWatermark(t, s, "probe_5m", end)
-	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400)
+	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400, 0)
 	if err == nil {
 		t.Fatal("query over budget must be rejected")
 	}
@@ -510,9 +510,9 @@ func TestReadQuotaAdmitsCommonWindows(t *testing.T) {
 			_, _, err := s.QueryMetricsCoverage(t.Context(), 1, base, base+7*86400, levels[1], 300)
 			return err
 		}},
-		{"probes alert window", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+3600, levels[0], 60); return err }},
-		{"probes full level", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+70*60, levels[0], 60); return err }},
-		{"probes sparse step", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+70*60, levels[0], 600); return err }},
+		{"probes alert window", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+3600, levels[0], 60, 0); return err }},
+		{"probes full level", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+70*60, levels[0], 60, 0); return err }},
+		{"probes sparse step", func() error { _, err := s.QueryProbes(t.Context(), 1, base, base+70*60, levels[0], 600, 0); return err }},
 		{"comparison", func() error {
 			_, err := s.QueryProbeComparison(t.Context(), 1, []int64{1}, base, base+70*60, levels[0], 60)
 			return err
@@ -534,7 +534,7 @@ func TestReadQuotaRejectsTaskTurnoverHistory(t *testing.T) {
 	s, _ := openProbeHistory(t, rows)
 	end := int64(rows) * 3600
 	setWatermark(t, s, "probe_1h", end)
-	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400)
+	_, err := s.QueryProbes(t.Context(), 1, 0, end, levels[2], 7*86400, 0)
 	var quota ReadQuotaError
 	if !errors.As(err, &quota) {
 		t.Fatalf("err = %v, want ReadQuotaError", err)
@@ -743,7 +743,7 @@ func TestAlertWindowStaysWithinQuota(t *testing.T) {
 	}
 	minute, _ := LevelByName("1m")
 	// 与 engine.go 的调用同参：from = minuteTS-(for_minutes-1)*60，to = minuteTS+60，step 60。
-	rows, err := s.QueryProbes(ctx, id, now-59*60, now+60, minute, 60)
+	rows, err := s.QueryProbes(ctx, id, now-59*60, now+60, minute, 60, 0)
 	if err != nil {
 		t.Fatalf("alert-shaped window must stay within quota: %v", err)
 	}
@@ -765,7 +765,7 @@ func TestReadQuotaCountsAlignedWindow(t *testing.T) {
 	end := int64(rows) * 3600
 	setProbeWatermarks(t, s, end+3600, end+3600)
 	lv, _ := LevelByName("1h")
-	_, err := s.QueryProbes(ctx, id, 0, end-1, lv, 7*86400)
+	_, err := s.QueryProbes(ctx, id, 0, end-1, lv, 7*86400, 0)
 	var quota ReadQuotaError
 	if !errors.As(err, &quota) {
 		t.Fatalf("aligned window must push the last row over quota: err = %v", err)
@@ -792,7 +792,7 @@ func TestReadQuotaCountsFineTail(t *testing.T) {
 	to := base + int64(rows)*60
 	setProbeWatermarks(t, s, from, from)
 	lv, _ := LevelByName("5m")
-	_, err = s.QueryProbes(ctx, id, from, to, lv, 3600)
+	_, err = s.QueryProbes(ctx, id, from, to, lv, 3600, 0)
 	var quota ReadQuotaError
 	if !errors.As(err, &quota) {
 		t.Fatalf("fine tail beyond quota must be rejected: err = %v", err)
@@ -843,7 +843,7 @@ func TestReadQuotaUsesFullTaskSlots(t *testing.T) {
 	end := int64(768001) * 3600
 	setProbeWatermarks(t, s, end, end)
 	lv, _ := LevelByName("1h")
-	rows, err := s.QueryProbes(ctx, id, 0, end, lv, 7*86400)
+	rows, err := s.QueryProbes(ctx, id, 0, end, lv, 7*86400, 0)
 	if err != nil {
 		t.Fatalf("history of rotated task slots must stay within full-slot quota: %v", err)
 	}

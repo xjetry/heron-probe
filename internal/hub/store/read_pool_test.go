@@ -307,7 +307,10 @@ func TestReadPoolsIsolateHistoryScansFromLightReads(t *testing.T) {
 	}
 	historyReads := []namedRead{
 		{"QueryMetrics", func(ctx context.Context) error { _, err := s.QueryMetrics(ctx, id, 0, bigScanTo, lv, 3600); return err }},
-		{"QueryProbes", func(ctx context.Context) error { _, err := s.QueryProbes(ctx, id, 0, bigScanTo, lv, 3600); return err }},
+		{"QueryProbes", func(ctx context.Context) error {
+			_, err := s.QueryProbes(ctx, id, 0, bigScanTo, lv, 3600, 0)
+			return err
+		}},
 		{"QueryMetricsCoverage", func(ctx context.Context) error {
 			_, _, err := s.QueryMetricsCoverage(ctx, id, 0, bigScanTo, lv, 3600)
 			return err

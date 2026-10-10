@@ -13,6 +13,7 @@ import (
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/hub/live"
 	"github.com/xjetry/heron-probe/internal/hub/metric"
+	"github.com/xjetry/heron-probe/internal/hub/probe"
 	"github.com/xjetry/heron-probe/internal/hub/store"
 )
 
@@ -31,8 +32,10 @@ const (
 // 读连接，按来源的在飞上限就封不住它的读并发。
 type history struct {
 	store *store.Store
-	log   *slog.Logger
-	gate  *historyGate
+	// probes 只用来取节点当前的任务数，给单节点探测查询选首次读池（见 probeSeries）。
+	probes *probe.Registry
+	log    *slog.Logger
+	gate   *historyGate
 }
 
 // taskLabel 给出任务的种类与目标；ok 为 false 时两项留空，客户端退回编号。两端不同：管理端按
@@ -124,7 +127,9 @@ func (h history) probeSeries(ctx context.Context, m *heronv1.QueryProbesRequest,
 		return nil, err
 	}
 	lv, step := store.ChooseLevel(m.GetFrom(), m.GetTo(), maxPoints)
-	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step)
+	// 序列数取节点的全部任务数，不取调用方可见的任务数：读的是这个节点全部任务的行，受限 token 只见其中一部分，
+	// 按可见数估会把同一条扫描低估进轻池，选池随调用方而变；管理与公开两端、各种 token 对同一节点同一窗口估计相同。
+	rows, err := h.store.QueryProbes(ctx, m.GetNodeId(), m.GetFrom(), m.GetTo(), lv, step, h.probes.TaskCount(m.GetNodeId()))
 	if err != nil {
 		h.log.Error("probe query failed", "err", err)
 		return nil, h.queryError(err, "probe query failed")

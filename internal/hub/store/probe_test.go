@@ -87,7 +87,7 @@ func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 	if _, err := s.WriteMinuteBatch(ctx, metric.Batch{Probes: []metric.ProbeRow{probeRow(id, 600, 7, []uint32{300, 100}, 0, 1)}}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.QueryProbes(ctx, id, 600, 660, levels[0], 60)
+	rows, err := s.QueryProbes(ctx, id, 600, 660, levels[0], 60, 0)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("rows=%s err=%v", formatProbeRows(rows), err)
 	}
@@ -110,7 +110,7 @@ func TestProbeRowsMergeAdditivelyAndKeepNullRtt(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			rows, err := s.QueryProbes(ctx, id, 600, 660, levels[0], 60)
+			rows, err := s.QueryProbes(ctx, id, 600, 660, levels[0], 60, 0)
 			if err != nil || len(rows) != 1 || *rows[0].Bucket != tc.want {
 				t.Fatalf("merged %s: rows=%s err=%v want=%+v", tc.name, formatProbeRows(rows), err, tc.want)
 			}
@@ -168,7 +168,7 @@ func TestQueryProbesRebucketsPerTask(t *testing.T) {
 	if _, err := s.WriteMinuteBatch(t.Context(), metric.Batch{Probes: input}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.QueryProbes(t.Context(), id, 630, 1201, levels[0], 300)
+	rows, err := s.QueryProbes(t.Context(), id, 630, 1201, levels[0], 300, 0)
 	want := []metric.ProbeRow{
 		{NodeID: id, TS: 600, TaskID: 3, Bucket: &metric.ProbeBucket{Sent: 15, Lost: 5, Errors: 5, RttN: 5, RttSumUs: 500, RttMinUs: 100, RttMaxUs: 100}},
 		{NodeID: id, TS: 900, TaskID: 3, Bucket: &metric.ProbeBucket{Sent: 15, Lost: 5, Errors: 5, RttN: 5, RttSumUs: 500, RttMinUs: 100, RttMaxUs: 100}},
@@ -180,12 +180,12 @@ func TestQueryProbesRebucketsPerTask(t *testing.T) {
 		t.Fatalf("rebucketed rows=%s err=%v, want %s", formatProbeRows(rows), err, formatProbeRows(want))
 	}
 	for _, step := range []int64{0, 30, 90} {
-		if _, err := s.QueryProbes(t.Context(), id, 600, 1200, levels[0], step); err == nil {
+		if _, err := s.QueryProbes(t.Context(), id, 600, 1200, levels[0], step, 0); err == nil {
 			t.Fatalf("invalid step %d accepted", step)
 		}
 	}
 	for _, lv := range []Level{{Name: "bad", Bucket: 60}, {Name: "1m", Bucket: 0}} {
-		if _, err := s.QueryProbes(t.Context(), id, 600, 1200, lv, 60); err == nil {
+		if _, err := s.QueryProbes(t.Context(), id, 600, 1200, lv, 60, 0); err == nil {
 			t.Fatalf("invalid level %+v accepted", lv)
 		}
 	}

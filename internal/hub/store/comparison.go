@@ -48,7 +48,9 @@ func (s *Store) QueryProbeComparison(ctx context.Context, taskID uint64, nodeIDs
 		keyArgs:     comparisonKeyArgs(taskID, nodeIDs),
 		groupKey:    "node_id",
 		seriesLimit: int64(MaxComparisonNodes),
-		byTaskIndex: true,
+		// 对比形状的源行由 (task_id, node_id) 等值定位，每节点每桶至多一行：节点数就是精确的序列数。
+		seriesEstimate: int64(len(nodeIDs)),
+		byTaskIndex:    true,
 	}
 	return queryFamily(ctx, s, requestRead, probeFamily, shape, from, to, lv, step,
 		func(rows *sql.Rows) ([]metric.ProbeRow, error) { return scanComparisonRows(rows, taskID) }, nil)
