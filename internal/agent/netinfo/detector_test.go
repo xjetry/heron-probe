@@ -363,7 +363,9 @@ func TestResumedFamilyIsProbedImmediately(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first round did not run")
 	}
-	waitFor(t, func() bool { return d.Snapshot().GetIpv6().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED })
+	waitFor(t, func() bool {
+		return d.Snapshot().GetIpv6().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED
+	})
 	d.Skip(nil)
 	if got := d.Snapshot().GetIpv4(); got != nil {
 		t.Fatalf("resumed family still reported %v before its probe", got)
@@ -376,7 +378,9 @@ func TestResumedFamilyIsProbedImmediately(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("resumed family was not probed before the next period")
 	}
-	waitFor(t, func() bool { return d.Snapshot().GetIpv4().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED })
+	waitFor(t, func() bool {
+		return d.Snapshot().GetIpv4().GetState() == heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED
+	})
 	cancel()
 	<-done
 	if dial.count("tcp6") != 1 || dial.count("tcp4") != 1 {
