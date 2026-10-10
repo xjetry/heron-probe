@@ -147,6 +147,10 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await expect(card.getByText("US$12 / 月")).toBeVisible();
   await expect(card.locator(".expiry")).toHaveAttribute("data-level", "attention");
   await expect(card.locator(".expiry")).toContainText("剩 25 天");
+  // 运行时长是卡片底部的最后一行，系统信息行不再带它。
+  await expect(card.locator(".node-card-foot > dd").last()).toHaveText("8d 8h");
+  await expect(card.locator(".node-card-foot > dd").last()).toBeVisible();
+  await expect(card.locator(".node-card-meta")).not.toContainText("8d 8h");
   // 双栈标记在系统信息行尾，只画有公网出口的族（探测失败的 IPv6 不画）；标题行不因它变挤，短名称不截断。
   await expect(card.locator(".node-card-meta").getByRole("group", { name: "公网出口" })).toHaveText("IPv4IPv6");
   expect(await card.getByRole("link", { name: "tokyo-core" }).evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
@@ -184,15 +188,16 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   const text = await page.evaluate(() => document.body.innerText);
   for (const word of FORBIDDEN) expect(text, word).not.toContain(word);
 
-  // 列表视图：与管理端总览同一组列另加到期；全部节点一张表，离线与从未上报不折叠；同样不出现禁止字段。
+  // 列表视图：与管理端总览同一组列（含运行时长）另加到期；全部节点一张表，离线与从未上报不折叠；同样不出现禁止字段。
   await views.getByRole("button", { name: "列表" }).click();
   const list = page.getByRole("region", { name: "节点列表" });
-  await expect(list.getByRole("columnheader")).toHaveText(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "到期", "最近上报"]);
+  await expect(list.getByRole("columnheader")).toHaveText(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "运行时长", "到期", "最近上报"]);
   await expect(list.locator("tbody tr")).toHaveCount(5);
   const coreRow = list.getByRole("row", { name: "tokyo-core", exact: true });
   await expect(coreRow.getByRole("meter", { name: "CPU 72%" })).toBeVisible();
   await expect(coreRow.getByRole("group", { name: "公网出口" })).toHaveText("IPv4IPv6");
   await expect(coreRow.locator(".expiry")).toContainText("剩 25 天");
+  await expect(coreRow.locator('td[data-label="运行时长"]')).toHaveText("8d 8h");
   await expect(list.getByRole("row", { name: "等待首次接入", exact: true }).getByRole("img", { name: "从未上报" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1440);
   await page.screenshot({ path: testInfo.outputPath("list-light.png"), fullPage: true });
@@ -209,10 +214,10 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   for (const cell of await folded.locator("tbody td:first-child").all()) expect(await cell.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("cards-mobile.png"), fullPage: true });
-  // 手机：列表每行折成一张卡（状态点、名称、最近上报；三项用量；网速），负载、本周期与到期不显示，没有横向溢出。
+  // 手机：列表每行折成一张卡（状态点、名称、最近上报；三项用量；网速），负载、本周期、运行时长与到期不显示，没有横向溢出。
   await views.getByRole("button", { name: "列表" }).click();
   await expect(coreRow.locator('td[data-label="CPU"]')).toBeVisible();
-  for (const label of ["负载", "本周期", "到期"]) await expect(coreRow.locator(`td[data-label="${label}"]`)).toBeHidden();
+  for (const label of ["负载", "本周期", "运行时长", "到期"]) await expect(coreRow.locator(`td[data-label="${label}"]`)).toBeHidden();
   const [dot, cpu] = [await boxOf(coreRow.locator('td[data-label="状态"]')), await boxOf(coreRow.locator('td[data-label="CPU"]'))];
   expect(cpu.y).toBeGreaterThan(dot.y);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
