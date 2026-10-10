@@ -3,7 +3,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
 import { PublicService, type PublicNodeSchema } from "../src/gen/heron/v1/public_pb";
 import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
-import { expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
+import { boxOf, expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
 
 // 设计 §6 的公开页禁止字段：任何一个出现在页面文字里都算失败。IP 地址不在这里查：公开快照里根本没有地址字段
 // （PublicAddressDetection 只有 state，由 hub 的投影与 internal/hub/api 的测试钉住）；「IPv4」「IPv6」地址族标记是允许的。
@@ -213,8 +213,8 @@ test("公开总览：状态墙、详情、卡片、列表视图、手机布局�
   await views.getByRole("button", { name: "列表" }).click();
   await expect(coreRow.locator('td[data-label="CPU"]')).toBeVisible();
   for (const label of ["负载", "本周期", "到期"]) await expect(coreRow.locator(`td[data-label="${label}"]`)).toBeHidden();
-  const [dot, cpu] = [await coreRow.locator('td[data-label="状态"]').boundingBox(), await coreRow.locator('td[data-label="CPU"]').boundingBox()];
-  expect(cpu!.y).toBeGreaterThan(dot!.y);
+  const [dot, cpu] = [await boxOf(coreRow.locator('td[data-label="状态"]')), await boxOf(coreRow.locator('td[data-label="CPU"]'))];
+  expect(cpu.y).toBeGreaterThan(dot.y);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await page.screenshot({ path: testInfo.outputPath("list-mobile.png"), fullPage: true });
   // 手机：墙是单列列表，点行直接进节点页，没有横向溢出。

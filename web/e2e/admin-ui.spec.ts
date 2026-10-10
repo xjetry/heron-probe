@@ -2,7 +2,7 @@ import { type Page } from "@playwright/test";
 import { AdminService, DeliveryFailure } from "../src/gen/heron/v1/admin_pb";
 import { AgentService } from "../src/gen/heron/v1/agent_pb";
 import { AddressDetectionState, BillingCycle } from "../src/gen/heron/v1/types_pb";
-import { expect, fulfillRpc, login, must, rpc, rpcRoute, test } from "./fixtures";
+import { boxOf, expect, fulfillRpc, login, must, mustField, rpc, rpcRoute, test } from "./fixtures";
 
 async function setScheme(page: Page, want: 'light' | 'dark') {
   for (let i = 0; i < 3; i++) {
@@ -50,12 +50,12 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   await page.goto('/admin/login');
   await login(page);
   for (const [index, name] of ['tokyo-edge', 'seattle-core', 'frankfurt-worker'].entries()) {
-    const result = must(await rpc(page, AdminService.method.createNode, { name: `${name}-${browserName}` }));
-    const id = result.node!.id;
+    const result = await rpc(page, AdminService.method.createNode, { name: `${name}-${browserName}` });
+    const id = mustField(result, 'node').id;
     ids.push(id);
     hub.deleteNodeAtEnd(id);
     must(await rpc(page, AdminService.method.updateNode, { id, name: `${name}-${browserName}`, note: '生产节点 / 核心业务', public: true, trafficResetDay: 1, offlineGraceS: 0, countryPin: ['JP', 'US', 'DE'][index], tags: ['production', index === 0 ? 'edge' : 'compute'], billing: { price: String(12 + index * 8), currency: 'USD', billingCycle: BillingCycle.MONTHLY, expiresOn: '2027-10-01' } }));
-    const { token } = must(await rpc(page, AgentService.method.register, { key: result.token }));
+    const { token } = must(await rpc(page, AgentService.method.register, { key: must(result).token }));
     const checkedAt = BigInt(Math.floor(Date.now() / 1000));
     must(await rpc(page, AgentService.method.report, {
       factsHash: 1n, metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: 536870912n, memTotal: 2147483648n, diskUsed: 2147483648n, diskTotal: 21474836480n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: 524288n, netTxBps: 131072n },
@@ -209,7 +209,7 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
   const label = (index: number) => `order-${index}-${browserName}（#${ids[index]}）`;
   const actual = async () => must(await rpc(page, AdminService.method.listNodes, {})).nodes.filter((node) => ids.includes(node.id)).map((node) => node.id);
   for (let i = 0; i < 3; i++) {
-    const node = must(await rpc(page, AdminService.method.createNode, { name: `order-${i}-${browserName}` })).node!;
+    const node = mustField(await rpc(page, AdminService.method.createNode, { name: `order-${i}-${browserName}` }), 'node');
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }
@@ -218,9 +218,8 @@ test('节点拖拽、键盘和移动端菜单保存同一完整顺序', async ({
   const handle = page.getByRole('button', { name: `调整顺序 ${label(0)}`, exact: true });
   const target = page.getByRole('link', { name: label(2), exact: true }).locator('xpath=ancestor::tr');
   await expect(handle).toBeEnabled();
-  const box = await target.boundingBox();
-  expect(box).not.toBeNull();
-  await handle.dragTo(target, { targetPosition: { x: 30, y: box!.height - 5 } });
+  const box = await boxOf(target);
+  await handle.dragTo(target, { targetPosition: { x: 30, y: box.height - 5 } });
   await expect(page.getByText('顺序已保存', { exact: true })).toBeVisible();
   await expect.poll(actual).toEqual([ids[1], ids[2], ids[0]]);
   await handle.focus();
@@ -276,8 +275,13 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
     const all = await hubList();
     return all.every((node, index) => node.position === index + 1);
   };
+  const positionOf = async (id: bigint) => {
+    const node = (await hubList()).find((entry) => entry.id === id);
+    if (!node) throw new Error(`ListNodes has no node ${id}`);
+    return node.position;
+  };
   for (let i = 0; i < 5; i++) {
-    const node = must(await rpc(page, AdminService.method.createNode, { name: `move-${i}-${browserName}` })).node!;
+    const node = mustField(await rpc(page, AdminService.method.createNode, { name: `move-${i}-${browserName}` }), 'node');
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }
@@ -285,7 +289,7 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
   await page.setViewportSize({ width: 1440, height: 960 });
   const total = (await hubList()).length;
   // 本批 5 个节点刚连着创建，占全序中连续的名次：从 ids[0] 的名次推出整批的基准位次。
-  const base = (await hubList()).find((node) => node.id === ids[0])!.position;
+  const base = await positionOf(ids[0]);
   const handle = (index: number) => page.getByRole('button', { name: `调整顺序 ${label(index)}`, exact: true });
   // 多选 move-1、move-3（本批第 2、4 位）整体移到本批第 3 位：其余相对顺序不变。
   await page.getByRole('checkbox', { name: `选择 ${label(1)}`, exact: true }).check();
@@ -314,7 +318,7 @@ test('节点按全序名次整体移动到指定位置', async ({ page, browserN
   // 过滤到单个节点：拖动禁用，但行菜单可按全序名次移动这一个节点。
   await page.getByRole('searchbox', { name: '搜索节点' }).fill(`move-4-${browserName}`);
   await expect(page.getByRole('link', { name: label(4), exact: true })).toBeVisible();
-  const positionOfLast = (await hubList()).find((node) => node.id === ids[4])!.position;
+  const positionOfLast = await positionOf(ids[4]);
   await expect(handle(4)).toHaveText(String(positionOfLast));
   await expect(handle(4)).toBeDisabled();
   await openRowAction(page, label(4), '移动到…');
@@ -383,7 +387,11 @@ test('手机上的告警事件排成卡片：不横向滚动，投递起在标�
     for (const o of offsets) expect(o.left).toBeCloseTo(offsets[0].left, 0);
   }
   // 「查看错误原文」是链接按钮，不能把它所在的投递行撑到控件高度（styles.css 的 button.link）。
-  const line = await cells.first().evaluate((td) => ({ height: td.querySelector('button')!.parentElement!.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(td).lineHeight) }));
+  const line = await cells.first().evaluate((td) => {
+    const row = td.querySelector('button')?.parentElement;
+    if (!row) throw new Error('delivery cell has no line holding the error-text button');
+    return { height: row.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(td).lineHeight) };
+  });
   expect(line.height).toBeLessThanOrEqual(line.lineHeight + 2);
   await page.screenshot({ path: testInfo.outputPath('events-mobile.png'), fullPage: true });
 });
@@ -399,9 +407,13 @@ test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ pa
   await expect(form.getByRole('button', { name: '用内置配色' })).toBeVisible();
   const offsets = await form.evaluate((f) => {
     const center = (el: Element) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
-    const link = (text: string) => [...f.querySelectorAll('button.link')].find((b) => b.textContent === text)!;
-    const accent = [...f.querySelectorAll('input')].find((i) => i.placeholder.startsWith('#rrggbb'))!;
-    return { accent: center(link('用内置配色')) - center(accent), logo: center(link('移除 logo')) - center(f.querySelector('.file-button')!) };
+    const required = <T>(what: string, value: T | null | undefined): T => {
+      if (value === null || value === undefined) throw new Error(`appearance form has no ${what}`);
+      return value;
+    };
+    const link = (text: string) => required(`link button ${text}`, [...f.querySelectorAll('button.link')].find((b) => b.textContent === text));
+    const accent = required('accent color input', [...f.querySelectorAll('input')].find((i) => i.placeholder.startsWith('#rrggbb')));
+    return { accent: center(link('用内置配色')) - center(accent), logo: center(link('移除 logo')) - center(required('.file-button', f.querySelector('.file-button'))) };
   });
   expect(Math.abs(offsets.accent), JSON.stringify(offsets)).toBeLessThan(1.5);
   expect(Math.abs(offsets.logo), JSON.stringify(offsets)).toBeLessThan(1.5);
@@ -410,9 +422,14 @@ test('表单行里的链接按钮与勾选框和字段控件齐平', async ({ pa
   const drawer = page.getByRole('dialog', { name: '新建告警规则' });
   await expect(drawer.getByRole('checkbox', { name: '启用' })).toBeVisible();
   const enabled = await drawer.evaluate((dialog) => {
-    const name = [...dialog.querySelectorAll('label')].find((l) => l.textContent?.startsWith('名称'))!.querySelector('input')!;
-    const label = [...dialog.querySelectorAll('label')].find((l) => l.textContent?.trim() === '启用')!;
-    const text = [...label.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim())!;
+    const required = <T>(what: string, value: T | null | undefined): T => {
+      if (value === null || value === undefined) throw new Error(`alert rule drawer has no ${what}`);
+      return value;
+    };
+    const labels = [...dialog.querySelectorAll('label')];
+    const name = required('name input', labels.find((l) => l.textContent?.startsWith('名称'))?.querySelector('input'));
+    const label = required('启用 label', labels.find((l) => l.textContent?.trim() === '启用'));
+    const text = required('启用 label text', [...label.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()));
     const range = document.createRange();
     range.selectNodeContents(text);
     const t = range.getBoundingClientRect(), n = name.getBoundingClientRect();
@@ -443,7 +460,7 @@ test('节点列表筛选由 URL 持有：逐字输入与输入法组字不丢字
   const names = [`url-a-${browserName}`, `url-b-${browserName}`];
   const ids: bigint[] = [];
   for (const name of names) {
-    const node = must(await rpc(page, AdminService.method.createNode, { name })).node!;
+    const node = mustField(await rpc(page, AdminService.method.createNode, { name }), 'node');
     ids.push(node.id);
     hub.deleteNodeAtEnd(node.id);
   }

@@ -1,5 +1,5 @@
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
-import { expect, login, must, rpc, test } from "./fixtures";
+import { expect, login, must, mustField, rpc, test } from "./fixtures";
 
 // 节点页、编辑抽屉与批量添加页上不再有浏览器按系统画的控件：下拉与标签候选是自绘列表，勾选框与单选框自绘外观，
 // 数字框没有微调箭头。这些只能在真实浏览器里看：jsdom 不算样式，也不做焦点与默认动作。
@@ -8,9 +8,9 @@ test("管理端节点页的控件自绘：下拉、标签候选、勾选框、�
   await login(page);
   const name = `ctl-${browserName}`;
   const known = `ctl-known-${browserName}`;
-  const id = must(await rpc(page, AdminService.method.createNode, { name })).node!.id;
+  const id = mustField(await rpc(page, AdminService.method.createNode, { name }), "node").id;
   hub.deleteNodeAtEnd(id);
-  const other = must(await rpc(page, AdminService.method.createNode, { name: `${name}-b` })).node!.id;
+  const other = mustField(await rpc(page, AdminService.method.createNode, { name: `${name}-b` }), "node").id;
   hub.deleteNodeAtEnd(other);
   must(await rpc(page, AdminService.method.updateNode, { id: other, name: `${name}-b`, tags: [known], trafficResetDay: 1, offlineGraceS: 0 }));
   hub.deleteAtEnd(AdminService.method.deleteTag, { name: known });
@@ -46,7 +46,9 @@ test("管理端节点页的控件自绘：下拉、标签候选、勾选框、�
   const accent = await page.evaluate(() => {
     const probe = document.createElement("span");
     probe.style.color = "var(--accent)";
-    document.querySelector(".admin-shell")!.appendChild(probe);
+    const shell = document.querySelector(".admin-shell");
+    if (shell === null) throw new Error("no .admin-shell to host the accent probe");
+    shell.appendChild(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
     return color;

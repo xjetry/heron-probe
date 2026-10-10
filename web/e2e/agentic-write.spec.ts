@@ -1,7 +1,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 import { anyUnpack } from "@bufbuild/protobuf/wkt";
 import { AdminService, TokenPermission, UpdateNodeResponseSchema, type ExecuteChangeRequestSchema } from "../src/gen/heron/v1/admin_pb";
-import { expect, login, must, rpc, test } from "./fixtures";
+import { expect, login, must, mustField, rpc, test } from "./fixtures";
 
 test("限定节点凭据的创建、预览、写入、重试、回执和吊销", async ({ page, browserName, hub }, testInfo) => {
   await page.goto("/admin/login");
@@ -9,9 +9,9 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
   const ids: bigint[] = [];
   const name = `scoped-${browserName}`;
   for (const suffix of ["allowed", "outside"]) {
-    const { node } = must(await rpc(page, AdminService.method.createNode, { name: `${name}-${suffix}` }));
-    ids.push(node!.id);
-    hub.deleteNodeAtEnd(node!.id);
+    const node = mustField(await rpc(page, AdminService.method.createNode, { name: `${name}-${suffix}` }), "node");
+    ids.push(node.id);
+    hub.deleteNodeAtEnd(node.id);
   }
   await page.goto("/admin/tokens");
   await page.getByRole("button", { name: "新建 API token", exact: true }).click();
@@ -23,7 +23,8 @@ test("限定节点凭据的创建、预览、写入、重试、回执和吊销",
   await form.getByRole("button", { name: "创建", exact: true }).click();
   const secret = page.locator("code.secret");
   await expect(secret).toBeVisible();
-  const token = (await secret.textContent())!;
+  const token = await secret.textContent();
+  if (token === null) throw new Error("code.secret has no text content");
   const created = must(await rpc(page, AdminService.method.listApiTokens, {})).tokens.find((entry) => entry.name === name);
   if (!created) throw new Error(`API token ${name} not listed`);
   const tokenId = created.id;

@@ -43,4 +43,11 @@ export default defineConfig(
     files: ["**/*.test.{ts,tsx}", "src/test/**", "e2e/**"],
     rules: { "@typescript-eslint/require-await": "off" },
   },
+  // e2e 断言的是真实 hub 的应答与真实页面的 DOM，"必有"只是用例对它们的预期：hub 漏了子消息或页面没渲染出元素时，
+  // `!` 让用例在下游读 undefined / null 的属性时以 TypeError 失败，报告里看不出缺的是哪个方法的哪个字段、哪个元素。
+  // 应答的子消息经 fixtures.ts 的 mustField 取出（缺席时抛出点名方法与字段的 MissingFieldError），DOM 与几何值显式判空后抛错。
+  {
+    files: ["e2e/**"],
+    rules: { "@typescript-eslint/no-non-null-assertion": "error" },
+  },
 );

@@ -1,7 +1,7 @@
 import { type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { AdminService } from "../src/gen/heron/v1/admin_pb";
-import { expect, login as loginSession, must, rpc, test } from "./fixtures";
+import { expect, login as loginSession, must, mustField, rpc, test } from "./fixtures";
 
 // 固定测试密码只用于每次临时创建的本机数据库，服务器退出后整个目录删除。
 const password = "local-browser-test-password";
@@ -173,7 +173,7 @@ test('主题开发指南里的最小主题原样可用', async ({ page, context,
   hub.atEnd('恢复公开页总闸', async () => must(await hub.rpc(AdminService.method.updateSettings, { settings: { publicEnabled: true } })));
   hub.deleteAtEnd(AdminService.method.deleteTheme, { id });
   const name = `skill-node-${browserName}`;
-  const node = must(await rpc(page, AdminService.method.createNode, { name })).node!.id;
+  const node = mustField(await rpc(page, AdminService.method.createNode, { name }), 'node').id;
   hub.deleteNodeAtEnd(node);
   must(await rpc(page, AdminService.method.updateNode, { id: node, name, public: true, trafficResetDay: 1, offlineGraceS: 0 }));
   const pkg = zip({ 'theme.json': JSON.stringify({ ...manifest, id }), 'index.html': block('index.html', 'html') });
