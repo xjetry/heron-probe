@@ -39,10 +39,16 @@ func parseTTL(s string) (time.Duration, error) {
 	return d, nil
 }
 
-const offlineAfterFlag = "offline-after"
+const (
+	offlineAfterFlag = "offline-after"
+	adminOriginFlag  = "admin-origin"
+)
 
-// ttlSource 同时点名 flag 与环境变量：值从哪一处来，parseTTL 看不到，运维两处都可能去改。
-var ttlSource = "--" + offlineAfterFlag + " (" + flagEnvName(offlineAfterFlag) + ")"
+var ttlSource = flagSource(offlineAfterFlag)
+
+// flagSource 是 flag 值的错误前缀，同时点名 flag 与环境变量（--offline-after (HERON_OFFLINE_AFTER)）：applyFlagEnv
+// 回填之后，值从哪一处来解析方看不到，运维两处都可能去改。
+func flagSource(name string) string { return "--" + name + " (" + flagEnvName(name) + ")" }
 
 // flagEnvName 是 flag 对应的环境变量名：横线换成下划线、转大写、加 HERON_ 前缀（offline-after → HERON_OFFLINE_AFTER）。
 func flagEnvName(name string) string {

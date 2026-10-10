@@ -96,7 +96,7 @@ type SecurityResult struct {
 }
 
 // ConfigureWebAuthn 只导入已有凭据的可信原始来源；持久绑定存在后数据库是唯一来源，旧参数既不覆盖绑定、也不在这一层
-// 报错（绑定短路先于格式校验）。
+// 报错（绑定短路先于格式校验）。非法值不靠这一层拦：serve 的 parseServeOptions 不看绑定就拒绝非法的 --admin-origin。
 func (a *Auth) ConfigureWebAuthn(origin string) error {
 	ctx := context.Background()
 	b, s, readErr := a.readSecurity(ctx)

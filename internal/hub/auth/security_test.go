@@ -456,8 +456,10 @@ func TestPasskeyFirstSuccessfulRegistrationBindsOrigin(t *testing.T) {
 	if _, err = a.BeginPasskeyLogin(other, from); !errors.Is(err, ErrSecurity) {
 		t.Fatal("foreign request origin began bound login")
 	}
+	// 有持久绑定时 auth 层以绑定为准，绑定短路先于格式校验，连非法的旧参数也不在这一层报错。启动层不靠这一点：serve 的
+	// parseServeOptions 不看绑定就拒绝非法的 --admin-origin，非法值到不了这里。
 	if err = a.ConfigureWebAuthn("not a valid old flag"); err != nil {
-		t.Fatal("old flag prevented startup after persistent binding", err)
+		t.Fatal("old flag was validated despite the persistent binding", err)
 	}
 	info, err = a.SecurityInfo(ctx)
 	if err != nil || !info.PasskeyAvailable || info.Origin != "https://admin.example" {

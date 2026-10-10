@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/xjetry/heron-probe/internal/clock"
+	"github.com/xjetry/heron-probe/internal/hub/store"
 	"github.com/xjetry/heron-probe/internal/testwait"
 )
 
@@ -35,6 +35,30 @@ func lifecycleOptions(t *testing.T, flags ...string) serveOptions {
 
 func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// seedAdminSecurity 在 db 建库、设管理员密码，并把 admin_security 的 data 原样写成 data；不经 auth 序列化，所以可以
+// 写进 auth 读不懂的内容。admin_security 只在有管理员时才读得到（store.AdminSecurity 与 admin 表连接），故先设密码。
+// 返回前关库：调用方随后以 newHub 或 runServeWith 重新打开。
+func seedAdminSecurity(t *testing.T, db, data string) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(db, clock.Real(), discardLog(), store.MigrateSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetAdminPassword(ctx, "unused-hash"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.AdminSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := st.CommitAdminSecurity(ctx, before, data, false, nil, now, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // settledGoroutines 等协程数回到 baseline 以下。cmd/hub 的用例不并行，baseline 之后新起而未退出的协程只能来自被测的
 // hub：库的写协程与后台循环都在其中，漏关库或漏停循环都会让计数停在 baseline 之上。
 func settledGoroutines(t *testing.T, baseline int) {
@@ -50,18 +74,18 @@ func requireStoreClosed(t *testing.T, h *hub) {
 	}
 }
 
-// 装配在库打开之后失败（这里是 --admin-origin 不合法）时，newHub 自己关库：调用方拿不到 hub，也就没有别人能关它。
+// 装配在库打开之后失败时，newHub 自己关库：调用方拿不到 hub，也就没有别人能关它。这里的失败是库里 admin_security
+// 的 data 不是 JSON，ConfigureWebAuthn 读安全状态时解析失败，这是开库之后真实存在的失败路径。
 //
 // 不并行：断言以 runtime.NumGoroutine 为基线，协程数是进程级的，并行用例的协程会算进来。
 func TestNewHubClosesTheStoreWhenAssemblyFails(t *testing.T) {
-	opts := lifecycleOptions(t, "--listen", "127.0.0.1:0", "--admin-origin", "http://example.com")
+	opts := lifecycleOptions(t, "--listen", "127.0.0.1:0")
+	seedAdminSecurity(t, opts.db, "{not json")
 	baseline := runtime.NumGoroutine()
 	h, err := newHub(opts, clock.NewFake(time.Now()), discardLog())
-	if err == nil || h != nil || !strings.Contains(err.Error(), "--admin-origin") {
-		t.Fatalf("newHub = %v, %v; want an --admin-origin error", h, err)
-	}
-	if _, statErr := os.Stat(opts.db); statErr != nil {
-		t.Fatalf("the failure must come after the store opened, or this case proves nothing: %v", statErr)
+	var syntax *json.SyntaxError
+	if err == nil || h != nil || !errors.As(err, &syntax) {
+		t.Fatalf("newHub = %v, %v; want an error from parsing the unreadable admin_security", h, err)
 	}
 	settledGoroutines(t, baseline)
 }

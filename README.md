@@ -46,7 +46,7 @@ heron-hub passwd --db /var/lib/heron/heron.db
 
 安装器只按脚本里内嵌的本版 SHA-256 校验下载包（发布时写进脚本；release 里的 `SHA256SUMS` 供人工核对，不是脚本的校验依据），以静态系统用户 `heron-hub` 启动服务，确认进程持续存活后才提示设置密码。主机没有 CA 证书包时安装器会装上 `ca-certificates`：不论从哪里下载，hub 发往 Telegram 的告警都走 HTTPS。升级时先让新版本的 `serve` 启动并完成数据库迁移，再使用 `passwd` 等离线子命令。管理员密码由你设置，脚本不生成、不打印密码。
 
-默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；`--admin-origin` 仅保留给旧 Passkey 凭据迁移，新安装不需要。例如：
+默认只监听 `127.0.0.1:8080`，TLS 交给反向代理。可用 `--listen`、`--timezone`、`--trusted-proxies`、`--public-dir`、`--geo-mmdb` 和 `--retention-*` 设置 serve 参数；`--admin-origin` 仅保留给旧 Passkey 凭据迁移，新安装不需要；给出时必须是主机名形式、不带路径的 HTTPS Origin（localhost、127.0.0.1 与 ::1 可用 HTTP），非法值无论数据库里有无持久绑定都在启动时拒绝。例如：
 
 ```sh
 curl -fsSL https://github.com/xjetry/heron-probe/releases/latest/download/install-hub.sh | sh -s -- \
@@ -141,7 +141,7 @@ Passkey 支持无密码登录，无需手填域名或 `--admin-origin`。通过�
 
 反代必须保留访问 Host、正确声明 HTTPS，并用 `--trusted-proxies` 只信任实际代理地址；不可信来源的转发头不会让 HTTP 请求冒充 HTTPS。换域名后用密码及现有第二因素登录，在「安全」页重新绑定并注册新 Passkey；改绑会撤销旧 Passkey 和旧会话。备份恢复保留原绑定，不根据恢复时的访问域名自动更改。
 
-旧部署已有 Passkey、却没有数据库绑定时，升级首次启动仍保留原 `--admin-origin https://panel.example.com` 用于一次性导入；导入后以数据库为准，可以移除参数。缺少可信原配置时旧凭据保留但不可使用，需恢复原配置或通过密码及第二因素重新绑定，不会猜测 RP ID。
+旧部署已有 Passkey、却没有数据库绑定时，升级首次启动仍保留原 `--admin-origin https://panel.example.com` 用于一次性导入；导入后以数据库为准，可以移除参数；参数仍在时只校验格式、不参与认证配置，非法值照样拒绝启动（以前有持久绑定时会被忽略）。缺少可信原配置时旧凭据保留但不可使用，需恢复原配置或通过密码及第二因素重新绑定，不会猜测 RP ID。
 
 认证器丢失时先用恢复码登录；密码或全部认证器丢失时，可登录 hub 服务器，使用对数据库有读写权限的账号执行以下命令，不需要提供旧密码或认证器证明：
 

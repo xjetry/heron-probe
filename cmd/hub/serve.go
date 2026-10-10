@@ -124,8 +124,9 @@ func runServeWith(stopCtx context.Context, args []string, clk clock.Clock, log *
 // serveOptions 是 serve 的全部配置，parseServeOptions 产出时每个字段都已解析校验成消费方要的类型；newHub 与 run
 // 不再解析或校验用户输入，装配期构造函数据此把剩下的缺陷当作装配错误（见 api.New）。
 type serveOptions struct {
-	db          string
-	listen      string
+	db     string
+	listen string
+	// adminOrigin 是 --admin-origin 经 auth.ParsePasskeyOrigin 规范化后的值，空串表示未给出。
 	adminOrigin string
 	retention   store.Retention
 	loc         *time.Location
@@ -159,7 +160,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	geoMMDB := fs.String("geo-mmdb", "", fmt.Sprintf("local MaxMind country database (at most %d MiB); overrides the HTTP lookup service and makes no network requests; read fully into memory and structurally verified at startup (the file carries no checksum, so a value replaced by another valid value is not detected, only structural damage such as invalid UTF-8 is) and not read again while running, so a replaced file takes effect on restart; geo.enabled still controls lookup", geo.MaxMMDBBytes>>20))
 	tz := fs.String("timezone", "", "IANA time zone for traffic period boundaries and node expiry days (default: the host's zone, resolved from TZ or /etc/localtime; UTC if neither resolves); already-persisted period starts are interpreted in the new zone; usage of the current period may be reset at the next read, report or flush")
 	listen := fs.String("listen", "127.0.0.1:8080", "listen address")
-	adminOrigin := fs.String("admin-origin", "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically")
+	adminOrigin := fs.String(adminOriginFlag, "", "legacy Passkey origin, used only to migrate existing credentials without a persisted binding; new registrations bind the current HTTPS origin automatically; an invalid value is rejected at startup even when a binding is persisted")
 	proxies := fs.String("trusted-proxies", "", "comma-separated CIDRs whose X-Forwarded-For / X-Forwarded-Proto are trusted; empty trusts none. Behind a reverse proxy, list the proxy here: the public page and agent registration are rate-limited per source (one IPv4 address, or one IPv6 /64), and failed logins are locked out per source, so without it every visitor shares the proxy address's single bucket and lockout; a node's recorded source address is also the proxy address")
 	publicDir := fs.String("public-dir", "", "serve this directory at / instead of the built-in public page; files are opened through os.Root, so paths cannot leave the directory and symbolic links are followed only if they are relative and never step outside it (absolute links are refused even when they point inside); a path that is not a file, or that has a segment starting with a dot (.git, .env, .well-known), gets the directory's index.html (404 under assets/); every response is no-cache. The directory shares the admin panel's origin: its scripts can read the panel and call the admin API with the session of any signed-in administrator who opens the page, so put only content you trust as much as the hub binary there")
 	offlineAfter := fs.String(offlineAfterFlag, defaultTTL.String(), fmt.Sprintf("how long a node may go without reporting before it is shown offline, between %v and %v; the agent report interval, its retry backoff ceiling and the minimum node offline grace are derived from it; empty means the default", minTTL, agentwire.MaxTTL))
@@ -178,7 +179,7 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	if err := applyFlagEnv(fs, lookupEnv); err != nil {
 		return serveOptions{}, err
 	}
-	opts := serveOptions{db: *db, listen: *listen, adminOrigin: *adminOrigin, publicDir: *publicDir, geoMMDB: *geoMMDB, offlineReload: offlineReloadEvery}
+	opts := serveOptions{db: *db, listen: *listen, publicDir: *publicDir, geoMMDB: *geoMMDB, offlineReload: offlineReloadEvery}
 	// 缺席才选择 HTTP；显式空路径也必须打开并报错，不能把部署配置错误变成意外出网。HERON_GEO_MMDB 经 applyFlagEnv
 	// 回填后同样算作给出，设为空串也是显式空路径。
 	fs.Visit(func(f *flag.Flag) {
@@ -199,6 +200,13 @@ func parseServeOptions(args []string, lookupEnv func(string) (string, bool)) (se
 	}
 	if opts.trusted, err = auth.ParsePrefixes(*proxies); err != nil {
 		return serveOptions{}, err
+	}
+	// 旧 Passkey 来源只在库里没有持久绑定时才被 ConfigureWebAuthn 读到，但格式在这里不看绑定就校验：非法值是配置错误，
+	// 不能因为库里已有绑定就被放过，等到换库或 security-reset 清掉绑定后的那次启动才暴露。
+	if *adminOrigin != "" {
+		if opts.adminOrigin, _, err = auth.ParsePasskeyOrigin(*adminOrigin); err != nil {
+			return serveOptions{}, fmt.Errorf("%s: %w", flagSource(adminOriginFlag), err)
+		}
 	}
 	// 替换目录在打开数据库之前核对：配置有误时 hub 不留下任何副作用就退出。
 	opts.publicPage = web.PublicHandler()

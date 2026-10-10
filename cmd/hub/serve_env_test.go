@@ -111,6 +111,12 @@ func TestParseServeOptionsTakesEveryFlagFromTheEnvironment(t *testing.T) {
 			func(o serveOptions) bool { return o.geoMMDBSet && o.geoMMDB == "" }, "an explicit empty mmdb path"},
 		{"geo-mmdb absent selects HTTP", nil, nil,
 			func(o serveOptions) bool { return !o.geoMMDBSet }, "no mmdb"},
+		{"admin-origin from env is normalized", nil, map[string]string{"HERON_ADMIN_ORIGIN": "https://ADMIN.example.:443"},
+			func(o serveOptions) bool { return o.adminOrigin == "https://admin.example" }, "the normalized legacy origin"},
+		{"admin-origin flag beats env", []string{"--admin-origin", "https://flag.example"}, map[string]string{"HERON_ADMIN_ORIGIN": "http://invalid.example"},
+			func(o serveOptions) bool { return o.adminOrigin == "https://flag.example" }, "the legacy origin from --admin-origin"},
+		{"admin-origin env set empty is no legacy origin", nil, map[string]string{"HERON_ADMIN_ORIGIN": ""},
+			func(o serveOptions) bool { return o.adminOrigin == "" }, "no legacy origin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			opts, err := parseServeOptions(append([]string{"--db", db, "--timezone", "UTC"}, tc.args...), envOf(tc.env))
@@ -132,6 +138,7 @@ func TestParseServeOptionsRejectsInvalidEnvironmentValues(t *testing.T) {
 		{map[string]string{"HERON_OFFLINE_AFTER": "banana"}, []string{"HERON_OFFLINE_AFTER", "--offline-after"}},
 		{map[string]string{"HERON_TIMEZONE": "Mars/Olympus"}, []string{"--timezone"}},
 		{map[string]string{"HERON_TRUSTED_PROXIES": "not-a-cidr"}, []string{"not-a-cidr"}},
+		{map[string]string{"HERON_ADMIN_ORIGIN": "http://admin.example"}, []string{"HERON_ADMIN_ORIGIN", "--admin-origin", "requires HTTPS"}},
 	} {
 		_, err := parseServeOptions([]string{"--db", filepath.Join(t.TempDir(), "hub.db")}, envOf(tc.env))
 		for _, w := range tc.want {
@@ -169,6 +176,53 @@ func TestServeRejectsInvalidEnvironmentBeforeOpeningTheDatabase(t *testing.T) {
 				t.Fatalf("invalid environment touched the database: %v", err)
 			}
 		})
+	}
+}
+
+// 经真实入口：非法的 --admin-origin 与 HERON_ADMIN_ORIGIN 与其它 flag 一样在打开数据库之前拒绝，不建库、不监听，错误
+// 同时点名 flag 与环境变量。
+//
+// 不并行：用 t.Setenv，环境变量是进程级的，并行的进程内 hub 会读到它。
+func TestServeRejectsInvalidAdminOriginBeforeOpeningTheDatabase(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		env   string
+	}{
+		{"flag", []string{"--admin-origin", "http://admin.example"}, ""},
+		{"environment", nil, "http://admin.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("HERON_ADMIN_ORIGIN", tc.env)
+			}
+			db := filepath.Join(t.TempDir(), "hub.db")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			err := runServeWith(ctx, append([]string{"--db", db, "--listen", "127.0.0.1:0"}, tc.flags...),
+				clock.NewFake(time.Now()), discardLog())
+			if _, statErr := os.Stat(db); !errors.Is(statErr, os.ErrNotExist) {
+				t.Errorf("an invalid --admin-origin touched the database: %v", statErr)
+			}
+			if err == nil || !strings.Contains(err.Error(), "--admin-origin (HERON_ADMIN_ORIGIN)") {
+				t.Errorf("err = %v, want an error naming --admin-origin and HERON_ADMIN_ORIGIN", err)
+			}
+		})
+	}
+}
+
+// 库里已有持久绑定时，非法的 --admin-origin 照样拒绝启动：ConfigureWebAuthn 在有绑定时不看旧参数，所以格式错误要在
+// 启动层不看库就拦下，否则它被库的状态掩盖，等到换库或 security-reset 清掉绑定后的那次启动才暴露。
+func TestServeRejectsInvalidAdminOriginDespiteAPersistentBinding(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "hub.db")
+	seedAdminSecurity(t, db, `{"origin":"https://admin.example","rp_id":"admin.example"}`)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := runServeWith(ctx, []string{"--db", db, "--listen", "127.0.0.1:0", "--timezone", "UTC", "--admin-origin", "not an origin"},
+		clock.NewFake(time.Now()), discardLog())
+	if err == nil || !strings.Contains(err.Error(), "--admin-origin (HERON_ADMIN_ORIGIN)") {
+		t.Fatalf("err = %v, want the invalid --admin-origin rejected despite the binding", err)
 	}
 }
 
