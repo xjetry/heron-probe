@@ -124,7 +124,7 @@ table.nodes td.wrap-text { white-space: normal; overflow-wrap: anywhere; }
 .readings-table td { white-space: nowrap; }
 .readings-table .bar.thin { width: 48px; display: inline-block; vertical-align: middle; margin-right: 6px; }
 /* 手机上每行是一张卡：首行状态点、名称、最近上报；下面两行缩进到名称下方，依次是三项用量（带标签）与网速，其余列
-   （负载、本周期与调用方追加的列）不显示。区域按 data-label 指名放置，不依赖单元格顺序与 auto 列宽——auto 列会被最宽的
+   （负载、本周期、运行时长与调用方追加的列）不显示。区域按 data-label 指名放置，不依赖单元格顺序与 auto 列宽——auto 列会被最宽的
    用量格撑开，把名称挤到右侧。各端样式表若给表格单元格加了更具体的外框、内边距或固定行高，要在这个断点下自己去掉。 */
 @media (max-width: 900px) {
   table.readings-table, .readings-table tbody { display: block; background: none; border: 0; }

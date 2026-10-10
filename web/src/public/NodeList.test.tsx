@@ -11,7 +11,7 @@ afterEach(() => { localStorage.clear(); });
 const nodes = [
   {
     id: 1n, name: "香港家宽", online: true, lastSeenAt: 998n, sortOrder: 0, country: "HK",
-    metrics: { cpuPct: 12, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n },
+    metrics: { cpuPct: 12, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 90_061n },
     traffic: { periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
     billing: { expiresOn: "2026-10-30", daysLeft: 21 },
   },
@@ -27,10 +27,10 @@ async function renderList() {
 }
 const rows = () => within(screen.getByRole("region", { name: "节点列表" })).getAllByRole("row").slice(1);
 
-it("列表视图：与管理端总览同一组列，另加到期；离线与从未上报不折叠，全在同一张表里", async () => {
+it("列表视图：与管理端总览同一组列（含运行时长），另加到期；离线与从未上报不折叠，全在同一张表里", async () => {
   await renderList();
   const table = screen.getByRole("region", { name: "节点列表" });
-  expect(within(table).getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "到期", "最近上报"]);
+  expect(within(table).getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "运行时长", "到期", "最近上报"]);
   expect(rows().map((r) => r.getAttribute("aria-label"))).toEqual(["香港家宽", "东京", "离线机", "新机"]);
   expect(document.querySelector("details.folded-nodes")).toBeNull();
   expect(screen.queryAllByRole("article")).toHaveLength(0);
@@ -56,9 +56,17 @@ it("一行的内容：状态点、名称链接与国家徽章、三条细条、�
   expect(offline.getByText("10 分钟前")).toBeInTheDocument();
   const fresh = within(screen.getByRole("row", { name: "新机" }));
   expect(fresh.getByRole("img", { name: "从未上报" })).toBeInTheDocument();
-  expect(fresh.getAllByLabelText("无读数")).toHaveLength(6);
+  expect(fresh.getAllByLabelText("无读数")).toHaveLength(7);
   expect(fresh.getByText("从未上报", { selector: "td" })).toBeInTheDocument();
   expect(fresh.queryByTitle(/^国家/)).toBeNull();
+});
+
+it("运行时长一列：表头与单元格同名（手机按 data-label 布局），秒数按 duration 写成天时分，无读数画「–」", async () => {
+  await renderList();
+  const uptime = (name: string) => screen.getByRole("row", { name }).querySelector('td[data-label="运行时长"]');
+  expect(uptime("香港家宽")).toHaveTextContent(/^1d 1h$/);
+  expect(within(uptime("东京") as HTMLElement).getByLabelText("无读数")).toHaveTextContent("–");
+  expect(within(uptime("新机") as HTMLElement).getByLabelText("无读数")).toBeInTheDocument();
 });
 
 it("列表与卡片共用排序选择；视图选择记到 localStorage", async () => {

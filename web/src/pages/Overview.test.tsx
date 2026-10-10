@@ -11,7 +11,7 @@ const snapshot = {
   nodes: [
     { id: 1n, name: "web-01", online: true, lastSeenAt: 999_990n,
       traffic: { periodRx: 1024n ** 3n, periodTx: 512n * 1024n ** 2n, quotaUsedBytes: 512n * 1024n ** 2n, quotaBytes: 1024n ** 3n, quotaUsedPct: 50 },
-      metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n } },
+      metrics: { cpuPct: 42, memUsed: 512n * 1024n ** 2n, memTotal: 1024n ** 3n, diskUsed: 1024n ** 3n, diskTotal: 10n * 1024n ** 3n, load1: 0.5, load5: 0.4, load15: 0.3, netRxBps: 1024n, netTxBps: 2048n, uptimeS: 3_725n } },
     { id: 2n, name: "never", online: false },
     { id: 3n, name: "gone", online: false, lastSeenAt: 900_000n },
   ],
@@ -53,10 +53,20 @@ it("实时表每行一个状态点与细条；维护中压过在线，不在快�
   expect(web.getByRole("link", { name: "web-01（#1）" })).toHaveAttribute("href", "/nodes/1");
   const never = within(screen.getByRole("row", { name: /never/ }));
   expect(never.getByRole("img", { name: "从未上报" })).toBeInTheDocument();
-  expect(never.getAllByLabelText("无读数")).toHaveLength(6);
+  expect(never.getAllByLabelText("无读数")).toHaveLength(7);
   expect(never.getByText("从未上报", { selector: "td" })).toBeInTheDocument();
   expect(within(screen.getByRole("row", { name: /gone/ })).getByRole("img", { name: "维护中" })).toBeInTheDocument();
   expect(within(screen.getByRole("row", { name: /fresh/ })).getByRole("img", { name: "状态未知" })).toBeInTheDocument();
+});
+
+it("实时表在本周期之后有运行时长一列：秒数按 duration 写成时分，无读数与不在快照里都画「–」", async () => {
+  render();
+  const table = await screen.findByRole("region", { name: "节点实时读数" });
+  expect(within(table).getAllByRole("columnheader").map((th) => th.textContent)).toEqual(["状态", "节点", "CPU", "内存", "磁盘", "负载", "网络", "本周期", "运行时长", "最近上报"]);
+  const uptime = (name: RegExp) => screen.getByRole("row", { name }).querySelector('td[data-label="运行时长"]');
+  expect(uptime(/web-01/)).toHaveTextContent(/^1h 2m$/);
+  expect(within(uptime(/never/) as HTMLElement).getByLabelText("无读数")).toHaveTextContent("–");
+  expect(within(uptime(/fresh/) as HTMLElement).getByLabelText("无读数")).toBeInTheDocument();
 });
 
 it("告警状态未到或失败时触发卡显示「—」而不是 0，页面其余照常", async () => {
