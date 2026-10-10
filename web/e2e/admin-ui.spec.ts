@@ -97,7 +97,7 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
     const { token } = must(await rpc(page, AgentService.method.register, { key: must(result).token }));
     const checkedAt = BigInt(Math.floor(Date.now() / 1000));
     must(await rpc(page, AgentService.method.report, {
-      factsHash: 1n, metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: 536870912n, memTotal: 2147483648n, diskUsed: 2147483648n, diskTotal: 21474836480n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: 524288n, netTxBps: 131072n },
+      factsHash: 1n, metrics: { bootId: '0b7c3a1e-5d2f-4e6a-9c8b-1a2b3c4d5e6f', cpuPct: 12 + index * 15, memUsed: 536870912n, memTotal: 2147483648n, diskUsed: 2147483648n, diskTotal: 21474836480n, load1: 0.3, load5: 0.2, load15: 0.1, netRxBps: 524288n, netTxBps: 131072n, uptimeS: 90_061n },
       facts: { hostname: 'edge.internal', agentVersion: 'dev', network: {
         ipv4: { state: index === 2 ? AddressDetectionState.FAILED : AddressDetectionState.AVAILABLE, address: index === 2 ? '' : ['8.8.8.8', '1.1.1.1'][index], checkedAt },
         ipv6: index === 1 ? { state: AddressDetectionState.UNSUPPORTED, checkedAt } : { state: AddressDetectionState.AVAILABLE, address: '2606:4700:4700::1111', checkedAt },
@@ -199,6 +199,17 @@ test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', as
   await page.setViewportSize({ width: 375, height: 812 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(375);
   await expect(page.getByRole('row', { name: 'tokyo-renamed', exact: true }).getByRole('button', { name: `更多操作 tokyo-renamed（#${ids[0]}）` })).toBeVisible();
+  // 手机卡片按 data-column 指名放进 admin.css 的 grid-template-areas：运行时长在状态右侧、同一行、落在卡片之内。没有指名的列
+  // 由网格自动放进模板里空着的「.」格，Chromium 实测落在状态左边 20px 的缩进列里，挤成一条窄缝。
+  const tokyoRow = page.getByRole('row', { name: 'tokyo-renamed', exact: true });
+  const uptimeCell = tokyoRow.locator('td[data-column="uptime"]');
+  await expect(uptimeCell).toBeVisible();
+  await expect(uptimeCell).toHaveText('1d 1h');
+  const [rowBox, uptimeBox, statusBox] = await Promise.all([boxOf(tokyoRow), boxOf(uptimeCell), boxOf(tokyoRow.locator('td[data-column="status"]'))]);
+  expect(uptimeBox.x).toBeGreaterThanOrEqual(rowBox.x);
+  expect(uptimeBox.x + uptimeBox.width).toBeLessThanOrEqual(rowBox.x + rowBox.width);
+  expect(uptimeBox.y).toBe(statusBox.y);
+  expect(uptimeBox.x).toBeGreaterThan(statusBox.x);
   await page.screenshot({ path: testInfo.outputPath('nodes-mobile.png'), fullPage: true });
   await openRowAction(page, `tokyo-renamed（#${ids[0]}）`, '编辑');
   expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
