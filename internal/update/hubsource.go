@@ -11,11 +11,19 @@ import (
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
 	"github.com/xjetry/heron-probe/internal/agentconfig"
 	"github.com/xjetry/heron-probe/internal/hubclient"
-	"github.com/xjetry/heron-probe/internal/releasesig"
 )
 
 // maxRelayResponse 是 GetRelease 响应正文的上限：三份文件各自上限之和，加 protobuf 与 Connect 的编码余量。
-const maxRelayResponse = maxArchive + releasesig.MaxSums + releasesig.MaxFile + 64<<10
+const maxRelayResponse = maxFetchBytes + 64<<10
+
+// hubFetchLimit 是节点经 hub 取回的总上限。GetRelease 是 unary：缓存未命中时 hub 先从 GitHub 取完、验过才应答
+// （updates.Relay，总上限 DownloadLimit，停滞判定在 hub 读 GitHub 正文时做），节点这一侧先是一段没有字节的长等待，
+// 再收 hub 的应答正文；应答正文就是那三份文件，按同一个最低速率传完同样要一个 DownloadLimit。所以取两个
+// DownloadLimit：hub 侧的取回先于节点到期，节点收到的是 hub 的错误文案（含停滞或超时的进度），而不是自己的
+// "context deadline exceeded"；反过来节点先放弃会让 hub 白取一次。hub 上的验签不经网络、耗时不随链路速率变化；
+// 两段推导值之外还有两次向上取整留下的约 72 秒（TestDownloadLimitDerivation 从常量重算推导值）。旧 hub 的取回
+// 期限更短，只会更早应答，不影响这条先后。
+const hubFetchLimit = 2 * DownloadLimit
 
 // HubSource 经 hub 的 GetRelease 取产物（spec §4.10），不做接受判定（见 Accept）。hub 地址、token 与明文许可在
 // 每个任务现读 agent 配置：节点 token 轮换后无须同步。解析与地址规则和 agent 同一实现（agentconfig），连接与 agent
@@ -30,7 +38,7 @@ func NewHubSource(readConfig func() ([]byte, error)) *HubSource {
 }
 
 func (s *HubSource) Fetch(ctx context.Context, task Request, role, arch string) (Artifacts, error) {
-	if err := requireTimeLimit(ctx); err != nil {
+	if _, err := timeLimit(ctx); err != nil {
 		return Artifacts{}, err
 	}
 	if role != "agent" {

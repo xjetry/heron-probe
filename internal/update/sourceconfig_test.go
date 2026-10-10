@@ -45,10 +45,10 @@ func TestChooseSource(t *testing.T) {
 	if c := chooseSource("agent", read("", fs.ErrNotExist), gh, hub); c.name != "github" || c.src != gh || c.err != "" {
 		t.Errorf("missing file: %+v", c)
 	}
-	if c := chooseSource("agent", read(`{"source":"hub"}`, nil), gh, hub); c.name != "hub" || c.src != hub {
+	if c := chooseSource("agent", read(`{"source":"hub"}`, nil), gh, hub); c.name != "hub" || c.src != hub || c.limit != hubFetchLimit {
 		t.Errorf("hub file: %+v", c)
 	}
-	if c := chooseSource("agent", read(`{"source":"github"}`, nil), gh, hub); c.name != "github" || c.src != gh {
+	if c := chooseSource("agent", read(`{"source":"github"}`, nil), gh, hub); c.name != "github" || c.src != gh || c.limit != DownloadLimit {
 		t.Errorf("github file: %+v", c)
 	}
 	for name, r := range map[string]func() ([]byte, error){

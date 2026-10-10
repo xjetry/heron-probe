@@ -345,6 +345,8 @@ sudo systemctl restart heron-agent   # OpenRC：rc-service heron-agent restart�
 
 从哪里取产物与接受哪些字节互不相关。hub 主机总从 GitHub 取；节点默认也从 GitHub 取，出站受限、只能连到 hub 的节点在安装时给 `install.sh` 加 `--update-source hub`，改由 hub 中转：hub 从 GitHub 取回、验签后转发，节点上的更新器照样验签，失守的 hub 塞不进别的程序。这个参数只对 Linux systemd 有效（OpenRC 主机的安装器会拒绝它，macOS 脚本没有它），设置写在 root 属主的 `/etc/heron-update-agent/config.json`；重跑安装器不带这个参数时沿用原设置，给 `--update-source github` 才改回直连。面板「在线更新」页显示每个节点走的是「GitHub 直连」还是「经 hub 中转」；面板生成安装命令时勾选「国内主机」，命令会带上 `--update-source hub`，并给出安装时经本机代理出网用的 SSH 反代参数。
 
+下载不设固定的总时长，而按两种期限判定：一直有字节到达就继续，60 秒收不到任何字节或整次取回超过 35 分钟（按最低 64 KiB/s 传完 128 MiB 归档上限推出）才失败，任务的错误写明是哪一种以及已收字节与用时；经 hub 中转时节点最多等 70 分钟，hub 侧从 GitHub 取同样按这两种期限判定，先于节点给出错误。这两种期限随更新器生效：更新器不随在线更新替换（见下一段），旧更新器仍是整次 5 分钟，慢链路的节点要重跑安装器换上新更新器。更新器的状态迁移、下载结果与失败原因写入 journal：节点上 `journalctl -u heron-updater-agent`，hub 主机上 `journalctl -u heron-updater-hub`。
+
 签名校验与 hub 中转从 v0.6.0 的更新器开始生效：更新器不随在线更新替换，要在对应机器重跑 v0.6.0 或更新的官方安装器换上；经 hub 中转还要求 hub 已是 v0.6.0 或更新（中转接口随该版本加入）。在此之前，旧更新器照旧直接从 GitHub 取 `SHA256SUMS` 与归档，只核对摘要；只能连到 hub 的节点在旧更新器下无法在线更新，换上新更新器的那次安装仍要借安装时可用的出网手段（如上面的 SSH 反代）。
 
 ## 开发验收

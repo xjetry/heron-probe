@@ -66,7 +66,12 @@ func goodSource() fakeSource {
 
 func testEngine(t *testing.T, m *fakeMachine, s fakeSource) *Engine {
 	t.Helper()
-	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", sourceChoice{name: "github", src: s}, testKeys(), m)
+	return testEngineWith(t, m, githubChoice(s))
+}
+
+func testEngineWith(t *testing.T, m *fakeMachine, choice sourceChoice) *Engine {
+	t.Helper()
+	e, err := newEngine(context.Background(), discardLog(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", choice, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +192,7 @@ func TestEngineInterruptedRecovery(t *testing.T) {
 			if err := e.save(Job{Request: request(), State: state}); err != nil {
 				t.Fatal(err)
 			}
-			r, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
+			r, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +224,7 @@ func TestFailedRollbackCannotConfirmCandidate(t *testing.T) {
 		t.Fatal("rollback intent was not durable")
 	}
 	m.fail = ""
-	restarted, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
+	restarted, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +278,7 @@ func TestConsumedTaskCannotReplayAfterAnotherFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEngine(t, e)
-	reloaded, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m)
+	reloaded, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +298,7 @@ func TestRecoveryStartFailureDoesNotRestoreTwice(t *testing.T) {
 		t.Fatal("expected restart failure")
 	}
 	m.fail = ""
-	if _, err := newEngine(context.Background(), e.path, "hub", "amd64", sourceChoice{name: "github", src: fakeSource{}}, testKeys(), m); err != nil {
+	if _, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m); err != nil {
 		t.Fatal(err)
 	}
 	count := 0
@@ -360,7 +365,7 @@ func TestEngineReportsSource(t *testing.T) {
 
 func TestEngineSourceConfigErrorDisablesUpdates(t *testing.T) {
 	m := &fakeMachine{version: "v0.2.0"}
-	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "agent", "amd64",
+	e, err := newEngine(context.Background(), discardLog(), filepath.Join(t.TempDir(), "state.json"), "agent", "amd64",
 		sourceChoice{err: "update source config " + sourceConfigPath + " is unusable: bad"}, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
@@ -371,5 +376,32 @@ func TestEngineSourceConfigErrorDisablesUpdates(t *testing.T) {
 	}
 	if _, err := e.submit(request()); err == nil || !strings.Contains(err.Error(), sourceConfigPath) {
 		t.Fatalf("submit accepted with an unusable source config: %v", err)
+	}
+}
+
+type deadlineSource struct{ got chan time.Duration }
+
+func (s deadlineSource) Fetch(ctx context.Context, _ Request, _, _ string) (Artifacts, error) {
+	d, _ := ctx.Deadline()
+	s.got <- time.Until(d)
+	return Artifacts{}, errors.New("stop after recording the deadline")
+}
+
+// 引擎给来源的期限跟着来源走：GitHub 来源是 DownloadLimit，hub 来源是更长的 hubFetchLimit。
+func TestEngineFetchDeadlineFollowsSource(t *testing.T) {
+	for _, tc := range []struct {
+		choice func(source) sourceChoice
+		want   time.Duration
+	}{{githubChoice, DownloadLimit}, {hubChoice, hubFetchLimit}} {
+		src := deadlineSource{got: make(chan time.Duration, 1)}
+		e := testEngineWith(t, &fakeMachine{version: "v0.2.0"}, tc.choice(src))
+		if _, err := e.submit(request()); err != nil {
+			t.Fatal(err)
+		}
+		got := <-src.got
+		waitEngine(t, e)
+		if got > tc.want || got < tc.want-5*time.Second {
+			t.Errorf("%s source got a %v deadline, want %v", e.choice.name, got, tc.want)
+		}
 	}
 }

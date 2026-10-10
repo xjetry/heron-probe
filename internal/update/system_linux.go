@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -378,13 +379,14 @@ func copySafe(src, dst string, uid int, mode os.FileMode) error {
 
 type peerKey struct{}
 
-func Serve(ctx context.Context, role string) error {
-	return serve(ctx, role, NewOfficialSource(), releasesig.Trusted())
+// Serve 运行本机更新器。log 收事务引擎的状态迁移与失败原因（见 Engine.log），cmd/updater 指向 stderr。
+func Serve(ctx context.Context, role string, log *slog.Logger) error {
+	return serve(ctx, role, log, NewOfficialSource(), releasesig.Trusted())
 }
 
 // serve 的来源与公钥由调用方给出：正式入口只传固定官方源与 releasesig 的常量公钥，
 // 隔离验收的测试程序传受控来源与测试公钥（accept_linux_test.go）。
-func serve(ctx context.Context, role string, official source, keys []ed25519.PublicKey) error {
+func serve(ctx context.Context, role string, log *slog.Logger, official source, keys []ed25519.PublicKey) error {
 	if role != "hub" && role != "agent" {
 		return errors.New("role must be hub or agent")
 	}
@@ -438,7 +440,7 @@ func serve(ctx context.Context, role string, official source, keys []ed25519.Pub
 	// hub 来源的 agent 配置按服务用户属主检查读取；来源配置是 root 的决定，按 root 属主检查。
 	hub := NewHubSource(func() ([]byte, error) { return readSafe(agentConfigPath, uid, maxAgentConfig) })
 	choice := chooseSource(role, func() ([]byte, error) { return readSafe(sourceConfigPath, 0, maxSourceConfig) }, official, hub)
-	e, err := newEngine(ctx, filepath.Join(m.dir, "state.json"), role, arch, choice, keys, m)
+	e, err := newEngine(ctx, log, filepath.Join(m.dir, "state.json"), role, arch, choice, keys, m)
 	if err != nil {
 		return err
 	}
