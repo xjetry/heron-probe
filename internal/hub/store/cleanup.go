@@ -75,10 +75,10 @@ type cleanupSeries struct {
 // cleanupCursor 按级别从细到粗遍历一个作业的全部序列，每次 step 删一片。每轮维护重新建游标、从最细一级重新展开，
 // 不跨轮保存进度：上一轮之后上卷可能把尚未删到的细级行重新聚合成粗级行，重新展开就会看到它们。
 //
-// 级别必须从细到粗：上卷只从细一级生成粗一级（rollupSQL），细级删光之后粗级就没有可重生的来源，按这个顺序走完一遍
-// 的作业，即使片间穿插上卷，复扫也为零。反过来先删粗级，片间的上卷可能把还没删的细级行重新聚合成粗级行，复扫不为零，
-// 作业只能等下一轮再走一遍。RunMaintenance 里上卷与清理在同一个协程里先后执行，上卷只落在两轮之间；一轮没走完的
-// 作业下一轮从最细一级重新展开，上卷在两轮之间重生的尾部照样被删到。
+// 级别从细到粗：上卷只从细一级生成粗一级（rollupSQL），且它的源行按 family.live 过滤——已删主体的细级行不会被聚合成
+// 粗级行，上卷本身不再重生孤儿行。顺序仍钉为细→粗：它让"一遍走完即为空"不依赖上卷过滤这一处（过滤若被改掉，先删粗级
+// 的作业会在片间被重生、复扫不为零，只能等下一轮），完成判据也不靠它（见 finish）。RunMaintenance 里上卷与清理在同一个
+// 协程里先后执行，上卷只落在两轮之间；一轮没走完的作业下一轮从最细一级重新展开。
 type cleanupCursor struct {
 	s       *Store
 	job     cleanupJob
@@ -179,8 +179,9 @@ func (c *cleanupCursor) step(ctx context.Context) (deleted bool, err error) {
 }
 
 // finish 是作业的完成判据：在一个写事务里复扫该主体在全部时序表里是否还有行，没有才删作业。判据是"没有剩余行"，
-// 不是"片都跑过了"：上卷可能在两轮之间重生粗级行，写入口虽拒绝已删主体的新行（WriteMinuteBatch），完成仍以库里
-// 实际为空为准。复扫与删作业在同一事务里，写协程串行，两者之间插不进写入。done 为 false 时作业留着，下一轮重新展开。
+// 不是"片都跑过了"：写入口拒绝已删主体的新行（WriteMinuteBatch）、上卷的源行按 family.live 过滤（rollupSQL），两处都是
+// 显式检查，完成仍以库里实际为空为准，不把它们当作完成的依据。复扫与删作业在同一事务里，写协程串行，两者之间插不进写入。
+// done 为 false 时作业留着，下一轮重新展开。
 func (c *cleanupCursor) finish(ctx context.Context) (done bool, err error) {
 	err = c.s.write(ctx, func(tx *sql.Tx) error {
 		for _, f := range families {

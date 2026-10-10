@@ -106,6 +106,9 @@ func (f *family) groupBy(bucket string) string {
 	return g
 }
 
+// rollupSQL 的源行同样按 family.live 过滤：删除节点或任务之后、清理作业完成之前仍在细级表里的孤儿行不会被聚合成粗级行，
+// 上卷因此不是孤儿行的重生来源。cleanup.go 的细→粗顺序与完成复扫仍保留——完成判据是"库里实际为空"这一显式检查，不靠
+// 这里的过滤兜底。
 func (f *family) rollupSQL(i int) string {
 	b := fmt.Sprint(levels[i].Bucket)
 	source := f.tables[i-1]
@@ -114,7 +117,7 @@ func (f *family) rollupSQL(i int) string {
 	}
 	return "INSERT OR REPLACE INTO " + f.tables[i] + " (" + strings.Join(append(f.keys(), f.values()...), ", ") + ") " +
 		"SELECT " + f.groupBy(b) + ", " + strings.Join(f.aggs(), ", ") +
-		" FROM " + source + " WHERE node_id IN (SELECT id FROM node) AND ts >= ? AND ts < ? GROUP BY " + f.groupBy(b)
+		" FROM " + source + " WHERE " + f.live + " AND ts >= ? AND ts < ? GROUP BY " + f.groupBy(b)
 }
 
 // Rollup 对每一粗级：取水位之后、滞后期已过的下级桶，整桶重算写入本级，并在

@@ -642,3 +642,48 @@ func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 		})
 	}
 }
+
+// 上卷的源行按 family.live 过滤：已删任务的细级行在清理作业完成之前仍在表里，不会被聚合成粗级行；同一节点上仍存在的
+// 任务照常上卷。节点那一侧的过滤由 node_id IN (SELECT id FROM node) 承载，这里钉的是任务那一侧。
+func TestRollupSkipsRowsOfDeletedTask(t *testing.T) {
+	t.Parallel()
+	s, clk := open(t)
+	ctx := t.Context()
+	node, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
+	seedProbeTasks(t, s, 6, 7)
+	base := clk.Now().Truncate(time.Hour).Unix()
+	setWatermark(t, s, "probe_5m", base)
+	setWatermark(t, s, "probe_1h", base)
+	if err := s.write(ctx, func(tx *sql.Tx) error {
+		for m := int64(0); m < 10; m++ {
+			for _, task := range []int{6, 7} {
+				if _, err := tx.Exec("INSERT INTO probe_1m (node_id, ts, task_id, sent) VALUES (?, ?, ?, 1)", node, base+m*60, task); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteProbeTask(ctx, 6); err != nil {
+		t.Fatal(err)
+	}
+	clk.SetWall(time.Unix(base+3600+int64(RollupLag/time.Second), 0))
+	if err := s.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	count := func(task int) int64 {
+		var n int64
+		if err := s.r.QueryRowContext(ctx, "SELECT count(*) FROM probe_5m WHERE task_id = ?", task).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if got := count(7); got != 2 {
+		t.Fatalf("live task rolled into %d five-minute buckets, want 2", got)
+	}
+	if got := count(6); got != 0 {
+		t.Fatalf("deleted task rolled into %d five-minute buckets, want 0: rollup must filter source rows by family.live", got)
+	}
+}
