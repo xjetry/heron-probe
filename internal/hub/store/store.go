@@ -68,6 +68,16 @@ type writeReq struct {
 	done func(error)
 }
 
+// 连接与检查点的实现笔记（来自参考项目 Lite，架构设计 §6.5 与 §16），只记结论，都不是已启用的策略：
+//   - 驻留内存 = 连接数 × 每连接 page cache。连接数见 readPoolSize / historyPoolSize / evaluationPoolSize 加 statsDB 的一条，
+//     每连接 cache 取驱动默认（cache_size -2000，约 2 MiB），没有按宿主内存分档；mmap 保持关闭（mmap_size 0），开着时
+//     热页同时留在页缓存与映射里，RSS 随库文件增长而命中率不涨。两个默认值都是 modernc.org/sqlite v1.59.0 的实测。
+//   - 不用 cache=shared：共享缓存是表级锁，busy_timeout 对它无效。_txlock=immediate 防的是多个写者之间的锁升级死锁，
+//     所有写都在 runWriter 一个协程里串行，没有第二个写者，不需要它。
+//   - 检查点若要做：写协程在事务之外按 -wal 文件大小阈值执行 wal_checkpoint(TRUNCATE)，平时短等待、超阈值才给长等待；
+//     触发条件用文件大小，不用连接数——挡住重置的是持着快照的读事务（持得久的只有大扫描池里的长查询），空闲连接不
+//     持事务。是否启用由架构设计 §13 第 9 项的生产观测决定；journal_size_limit（下面的 walSizeLimit）只管重置之后留多大。
+
 // dsn 不含 journal_mode(WAL)：这个 pragma 一旦生效就立即改写文件头（第 18—19 字节
 // 标出日志模式），比 migrate 读版本号、判定"这是不是本项目的库"更早。所有连接都带它
 // 会让身份判定本身成为一次写：外来库被拒绝时文件也已经被改成 WAL，判定分支之后没有
