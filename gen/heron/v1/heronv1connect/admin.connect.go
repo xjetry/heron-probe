@@ -281,9 +281,9 @@ type AdminServiceClient interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
-	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——从当前到期日起按周期步进到
-	// 不早于 hub 时区（--timezone）的今天为止，未过期的节点恰好推后一个周期，已过期多个周期的一次跳过；日号超过目标月
-	// 天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——先推后一个周期，仍早于 hub 时区
+	// （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
+	// 保留账单日，过期多个周期的一次跳过；日号超过目标月天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
 	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
 	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
 	RenewNodeBilling(context.Context, *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error)
@@ -1328,9 +1328,9 @@ type AdminServiceHandler interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
-	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——从当前到期日起按周期步进到
-	// 不早于 hub 时区（--timezone）的今天为止，未过期的节点恰好推后一个周期，已过期多个周期的一次跳过；日号超过目标月
-	// 天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——先推后一个周期，仍早于 hub 时区
+	// （--timezone）的今天就继续按周期推后，直到不早于今天。未过期的节点恰好推后一个周期；已过期的与自动续期落在同一天，
+	// 保留账单日，过期多个周期的一次跳过；日号超过目标月天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
 	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
 	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
 	RenewNodeBilling(context.Context, *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error)
