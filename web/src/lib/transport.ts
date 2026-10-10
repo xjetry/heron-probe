@@ -5,8 +5,9 @@
 // 所以这里只认最窄的两种写法，其余一律按需要放行处理。
 
 // hostname 取 WHATWG URL 的 hostname：IPv4 已规范成点分十进制（127.1、0x7f.0.0.1 都变成 127.0.0.1），
-// IPv6 带方括号且已压缩（[0:0:0:0:0:0:0:1] 变成 [::1]）。面板把浏览器的 location.origin 原样写进命令，
-// agent 拿到的就是这份规范写法。
+// IPv6 带方括号且已压缩（[0:0:0:0:0:0:0:1] 变成 [::1]）。面板写进命令的 hub 地址是浏览器的 location.origin，
+// 或运维设的覆盖地址经 lib/installHub.ts 的 parseInstallHub 取出的 URL origin，两者都是这份规范写法，agent
+// 拿到的也是它。
 export function isLoopbackIPLiteral(hostname: string): boolean {
   if (hostname === "[::1]") return true;
   const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);

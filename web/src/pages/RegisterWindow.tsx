@@ -70,7 +70,7 @@ export function RegisterWindow() {
       {key && (
         <>
           <Secret label="注册 key" value={key} />
-          <p>在每台要监控的服务器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
+          <p>在每台要监控的服务器上以 root 执行（agent 若经其他地址访问 hub，在下面的 Hub 连接地址里填写）：</p>
           {snap.ready ? (
             <InstallCommands hubVersion={snap.data.hubVersion} boundAgentVersion={snap.data.boundAgentVersion} origin={window.location.origin} registerKey={key} banner={snap.banner} />
           ) : (

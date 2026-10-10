@@ -256,6 +256,8 @@ docker start heron
 
 安装命令以本 README 与 GitHub Release 为准，不以 hub 面板为准：面板由 hub 提供，hub 失守时面板上的命令可以被整条换掉，这一点产品内防不住。面板的命令只是为了方便，复制前核对脚本地址是 `https://github.com/xjetry/heron-probe/releases/…`。
 
+面板命令里的 `--hub` 默认是浏览器当前打开面板的地址。有的主机连不到这个入口（如出站 443 被封，要经另一个端口或域名连 hub），在安装命令区的「Hub 连接地址」填那个入口（形如 `https://hub.example.com:28080`，不带路径），命令改用它，`--insecure-http` 也按它判定；留空回到当前地址。这个地址只存在当前浏览器，hub 不记录，换一台电脑或浏览器要重新填。
+
 两个 agent 脚本与 hub 脚本共同的规则：
 
 - `install-hub.sh` 只装自己所属的 hub 版本，没有 `--version`；`install.sh` 与 `install-macos.sh` 装的是该 release 的 hub 绑定的 agent 版本（只发 hub 的 release 原样带着绑定版本的这两个脚本），`releases/latest/download/install.sh` 因而装最新 hub 绑定的 agent。要装或升级到指定的 hub 版本就取 `https://github.com/xjetry/heron-probe/releases/download/vX.Y.Z/install-hub.sh`；要装指定的 agent 版本，取那个 agent 版本自己的 release 里的脚本。

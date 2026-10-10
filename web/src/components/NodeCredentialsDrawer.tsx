@@ -13,7 +13,7 @@ export function NodeCredentialsDrawer({ title, secretLabel, token, hubVersion, b
       <Secret label={secretLabel} value={token} />
       {reRegister && <p>此命令会重新注册，替换本机原有的节点身份；本地探测策略不会删除。</p>}
       <p className="muted">普通升级保留现有配置，不需要换发凭据或重新注册。</p>
-      <p>在被监控的机器上以 root 执行（agent 若经其他地址访问 hub，把命令里的地址换掉）：</p>
+      <p>在被监控的机器上以 root 执行（agent 若经其他地址访问 hub，在下面的 Hub 连接地址里填写）：</p>
       {errorBanner(error)}
       {hubVersion === undefined
         ? error == null && <p className="muted">正在读取 hub 版本，读到后即可复制安装命令…</p>
