@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BillingCycle, BillingCycleSchema } from "../gen/heron/v1/types_pb";
-import { BILLING_CYCLES, cycleLabel, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
+import { BILLING_CYCLES, byExpiryDay, canRenew, cycleLabel, hubToday, priceText, remainingText, sortByExpiry, type BillingView } from "./billing";
 
 const none: BillingView = { price: "", currency: "", billingCycle: BillingCycle.UNSPECIFIED, expiresOn: "" };
 
@@ -97,5 +97,36 @@ describe("sortByExpiry", () => {
   it("今天到期（0 天）排在已过期之后、未到期之前", () => {
     const nodes = [{ name: "later", billing: due(1) }, { name: "today", billing: due(0) }, { name: "gone", billing: due(-1) }];
     expect(names(sortByExpiry(nodes))).toEqual(["gone", "today", "later"]);
+  });
+});
+
+describe("hubToday", () => {
+  it("由第一个带 daysLeft 的节点反推，跨月跨年按日历日算", () => {
+    const due = (expiresOn: string, daysLeft?: number): BillingView => ({ ...none, expiresOn, daysLeft });
+    expect(hubToday([undefined, due("", undefined), due("2026-02-30", undefined), due("2026-03-01", 59)])).toBe("2026-01-01");
+    expect(hubToday([due("2025-12-20", -12)])).toBe("2026-01-01");
+    expect(hubToday([due("2028-03-01", 1)])).toBe("2028-02-29");
+  });
+  it("没有任何 daysLeft 时不知道今天", () => {
+    expect(hubToday([undefined, { ...none, expiresOn: "2026-02-30" }])).toBeUndefined();
+  });
+});
+
+describe("byExpiryDay", () => {
+  it("按 expiresOn 分组、组内保持传入顺序；hub 读不懂的日期不进任何一天", () => {
+    type Row = { id: number; billing?: BillingView };
+    const n = (id: number, expiresOn: string, daysLeft?: number): Row => ({ id, billing: { ...none, expiresOn, daysLeft } });
+    const days = byExpiryDay<Row>([n(1, "2026-01-10", 9), n(2, "2026-02-30"), n(3, "2026-01-02", 1), n(4, "2026-01-10", 9), { id: 5 }]);
+    expect([...days.keys()]).toEqual(["2026-01-10", "2026-01-02"]);
+    expect(days.get("2026-01-10")?.map((x) => x.id)).toEqual([1, 4]);
+  });
+});
+
+describe("canRenew", () => {
+  it("周期与到期日都有才显示「已续费」，自动续期开关不影响", () => {
+    expect(canRenew({ ...none, billingCycle: BillingCycle.MONTHLY, expiresOn: "2026-01-10" })).toBe(true);
+    expect(canRenew({ ...none, expiresOn: "2026-01-10" })).toBe(false);
+    expect(canRenew({ ...none, billingCycle: BillingCycle.YEARLY })).toBe(false);
+    expect(canRenew(undefined)).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { BillingCycle } from "../gen/heron/v1/types_pb";
+import { addDays } from "./ymd";
 
 // 面板的 Billing（types_pb）与公开页的 PublicBilling（public_pb）共有的字段（§9.4）；自动续期只在管理端有，这里不用。
 // 节点五项都没填时 hub 不下发 billing，所以下面的函数都接受 undefined。
@@ -69,4 +70,33 @@ export function sortByExpiry<T extends { billing?: BillingView }>(nodes: readonl
     const kb = key(b);
     return ka === kb ? 0 : ka < kb ? -1 : 1;
   });
+}
+
+// hub 时区（--timezone）的今天，由 hub 下发的 days_left 反推：expiresOn − daysLeft 天。同一次 ListNodes 里所有节点的
+// daysLeft 由同一个 today 算出（hub 的 ListNodes 只读一次钟），取第一个有 daysLeft 的节点即可。没有 daysLeft 的节点
+// （没有到期日，或到期日 hub 读不懂）不参与；全都没有时返回 undefined——浏览器的时钟与时区不能代替 hub 的今天。
+export function hubToday(billings: readonly (BillingView | undefined)[]): string | undefined {
+  for (const b of billings) {
+    if (b?.daysLeft !== undefined) return addDays(b.expiresOn, -b.daysLeft);
+  }
+  return undefined;
+}
+
+// 按到期日分组，键是 hub 下发的 expiresOn 原文；没有 daysLeft 的节点不进任何一天（与 hubToday 同一口径：hub 读不懂的
+// 日期不该被浏览器解释成某一天）。组内保持传入顺序。
+export function byExpiryDay<T extends { billing?: BillingView }>(nodes: readonly T[]): Map<string, T[]> {
+  const days = new Map<string, T[]>();
+  for (const n of nodes) {
+    if (n.billing?.daysLeft === undefined) continue;
+    const list = days.get(n.billing.expiresOn);
+    if (list) list.push(n);
+    else days.set(n.billing.expiresOn, [n]);
+  }
+  return days;
+}
+
+// 能否"已续费"：hub 的 RenewNodeBilling 要求周期与到期日都有，缺一项就拒绝；这里只决定按钮显不显示，推后的日期由
+// hub 计算，浏览器不重算。
+export function canRenew(b: BillingView | undefined): boolean {
+  return b !== undefined && b.billingCycle !== BillingCycle.UNSPECIFIED && b.expiresOn !== "";
 }
