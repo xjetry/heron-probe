@@ -501,6 +501,39 @@ message Node {
   // 周期流量配额，范围 [0, 2^62) 字节；0 表示未设配额。
   uint64 traffic_quota_bytes = 23;
   TrafficQuotaMode traffic_quota_mode = 24;
+  // 管理员手填的出口地址（§4.9 出口地址手填），空串表示未填。存的是规范形（IPv4 点分、IPv6 压缩形式），取值约束见
+  // UpdateNodeRequest.ipv4_pin。
+  string ipv4_pin = 25;
+  string ipv6_pin = 26;
+  // 每族出口地址的显示值：手填非空取手填，否则取 agent 探测（facts.network）。facts.network 始终是 agent 原报，
+  // 不被手填覆盖；两者对照可看出 agent 是否已按手填停止探测。两族恒有值（缺失的族是 source 为 UNSPECIFIED 的空值）。
+  NodeNetwork network = 27;
+}
+
+// 出口地址的显示值，与 NetworkInfo 同字段号。
+message NodeNetwork {
+  NodeAddress ipv4 = 1;
+  NodeAddress ipv6 = 2;
+}
+
+// 一个地址族的出口地址显示值。
+message NodeAddress {
+  // state 为 AVAILABLE 时是该族的公网地址（规范形），否则为空串。
+  string address = 1;
+  AddressSource source = 2;
+  // MANUAL 恒为 AVAILABLE；DETECTED 原样取 agent 报的状态（AVAILABLE、UNSUPPORTED、FAILED 或 DISABLED——DISABLED
+  // 而 source 不是 MANUAL，说明手填已清空、agent 还没收到恢复探测的应答）；UNSPECIFIED 时为 UNSPECIFIED。
+  AddressDetectionState state = 3;
+}
+
+// 出口地址显示值的来源。
+enum AddressSource {
+  // 没有手填，agent 也没报过这一族（从未上报、版本早于双栈探测，或首轮探测尚未完成）。
+  ADDRESS_SOURCE_UNSPECIFIED = 0;
+  // agent 探测：取自 facts.network。
+  ADDRESS_SOURCE_DETECTED = 1;
+  // 管理员手填（Node.ipv4_pin / ipv6_pin）。
+  ADDRESS_SOURCE_MANUAL = 2;
 }
 
 // 国家显示值的来源。
@@ -571,6 +604,15 @@ message UpdateNodeRequest {
   uint64 traffic_quota_bytes = 12;
   // 配额非 0 时必须指定 sum、rx、tx 或 max；配额为 0 时忽略并存 sum。
   TrafficQuotaMode traffic_quota_mode = 13;
+  // 手填的 IPv4 出口地址（§4.9 出口地址手填），整体替换：缺失即空串，清除手填、回落到 agent 探测。非空时必须是
+  // IPv4 公网单播地址（如 8.8.8.8），与 agent 自报出口同一个判定：私网、CGNAT、回环、链路本地、文档等非公网段，
+  // IPv6 文本与 IPv4 映射写法（::ffff:a.b.c.d）都返回 InvalidArgument；存规范形。填入后 hub 在下一次 Report 应答里
+  // 让该节点的 agent 停止 IPv4 探测（ReportResponse.detection），清空即恢复探测。只决定显示值与公开页的 IPv4 标记，
+  // 不参与国家查询（§4.9 按 hub 看到的来源地址查）。
+  string ipv4_pin = 14;
+  // 手填的 IPv6 出口地址，规则同 ipv4_pin：非空时必须是 IPv6 公网单播地址（如 2606:4700::1111），不带区域标识
+  // （%eth0）、不是 IPv4 映射写法；IPv4 文本返回 InvalidArgument。
+  string ipv6_pin = 15;
 }
 message UpdateNodeResponse {
   Node node = 1;

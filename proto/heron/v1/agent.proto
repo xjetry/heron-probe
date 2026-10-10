@@ -73,6 +73,18 @@ message ReportResponse {
   bool want_facts = 3;
   // 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
   UpdateTask update = 4;
+  // 出口地址探测的逐族开关，hub 每次应答都带（spec §4.9 出口地址手填）。缺失与各项为 false 相同：两族都照常探测。这是缺省
+  // 不是放宽——不带这个字段的旧 hub 之下，agent 的行为与引入它之前一致。hub 借它能做的只是让 agent 停报某一族的
+  // 出口地址，不影响上报、探测任务与鉴权（spec §5.7）。
+  NetworkDetection detection = 5;
+}
+
+// hub 按节点的手填出口地址（Node.ipv4_pin / ipv6_pin）逐族置位：手填非空即停用该族的探测。
+message NetworkDetection {
+  // 为真时 agent 立即把该族结果报为 ADDRESS_DETECTION_STATE_DISABLED，此后不再对该族发探测请求；由真变假时
+  // 该族退回未探测，agent 立即探测一次，不等下一个 5 分钟周期。
+  bool skip_ipv4 = 1;
+  bool skip_ipv6 = 2;
 }
 
 message GetReleaseRequest {

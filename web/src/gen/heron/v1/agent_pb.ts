@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file heron/v1/agent.proto.
  */
 export const file_heron_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSKbAgoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzEi8KDGNhcGFiaWxpdGllcxgHIAMoDjIZLmhlcm9uLnYxLkFnZW50Q2FwYWJpbGl0eRIUCgx0YXNrc19kaWdlc3QYCCABKAwiiwEKDlJlcG9ydFJlc3BvbnNlEhoKEnJlcG9ydF9pbnRlcnZhbF9tcxgBIAEoDRIjCgV0YXNrcxgCIAEoCzIULmhlcm9uLnYxLlByb2JlVGFza3MSEgoKd2FudF9mYWN0cxgDIAEoCBIkCgZ1cGRhdGUYBCABKAsyFC5oZXJvbi52MS5VcGRhdGVUYXNrIjIKEUdldFJlbGVhc2VSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSDAoEYXJjaBgCIAEoCSJGChJHZXRSZWxlYXNlUmVzcG9uc2USDAoEc3VtcxgBIAEoDBIRCglzaWduYXR1cmUYAiABKAwSDwoHYXJjaGl2ZRgDIAEoDCpYCg9BZ2VudENhcGFiaWxpdHkSIAocQUdFTlRfQ0FQQUJJTElUWV9VTlNQRUNJRklFRBAAEiMKH0FHRU5UX0NBUEFCSUxJVFlfUFJPQkVfQ0VSVF9QSU4QATLXAQoMQWdlbnRTZXJ2aWNlEkEKCFJlZ2lzdGVyEhkuaGVyb24udjEuUmVnaXN0ZXJSZXF1ZXN0GhouaGVyb24udjEuUmVnaXN0ZXJSZXNwb25zZRI7CgZSZXBvcnQSFy5oZXJvbi52MS5SZXBvcnRSZXF1ZXN0GhguaGVyb24udjEuUmVwb3J0UmVzcG9uc2USRwoKR2V0UmVsZWFzZRIbLmhlcm9uLnYxLkdldFJlbGVhc2VSZXF1ZXN0GhwuaGVyb24udjEuR2V0UmVsZWFzZVJlc3BvbnNlQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types, file_heron_v1_update]);
+  fileDesc("ChRoZXJvbi92MS9hZ2VudC5wcm90bxIIaGVyb24udjEiLAoPUmVnaXN0ZXJSZXF1ZXN0EgsKA2tleRgBIAEoCRIMCgRuYW1lGAIgASgJIjIKEFJlZ2lzdGVyUmVzcG9uc2USDwoHbm9kZV9pZBgBIAEoAxINCgV0b2tlbhgCIAEoCSKbAgoNUmVwb3J0UmVxdWVzdBIiCgdtZXRyaWNzGAEgASgLMhEuaGVyb24udjEuTWV0cmljcxIsCg1wcm9iZV9yZXN1bHRzGAIgAygLMhUuaGVyb24udjEuUHJvYmVSZXN1bHQSFQoNdGFza3NfdmVyc2lvbhgDIAEoBBISCgpmYWN0c19oYXNoGAQgASgGEh4KBWZhY3RzGAUgASgLMg8uaGVyb24udjEuRmFjdHMSJgoGdXBkYXRlGAYgASgLMhYuaGVyb24udjEuVXBkYXRlU3RhdHVzEi8KDGNhcGFiaWxpdGllcxgHIAMoDjIZLmhlcm9uLnYxLkFnZW50Q2FwYWJpbGl0eRIUCgx0YXNrc19kaWdlc3QYCCABKAwiugEKDlJlcG9ydFJlc3BvbnNlEhoKEnJlcG9ydF9pbnRlcnZhbF9tcxgBIAEoDRIjCgV0YXNrcxgCIAEoCzIULmhlcm9uLnYxLlByb2JlVGFza3MSEgoKd2FudF9mYWN0cxgDIAEoCBIkCgZ1cGRhdGUYBCABKAsyFC5oZXJvbi52MS5VcGRhdGVUYXNrEi0KCWRldGVjdGlvbhgFIAEoCzIaLmhlcm9uLnYxLk5ldHdvcmtEZXRlY3Rpb24iOAoQTmV0d29ya0RldGVjdGlvbhIRCglza2lwX2lwdjQYASABKAgSEQoJc2tpcF9pcHY2GAIgASgIIjIKEUdldFJlbGVhc2VSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSDAoEYXJjaBgCIAEoCSJGChJHZXRSZWxlYXNlUmVzcG9uc2USDAoEc3VtcxgBIAEoDBIRCglzaWduYXR1cmUYAiABKAwSDwoHYXJjaGl2ZRgDIAEoDCpYCg9BZ2VudENhcGFiaWxpdHkSIAocQUdFTlRfQ0FQQUJJTElUWV9VTlNQRUNJRklFRBAAEiMKH0FHRU5UX0NBUEFCSUxJVFlfUFJPQkVfQ0VSVF9QSU4QATLXAQoMQWdlbnRTZXJ2aWNlEkEKCFJlZ2lzdGVyEhkuaGVyb24udjEuUmVnaXN0ZXJSZXF1ZXN0GhouaGVyb24udjEuUmVnaXN0ZXJSZXNwb25zZRI7CgZSZXBvcnQSFy5oZXJvbi52MS5SZXBvcnRSZXF1ZXN0GhguaGVyb24udjEuUmVwb3J0UmVzcG9uc2USRwoKR2V0UmVsZWFzZRIbLmhlcm9uLnYxLkdldFJlbGVhc2VSZXF1ZXN0GhwuaGVyb24udjEuR2V0UmVsZWFzZVJlc3BvbnNlQjRaMmdpdGh1Yi5jb20veGpldHJ5L2hlcm9uLXByb2JlL2dlbi9oZXJvbi92MTtoZXJvbnYxYgZwcm90bzM", [file_heron_v1_types, file_heron_v1_update]);
 
 /**
  * @generated from message heron.v1.RegisterRequest
@@ -167,6 +167,15 @@ export type ReportResponse = Message<"heron.v1.ReportResponse"> & {
    * @generated from field: heron.v1.UpdateTask update = 4;
    */
   update?: UpdateTask | undefined;
+
+  /**
+   * 出口地址探测的逐族开关，hub 每次应答都带（spec §4.9 出口地址手填）。缺失与各项为 false 相同：两族都照常探测。这是缺省
+   * 不是放宽——不带这个字段的旧 hub 之下，agent 的行为与引入它之前一致。hub 借它能做的只是让 agent 停报某一族的
+   * 出口地址，不影响上报、探测任务与鉴权（spec §5.7）。
+   *
+   * @generated from field: heron.v1.NetworkDetection detection = 5;
+   */
+  detection?: NetworkDetection | undefined;
 };
 
 /**
@@ -175,6 +184,33 @@ export type ReportResponse = Message<"heron.v1.ReportResponse"> & {
  */
 export const ReportResponseSchema: GenMessage<ReportResponse> = /*@__PURE__*/
   messageDesc(file_heron_v1_agent, 3);
+
+/**
+ * hub 按节点的手填出口地址（Node.ipv4_pin / ipv6_pin）逐族置位：手填非空即停用该族的探测。
+ *
+ * @generated from message heron.v1.NetworkDetection
+ */
+export type NetworkDetection = Message<"heron.v1.NetworkDetection"> & {
+  /**
+   * 为真时 agent 立即把该族结果报为 ADDRESS_DETECTION_STATE_DISABLED，此后不再对该族发探测请求；由真变假时
+   * 该族退回未探测，agent 立即探测一次，不等下一个 5 分钟周期。
+   *
+   * @generated from field: bool skip_ipv4 = 1;
+   */
+  skipIpv4: boolean;
+
+  /**
+   * @generated from field: bool skip_ipv6 = 2;
+   */
+  skipIpv6: boolean;
+};
+
+/**
+ * Describes the message heron.v1.NetworkDetection.
+ * Use `create(NetworkDetectionSchema)` to create a new message.
+ */
+export const NetworkDetectionSchema: GenMessage<NetworkDetection> = /*@__PURE__*/
+  messageDesc(file_heron_v1_agent, 4);
 
 /**
  * @generated from message heron.v1.GetReleaseRequest
@@ -200,7 +236,7 @@ export type GetReleaseRequest = Message<"heron.v1.GetReleaseRequest"> & {
  * Use `create(GetReleaseRequestSchema)` to create a new message.
  */
 export const GetReleaseRequestSchema: GenMessage<GetReleaseRequest> = /*@__PURE__*/
-  messageDesc(file_heron_v1_agent, 4);
+  messageDesc(file_heron_v1_agent, 5);
 
 /**
  * @generated from message heron.v1.GetReleaseResponse
@@ -233,7 +269,7 @@ export type GetReleaseResponse = Message<"heron.v1.GetReleaseResponse"> & {
  * Use `create(GetReleaseResponseSchema)` to create a new message.
  */
 export const GetReleaseResponseSchema: GenMessage<GetReleaseResponse> = /*@__PURE__*/
-  messageDesc(file_heron_v1_agent, 5);
+  messageDesc(file_heron_v1_agent, 6);
 
 /**
  * @generated from enum heron.v1.AgentCapability

@@ -581,7 +581,8 @@ func (x *PublicFacts) GetNetwork() *PublicNetworkInfo {
 	return nil
 }
 
-// NetworkInfo 的公开部分，字段号相同。某个地址族缺失表示它还没探测过：agent 启动后首轮探测完成前报的是空的 network。
+// NetworkInfo 的公开部分，字段号相同。某个地址族缺失表示它还没探测过（agent 启动后首轮探测完成前报的是空的
+// network），且管理员也没有手填。
 type PublicNetworkInfo struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Ipv4          *PublicAddressDetection `protobuf:"bytes,1,opt,name=ipv4,proto3" json:"ipv4,omitempty"`
@@ -637,9 +638,12 @@ func (x *PublicNetworkInfo) GetIpv6() *PublicAddressDetection {
 // AddressDetection 的公开部分，字段号相同。出口地址与探测时间不公开，号与名保留。
 type PublicAddressDetection struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// AVAILABLE：agent 经该地址族连上外部探测服务并拿到了公网地址，即这台机器有该族的公网出口。
+	// 取自管理端的显示值（Node.network），不是 agent 原报：管理员为该族手填了地址时恒为 AVAILABLE，否则是 agent 的探测。
+	// AVAILABLE：agent 经该地址族连上外部探测服务并拿到了公网地址，即这台机器有该族的公网出口；或管理员手填了该族的
+	// 公网地址（运维断言该族有公网入口，用于探测不到的主机）。
 	// UNSUPPORTED：本机该族只有回环、链路本地地址（私网地址算可用，可经 NAT 出网），或连接时系统报网络不可达、
 	// 不支持该地址族。FAILED：这一轮探测没成功（超时、DNS 失败、服务异常），不能据此判断有没有出口。
+	// DISABLED：手填刚清空，agent 还没恢复该族的探测；随后的上报会换成探测结果。
 	// agent 每 5 分钟探测一次。
 	State         AddressDetectionState `protobuf:"varint,1,opt,name=state,proto3,enum=heron.v1.AddressDetectionState" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields

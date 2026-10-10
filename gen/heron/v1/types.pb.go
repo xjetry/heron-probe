@@ -309,6 +309,11 @@ const (
 	AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE   AddressDetectionState = 1
 	AddressDetectionState_ADDRESS_DETECTION_STATE_UNSUPPORTED AddressDetectionState = 2
 	AddressDetectionState_ADDRESS_DETECTION_STATE_FAILED      AddressDetectionState = 3
+	// agent 按 hub 的指示停止了这一族的探测（ReportResponse.detection）：hub 在管理员为该族手填了出口地址
+	// （Node.ipv4_pin / ipv6_pin）时要求停用。没有地址；checked_at 是停用生效的时刻。停不停由 hub 决定，agent 照做。
+	// 应答不再要求停用时，agent 立即把该族退回未探测（缺失）并马上探测一次，不把 DISABLED 留到下一份结果：不认识
+	// 这个值的旧 hub 会把带它的 facts 当作非法而整次拒收；退回缺失之后，只有在最近一次应答仍要求停用时上报里才会有它。
+	AddressDetectionState_ADDRESS_DETECTION_STATE_DISABLED AddressDetectionState = 4
 )
 
 // Enum value maps for AddressDetectionState.
@@ -318,12 +323,14 @@ var (
 		1: "ADDRESS_DETECTION_STATE_AVAILABLE",
 		2: "ADDRESS_DETECTION_STATE_UNSUPPORTED",
 		3: "ADDRESS_DETECTION_STATE_FAILED",
+		4: "ADDRESS_DETECTION_STATE_DISABLED",
 	}
 	AddressDetectionState_value = map[string]int32{
 		"ADDRESS_DETECTION_STATE_UNSPECIFIED": 0,
 		"ADDRESS_DETECTION_STATE_AVAILABLE":   1,
 		"ADDRESS_DETECTION_STATE_UNSUPPORTED": 2,
 		"ADDRESS_DETECTION_STATE_FAILED":      3,
+		"ADDRESS_DETECTION_STATE_DISABLED":    4,
 	}
 )
 
@@ -863,7 +870,8 @@ type Facts struct {
 	AgentVersion string `protobuf:"bytes,8,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	// 两种 ICMP socket 是否至少一种可用。
 	IcmpAvailable bool `protobuf:"varint,9,opt,name=icmp_available,json=icmpAvailable,proto3" json:"icmp_available,omitempty"`
-	// agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
+	// agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。始终是 agent 的原报：管理员手填的地址
+	// （Node.ipv4_pin / ipv6_pin）不写进这里，面板显示的是两者合成的 Node.network。
 	Network *NetworkInfo `protobuf:"bytes,10,opt,name=network,proto3" json:"network,omitempty"`
 	// 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
 	// 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
@@ -2210,12 +2218,13 @@ const file_heron_v1_types_proto_rawDesc = "" +
 	"\x1aCOLLECTION_COMPONENT_CONNS\x10\t\x12\x1c\n" +
 	"\x18COLLECTION_COMPONENT_NET\x10\n" +
 	"\x12 \n" +
-	"\x1cCOLLECTION_COMPONENT_DISK_IO\x10\v*\xb4\x01\n" +
+	"\x1cCOLLECTION_COMPONENT_DISK_IO\x10\v*\xda\x01\n" +
 	"\x15AddressDetectionState\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSPECIFIED\x10\x00\x12%\n" +
 	"!ADDRESS_DETECTION_STATE_AVAILABLE\x10\x01\x12'\n" +
 	"#ADDRESS_DETECTION_STATE_UNSUPPORTED\x10\x02\x12\"\n" +
-	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03*\xa4\x01\n" +
+	"\x1eADDRESS_DETECTION_STATE_FAILED\x10\x03\x12$\n" +
+	" ADDRESS_DETECTION_STATE_DISABLED\x10\x04*\xa4\x01\n" +
 	"\x0fPresentedReason\x12 \n" +
 	"\x1cPRESENTED_REASON_UNSPECIFIED\x10\x00\x12%\n" +
 	"!PRESENTED_REASON_CA_VERIFY_FAILED\x10\x01\x12!\n" +

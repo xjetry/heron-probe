@@ -65,7 +65,8 @@ message Facts {
   string agent_version = 8;
   // 两种 ICMP socket 是否至少一种可用。
   bool icmp_available = 9;
-  // agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。
+  // agent 自报的双栈出口，仅用于管理展示；hub 不据此鉴权或查询国家。始终是 agent 的原报：管理员手填的地址
+  // （Node.ipv4_pin / ipv6_pin）不写进这里，面板显示的是两者合成的 Node.network。
   NetworkInfo network = 10;
   // 最近一次采集的白名单诊断，仅管理端可读；缺失表示 agent 尚未提供，不等于健康。
   // 不含原始错误、凭据、Hub URL 或完整命令行。沿 Facts 摘要对账，只在内容变化时落库。
@@ -192,6 +193,11 @@ enum AddressDetectionState {
   ADDRESS_DETECTION_STATE_AVAILABLE = 1;
   ADDRESS_DETECTION_STATE_UNSUPPORTED = 2;
   ADDRESS_DETECTION_STATE_FAILED = 3;
+  // agent 按 hub 的指示停止了这一族的探测（ReportResponse.detection）：hub 在管理员为该族手填了出口地址
+  // （Node.ipv4_pin / ipv6_pin）时要求停用。没有地址；checked_at 是停用生效的时刻。停不停由 hub 决定，agent 照做。
+  // 应答不再要求停用时，agent 立即把该族退回未探测（缺失）并马上探测一次，不把 DISABLED 留到下一份结果：不认识
+  // 这个值的旧 hub 会把带它的 facts 当作非法而整次拒收；退回缺失之后，只有在最近一次应答仍要求停用时上报里才会有它。
+  ADDRESS_DETECTION_STATE_DISABLED = 4;
 }
 
 message AddressDetection {

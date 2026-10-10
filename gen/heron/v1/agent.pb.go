@@ -296,7 +296,11 @@ type ReportResponse struct {
 	// hub 持有的 facts_hash 与请求不一致。
 	WantFacts bool `protobuf:"varint,3,opt,name=want_facts,json=wantFacts,proto3" json:"want_facts,omitempty"`
 	// 幂等更新任务。agent 交给本机受限更新器，不能自行执行下载地址或命令。
-	Update        *UpdateTask `protobuf:"bytes,4,opt,name=update,proto3" json:"update,omitempty"`
+	Update *UpdateTask `protobuf:"bytes,4,opt,name=update,proto3" json:"update,omitempty"`
+	// 出口地址探测的逐族开关，hub 每次应答都带（spec §4.9 出口地址手填）。缺失与各项为 false 相同：两族都照常探测。这是缺省
+	// 不是放宽——不带这个字段的旧 hub 之下，agent 的行为与引入它之前一致。hub 借它能做的只是让 agent 停报某一族的
+	// 出口地址，不影响上报、探测任务与鉴权（spec §5.7）。
+	Detection     *NetworkDetection `protobuf:"bytes,5,opt,name=detection,proto3" json:"detection,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -359,6 +363,68 @@ func (x *ReportResponse) GetUpdate() *UpdateTask {
 	return nil
 }
 
+func (x *ReportResponse) GetDetection() *NetworkDetection {
+	if x != nil {
+		return x.Detection
+	}
+	return nil
+}
+
+// hub 按节点的手填出口地址（Node.ipv4_pin / ipv6_pin）逐族置位：手填非空即停用该族的探测。
+type NetworkDetection struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 为真时 agent 立即把该族结果报为 ADDRESS_DETECTION_STATE_DISABLED，此后不再对该族发探测请求；由真变假时
+	// 该族退回未探测，agent 立即探测一次，不等下一个 5 分钟周期。
+	SkipIpv4      bool `protobuf:"varint,1,opt,name=skip_ipv4,json=skipIpv4,proto3" json:"skip_ipv4,omitempty"`
+	SkipIpv6      bool `protobuf:"varint,2,opt,name=skip_ipv6,json=skipIpv6,proto3" json:"skip_ipv6,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NetworkDetection) Reset() {
+	*x = NetworkDetection{}
+	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkDetection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkDetection) ProtoMessage() {}
+
+func (x *NetworkDetection) ProtoReflect() protoreflect.Message {
+	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NetworkDetection.ProtoReflect.Descriptor instead.
+func (*NetworkDetection) Descriptor() ([]byte, []int) {
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *NetworkDetection) GetSkipIpv4() bool {
+	if x != nil {
+		return x.SkipIpv4
+	}
+	return false
+}
+
+func (x *NetworkDetection) GetSkipIpv6() bool {
+	if x != nil {
+		return x.SkipIpv6
+	}
+	return false
+}
+
 type GetReleaseRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 节点当前更新任务的 ID。
@@ -371,7 +437,7 @@ type GetReleaseRequest struct {
 
 func (x *GetReleaseRequest) Reset() {
 	*x = GetReleaseRequest{}
-	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	mi := &file_heron_v1_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -383,7 +449,7 @@ func (x *GetReleaseRequest) String() string {
 func (*GetReleaseRequest) ProtoMessage() {}
 
 func (x *GetReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_agent_proto_msgTypes[4]
+	mi := &file_heron_v1_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -396,7 +462,7 @@ func (x *GetReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReleaseRequest.ProtoReflect.Descriptor instead.
 func (*GetReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_heron_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetReleaseRequest) GetTaskId() string {
@@ -427,7 +493,7 @@ type GetReleaseResponse struct {
 
 func (x *GetReleaseResponse) Reset() {
 	*x = GetReleaseResponse{}
-	mi := &file_heron_v1_agent_proto_msgTypes[5]
+	mi := &file_heron_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -439,7 +505,7 @@ func (x *GetReleaseResponse) String() string {
 func (*GetReleaseResponse) ProtoMessage() {}
 
 func (x *GetReleaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_heron_v1_agent_proto_msgTypes[5]
+	mi := &file_heron_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -452,7 +518,7 @@ func (x *GetReleaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReleaseResponse.ProtoReflect.Descriptor instead.
 func (*GetReleaseResponse) Descriptor() ([]byte, []int) {
-	return file_heron_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_heron_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetReleaseResponse) GetSums() []byte {
@@ -496,13 +562,17 @@ const file_heron_v1_agent_proto_rawDesc = "" +
 	"\x05facts\x18\x05 \x01(\v2\x0f.heron.v1.FactsR\x05facts\x12.\n" +
 	"\x06update\x18\x06 \x01(\v2\x16.heron.v1.UpdateStatusR\x06update\x12=\n" +
 	"\fcapabilities\x18\a \x03(\x0e2\x19.heron.v1.AgentCapabilityR\fcapabilities\x12!\n" +
-	"\ftasks_digest\x18\b \x01(\fR\vtasksDigest\"\xb7\x01\n" +
+	"\ftasks_digest\x18\b \x01(\fR\vtasksDigest\"\xf1\x01\n" +
 	"\x0eReportResponse\x12,\n" +
 	"\x12report_interval_ms\x18\x01 \x01(\rR\x10reportIntervalMs\x12*\n" +
 	"\x05tasks\x18\x02 \x01(\v2\x14.heron.v1.ProbeTasksR\x05tasks\x12\x1d\n" +
 	"\n" +
 	"want_facts\x18\x03 \x01(\bR\twantFacts\x12,\n" +
-	"\x06update\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x06update\"@\n" +
+	"\x06update\x18\x04 \x01(\v2\x14.heron.v1.UpdateTaskR\x06update\x128\n" +
+	"\tdetection\x18\x05 \x01(\v2\x1a.heron.v1.NetworkDetectionR\tdetection\"L\n" +
+	"\x10NetworkDetection\x12\x1b\n" +
+	"\tskip_ipv4\x18\x01 \x01(\bR\bskipIpv4\x12\x1b\n" +
+	"\tskip_ipv6\x18\x02 \x01(\bR\bskipIpv6\"@\n" +
 	"\x11GetReleaseRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\"`\n" +
@@ -532,41 +602,43 @@ func file_heron_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_heron_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_heron_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_heron_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_heron_v1_agent_proto_goTypes = []any{
 	(AgentCapability)(0),       // 0: heron.v1.AgentCapability
 	(*RegisterRequest)(nil),    // 1: heron.v1.RegisterRequest
 	(*RegisterResponse)(nil),   // 2: heron.v1.RegisterResponse
 	(*ReportRequest)(nil),      // 3: heron.v1.ReportRequest
 	(*ReportResponse)(nil),     // 4: heron.v1.ReportResponse
-	(*GetReleaseRequest)(nil),  // 5: heron.v1.GetReleaseRequest
-	(*GetReleaseResponse)(nil), // 6: heron.v1.GetReleaseResponse
-	(*Metrics)(nil),            // 7: heron.v1.Metrics
-	(*ProbeResult)(nil),        // 8: heron.v1.ProbeResult
-	(*Facts)(nil),              // 9: heron.v1.Facts
-	(*UpdateStatus)(nil),       // 10: heron.v1.UpdateStatus
-	(*ProbeTasks)(nil),         // 11: heron.v1.ProbeTasks
-	(*UpdateTask)(nil),         // 12: heron.v1.UpdateTask
+	(*NetworkDetection)(nil),   // 5: heron.v1.NetworkDetection
+	(*GetReleaseRequest)(nil),  // 6: heron.v1.GetReleaseRequest
+	(*GetReleaseResponse)(nil), // 7: heron.v1.GetReleaseResponse
+	(*Metrics)(nil),            // 8: heron.v1.Metrics
+	(*ProbeResult)(nil),        // 9: heron.v1.ProbeResult
+	(*Facts)(nil),              // 10: heron.v1.Facts
+	(*UpdateStatus)(nil),       // 11: heron.v1.UpdateStatus
+	(*ProbeTasks)(nil),         // 12: heron.v1.ProbeTasks
+	(*UpdateTask)(nil),         // 13: heron.v1.UpdateTask
 }
 var file_heron_v1_agent_proto_depIdxs = []int32{
-	7,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
-	8,  // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
-	9,  // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
-	10, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
+	8,  // 0: heron.v1.ReportRequest.metrics:type_name -> heron.v1.Metrics
+	9,  // 1: heron.v1.ReportRequest.probe_results:type_name -> heron.v1.ProbeResult
+	10, // 2: heron.v1.ReportRequest.facts:type_name -> heron.v1.Facts
+	11, // 3: heron.v1.ReportRequest.update:type_name -> heron.v1.UpdateStatus
 	0,  // 4: heron.v1.ReportRequest.capabilities:type_name -> heron.v1.AgentCapability
-	11, // 5: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
-	12, // 6: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
-	1,  // 7: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
-	3,  // 8: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
-	5,  // 9: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
-	2,  // 10: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
-	4,  // 11: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
-	6,  // 12: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
-	10, // [10:13] is the sub-list for method output_type
-	7,  // [7:10] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	12, // 5: heron.v1.ReportResponse.tasks:type_name -> heron.v1.ProbeTasks
+	13, // 6: heron.v1.ReportResponse.update:type_name -> heron.v1.UpdateTask
+	5,  // 7: heron.v1.ReportResponse.detection:type_name -> heron.v1.NetworkDetection
+	1,  // 8: heron.v1.AgentService.Register:input_type -> heron.v1.RegisterRequest
+	3,  // 9: heron.v1.AgentService.Report:input_type -> heron.v1.ReportRequest
+	6,  // 10: heron.v1.AgentService.GetRelease:input_type -> heron.v1.GetReleaseRequest
+	2,  // 11: heron.v1.AgentService.Register:output_type -> heron.v1.RegisterResponse
+	4,  // 12: heron.v1.AgentService.Report:output_type -> heron.v1.ReportResponse
+	7,  // 13: heron.v1.AgentService.GetRelease:output_type -> heron.v1.GetReleaseResponse
+	11, // [11:14] is the sub-list for method output_type
+	8,  // [8:11] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_heron_v1_agent_proto_init() }
@@ -582,7 +654,7 @@ func file_heron_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_heron_v1_agent_proto_rawDesc), len(file_heron_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
