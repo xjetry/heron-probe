@@ -3,6 +3,7 @@ import { CopyableText } from "./CopyableText";
 import { needsInsecureHTTP } from "../lib/transport";
 import { isRelease } from "../lib/version";
 import { loadProxyPort, parseProxyPort, saveProxyPort, sshProxyArgs } from "../lib/installProxy";
+import { clearInstallHub, loadInstallHub, parseInstallHub, saveInstallHub } from "../lib/installHub";
 import { REPO_URL } from "../lib/repo";
 
 // 安装脚本只装自己所属的版本（spec §5.7），版本由取哪个 URL 的脚本决定；每个 release 里的 agent 脚本装的就是这个
@@ -14,7 +15,9 @@ const scriptUrl = (hubVersion: string) =>
     ? `${REPO_URL}/releases/download/${hubVersion}/install.sh`
     : `${REPO_URL}/releases/latest/download/install.sh`;
 
-// origin 是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的 --hub 与这个判定取同一个值。
+// origin 是浏览器当前的 origin，命令的默认 hub 地址。运维可在这台浏览器里设一个覆盖地址（lib/installHub.ts），
+// 生效地址 = 覆盖地址 || origin；它是 agent 访问 hub 的地址，也是判定要不要 --insecure-http 的依据：命令里的
+// --hub、这个判定与明文提示都只读生效地址。覆盖地址不合法时不出任何命令，输入框的内容因此改不了命令的结构。
 // registerKey 是注册窗口的 key 或指定节点的安装凭据；注册后由 agent 保存另行签发的运行 token。
 // boundAgentVersion 是 hub 绑定的 agent 版本（spec §14.1）：命令装上的是它，不是 hub 自己的版本；正式 hub 的绑定
 // 版本由发版判定保证存在，空或未知只是兜底显示。
@@ -24,18 +27,30 @@ const scriptUrl = (hubVersion: string) =>
 export function InstallCommands({ hubVersion, boundAgentVersion, origin, registerKey, reRegister = false, banner }: { hubVersion: string; boundAgentVersion: string; origin: string; registerKey: string; reRegister?: boolean; banner?: ReactNode }) {
   const [domestic, setDomestic] = useState(false);
   const [portText, setPortText] = useState(loadProxyPort);
+  const [hubText, setHubText] = useState(loadInstallHub);
   const port = parseProxyPort(portText);
+  const override = parseInstallHub(hubText);
+  const hub = override === null ? null : override || origin;
   const url = scriptUrl(hubVersion);
-  const insecure = needsInsecureHTTP(origin);
-  const args = `--hub ${origin} --key ${registerKey}${insecure ? " --insecure-http" : ""}${reRegister ? " --re-register" : ""}${domestic ? " --update-source hub" : ""}`;
+  const insecure = hub !== null && needsInsecureHTTP(hub);
+  const args = hub === null ? null : `--hub ${hub} --key ${registerKey}${insecure ? " --insecure-http" : ""}${reRegister ? " --re-register" : ""}${domestic ? " --update-source hub" : ""}`;
   const editPort = (text: string) => {
     setPortText(text);
     const parsed = parseProxyPort(text);
     if (parsed !== null) saveProxyPort(parsed);
   };
+  const editHub = (text: string) => {
+    setHubText(text);
+    const parsed = parseInstallHub(text);
+    if (parsed === "") clearInstallHub();
+    else if (parsed !== null) saveInstallHub(parsed);
+  };
   return (
     <>
       {banner}
+      <label className="inline">Hub 连接地址<input aria-label="Hub 连接地址" type="url" placeholder={origin} value={hubText} onChange={(e) => editHub(e.target.value)} /></label>
+      <p className="muted">留空使用当前域名；只保存在这台浏览器，hub 不记录。用于出站 443 被封等要经备用入口连 hub 的主机，形如 https://主机:端口。</p>
+      {hub === null && <p role="alert" className="error">Hub 连接地址须为 http:// 或 https:// 加主机，可带端口，不带路径、查询或用户信息</p>}
       <label className="inline"><input type="checkbox" checked={domestic} onChange={(e) => setDomestic(e.target.checked)} />国内主机（连不上 GitHub 与 CDN：安装经 SSH 反代走本机代理，在线更新经 hub 中转）</label>
       {domestic && <div className="install-command">
         <strong>第一步：SSH 反代</strong>
@@ -43,13 +58,15 @@ export function InstallCommands({ hubVersion, boundAgentVersion, origin, registe
         <label className="inline">本机代理端口<input aria-label="本机代理端口" inputMode="numeric" value={portText} onChange={(e) => editPort(e.target.value)} /></label>
         {port === null
           ? <p role="alert" className="error">本机代理端口须为 1–65535 的整数</p>
-          : <CopyableText label="SSH 反代参数" copyLabel="复制 SSH 反代参数" value={sshProxyArgs(port)} />}
+          : args !== null && <CopyableText label="SSH 反代参数" copyLabel="复制 SSH 反代参数" value={sshProxyArgs(port)} />}
         <p className="muted">参数把本机代理端口反向转发到目标主机的同一端口，并在登录后的 shell 里设好 http_proxy、https_proxy 与 all_proxy；本机代理端口要同时接受 HTTP 与 SOCKS5（如 Clash 的混合端口）。sudo 可能丢掉这些变量，请以 root 登录或用 sudo -E。代理只用于这次安装，装好后 agent 直接连 hub。</p>
       </div>}
-      {domestic && <p><strong>第二步：在上面登录的 shell 里执行安装命令</strong></p>}
-      <div className="install-command"><strong>curl</strong><CopyableText label="curl 安装命令" copyLabel="复制 curl 命令" value={`curl -fsSL ${url} | sh -s -- ${args}`} /></div>
-      <div className="install-command"><strong>wget</strong><CopyableText label="wget 安装命令" copyLabel="复制 wget 命令" value={`wget -qO- ${url} | sh -s -- ${args}`} /></div>
-      {domestic && <p className="muted">命令带 --update-source hub：在线更新经 hub 中转取官方签名产物，不直连 GitHub。OpenRC 主机（如 Alpine）不支持在线更新，安装脚本会拒绝这个参数，请删掉它再执行。</p>}
+      {args !== null && <>
+        {domestic && <p><strong>第二步：在上面登录的 shell 里执行安装命令</strong></p>}
+        <div className="install-command"><strong>curl</strong><CopyableText label="curl 安装命令" copyLabel="复制 curl 命令" value={`curl -fsSL ${url} | sh -s -- ${args}`} /></div>
+        <div className="install-command"><strong>wget</strong><CopyableText label="wget 安装命令" copyLabel="复制 wget 命令" value={`wget -qO- ${url} | sh -s -- ${args}`} /></div>
+      </>}
+      {domestic && args !== null && <p className="muted">命令带 --update-source hub：在线更新经 hub 中转取官方签名产物，不直连 GitHub。OpenRC 主机（如 Alpine）不支持在线更新，安装脚本会拒绝这个参数，请删掉它再执行。</p>}
       {isRelease(hubVersion)
         ? <p className="muted">脚本取自 hub {hubVersion} 的 release，安装 hub 绑定的 agent {boundAgentVersion || "（未知）"}。</p>
         : <p className="muted">hub 不是正式版本（{hubVersion || "未知"}），脚本取自最新 release，将安装最新 release。</p>}
