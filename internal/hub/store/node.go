@@ -36,8 +36,9 @@ func BillingCycles() []BillingCycle {
 	return []BillingCycle{CycleMonthly, CycleQuarterly, CycleSemiannual, CycleYearly, CycleBiennial, CycleTriennial, CycleQuinquennial}
 }
 
-// Billing 是节点的计费与到期（§9.4），随 UpdateNode 整体替换，零值即"都没填"。存储不校验取值：写入口有三个，
-// api 的 CreateNode 与 UpdateNode 按 §9.4 校验整组取值（共用 billingOf），RenewExpiry 只写 alert 推后得到的日期。
+// Billing 是节点的计费与到期（§9.4），随 UpdateNode 整体替换，零值即"都没填"。存储不校验取值：写入口有四个，
+// api 的 CreateNode 与 UpdateNode 按 §9.4 校验整组取值（共用 billingOf），RenewExpiry 与 RenewNodeBilling 只写
+// alert 推后得到的日期。
 type Billing struct {
 	Price     string
 	Currency  string
@@ -369,22 +370,55 @@ func (s *Store) nodeScopesAfterUpdate(ctx context.Context, tx *sql.Tx, ids []int
 	return result, err
 }
 
-// RenewExpiry 把自动续期推后的到期日写回，前提是该行此刻仍是推后所依据的那组取值（开着自动续期、周期与
-// 旧到期日都没变）：推后的日期由到期扫描从它读出的快照算出，快照之后 UpdateNode 若改了计费字段，按旧快照写回
-// 就会盖掉管理员刚保存的值。条件不成立时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描
-// 按新值重算；节点已被删除时，没有要重算的对象。
+// renewExpiryTx 是推后到期日的条件写，自动续期（RenewExpiry）与手动续期（RenewNodeBilling）共用这一个谓词：推后的
+// 日期由调用方从它读到的快照算出（alert.renewedExpiry / alert.RenewedExpiry），只有该行此刻仍是那组周期与旧到期日时
+// 写回才对——快照之后 UpdateNode 若改了计费字段，按旧快照写回就会盖掉管理员刚保存的值。autoRenewOnly 另要求开着
+// 自动续期：那是到期扫描专用的守卫（扫描只该推后开着它的节点，快照之后被关掉就不再推后）；手动续期的主要对象正是
+// 没开它的节点，不带这一项。返回是否写入了一行；未写入时该行不存在或计费已变，由调用方区分。
+func renewExpiryTx(tx *sql.Tx, id int64, cycle BillingCycle, from, to string, autoRenewOnly bool) (bool, error) {
+	query := "UPDATE node SET expires_on = ? WHERE id = ? AND billing_cycle = ? AND expires_on = ?"
+	if autoRenewOnly {
+		query += " AND auto_renew = 1"
+	}
+	res, err := tx.Exec(query, to, id, cycle, from)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// RenewExpiry 把自动续期推后的到期日写回，前提见 renewExpiryTx（开着自动续期、周期与旧到期日都没变）。条件不成立
+// 时不写、返回 false：计费被 UpdateNode 改过时，由那次 UpdateNode 触发的扫描按新值重算；节点已被删除时，没有要
+// 重算的对象。
 func (s *Store) RenewExpiry(ctx context.Context, id int64, cycle BillingCycle, from, to string) (bool, error) {
 	var renewed bool
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.Exec("UPDATE node SET expires_on = ? WHERE id = ? AND auto_renew = 1 AND billing_cycle = ? AND expires_on = ?", to, id, cycle, from)
-		if err != nil {
-			return err
-		}
-		n, err := res.RowsAffected()
-		renewed = n == 1
+		var err error
+		renewed, err = renewExpiryTx(tx, id, cycle, from, to, true)
 		return err
 	})
 	return renewed, err
+}
+
+// RenewNodeBilling 把手动续期推后的到期日 to 写回，是"已续费"的类型化变更目标。cycle 与 from 是调用方算出 to
+// 所依据的周期与到期日，条件写见 renewExpiryTx（不要求开着自动续期）。节点不存在是 ErrNotFound，存在但周期或
+// 到期日已变（读到之后、写入之前有别的写改了它们）是 ErrPrecondition 类的 PreconditionError；两者都不改库。
+func (s *Store) RenewNodeBilling(ctx context.Context, id int64, cycle BillingCycle, from, to string) error {
+	return s.writeChange(ctx, ChangeTarget{Action: ActionRenewNodeBilling, ResourceID: id}, func(tx *sql.Tx) error {
+		renewed, err := renewExpiryTx(tx, id, cycle, from, to, false)
+		if err != nil || renewed {
+			return err
+		}
+		exists, err := nodeExistsTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return PreconditionError{Detail: fmt.Sprintf("node %d: billing changed after it was read (billing_cycle %q, expires_on %q); refresh and retry", id, cycle, from)}
+	})
 }
 
 // SetLookupCountry 写入对 addr 查得的国家，前提是节点的 last_source 此刻仍是 addr：查询在写协程之外发出，应答

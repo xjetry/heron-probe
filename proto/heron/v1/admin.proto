@@ -94,6 +94,14 @@ service AdminService {
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse) {
     option (heron.v1.access) = ACCESS_SESSION;
   }
+  // 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——从当前到期日起按周期步进到
+  // 不早于 hub 时区（--timezone）的今天为止，未过期的节点恰好推后一个周期，已过期多个周期的一次跳过；日号超过目标月
+  // 天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+  // 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
+  // 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
+  rpc RenewNodeBilling(RenewNodeBillingRequest) returns (RenewNodeBillingResponse) {
+    option (heron.v1.access) = ACCESS_SESSION;
+  }
   // 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
   // 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
   rpc BatchUpdateNodeTags(BatchUpdateNodeTagsRequest) returns (BatchUpdateNodeTagsResponse) {
@@ -565,6 +573,14 @@ message UpdateNodeRequest {
   TrafficQuotaMode traffic_quota_mode = 13;
 }
 message UpdateNodeResponse {
+  Node node = 1;
+}
+
+message RenewNodeBillingRequest {
+  int64 node_id = 1;
+}
+message RenewNodeBillingResponse {
+  // 推后并扫描之后的节点。
   Node node = 1;
 }
 
@@ -1532,6 +1548,7 @@ message ExecuteChangeRequest {
     StartUpdateRequest start_update = 20;
     CancelUpdateRequest cancel_update = 21;
     DeleteTagRequest delete_tag = 22;
+    RenewNodeBillingRequest renew_node_billing = 23;
   }
 }
 message Operation {

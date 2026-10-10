@@ -31,7 +31,7 @@ hub 的管理接口是 Connect unary：每个方法都是 `POST $HERON_HUB/heron
 3. 查看 `operation.beforeJson` / `afterJson`。执行相同变更，设 `preview: false`，附上预览返回的 `expectedVersion` 和唯一 `requestId`。版本过时返回 `aborted`，重新读取和预览，不盲目覆盖。
 4. 响应丢失时原样重试同一 requestId；同键不同请求返回 `already_exists`。已提交则 `replayed: true`，不会重复执行。`ListOperations` 按 requestId 查询回执，`operation.id` 是跨重试和恢复稳定的回执标识；已提交节点更新不等于已安装，实际状态用 `GetUpdates` 查询。
 
-首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验）：看到价格与到期信息时一步建档，不必建完再改。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
+首次执行的 `result` 是 protobuf Any，HTTP JSON 带 `@type` 和原业务响应字段。创建节点、轮换凭据、打开注册窗口的秘密仅在首次响应出现，不落审计，不在重试中重放。`createNode` 与 `updateNode.billing` 一样接受 `billing`（价格、币种、周期、到期日、自动续期，同一处校验）：看到价格与到期信息时一步建档，不必建完再改。续费后用 `renewNodeBilling`（`{"nodeId":"42"}`）把到期日按计费周期推后，规则与自动续期相同（未过期恰推后一个周期，已过期步进到不早于 hub 时区的今天）；节点须有周期与到期日，不必开自动续期；推后日期由 hub 计算，不要自己算好再经 `updateNode` 写入。丢失秘密后查询回执，再用新 requestId 显式轮换节点凭据或重开自己的注册窗口；不要重复创建节点。
 
 `ExecuteChange.createNode` 与 `rotateNodeToken` 的 `result.token` 是带 `heron_install_` 前缀的一次性安装凭据，不是运行 token，也不是管理接口的 `HERON_TOKEN`。在目标主机用 `heron-agent register --hub URL --key KEY --config PATH` 注册；它向 `POST /heron.v1.AgentService/Register` 发送 `{"key":"安装凭据"}`，用返回的运行 `token` 写入配置。直接调用 Register 时由请求体 key 授权，不需要管理 bearer。认领保留节点 ID、名称和公开范围，不消费窗口名额；安装凭据不能 Report，运行 token 只能作为 Report 的 bearer，不能再次 Register。
 

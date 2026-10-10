@@ -78,6 +78,9 @@ const (
 	AdminServiceCreateNodeProcedure = "/heron.v1.AdminService/CreateNode"
 	// AdminServiceUpdateNodeProcedure is the fully-qualified name of the AdminService's UpdateNode RPC.
 	AdminServiceUpdateNodeProcedure = "/heron.v1.AdminService/UpdateNode"
+	// AdminServiceRenewNodeBillingProcedure is the fully-qualified name of the AdminService's
+	// RenewNodeBilling RPC.
+	AdminServiceRenewNodeBillingProcedure = "/heron.v1.AdminService/RenewNodeBilling"
 	// AdminServiceBatchUpdateNodeTagsProcedure is the fully-qualified name of the AdminService's
 	// BatchUpdateNodeTags RPC.
 	AdminServiceBatchUpdateNodeTagsProcedure = "/heron.v1.AdminService/BatchUpdateNodeTags"
@@ -278,6 +281,12 @@ type AdminServiceClient interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——从当前到期日起按周期步进到
+	// 不早于 hub 时区（--timezone）的今天为止，未过期的节点恰好推后一个周期，已过期多个周期的一次跳过；日号超过目标月
+	// 天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
+	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
+	RenewNodeBilling(context.Context, *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error)
 	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
 	// 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
 	BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error)
@@ -515,6 +524,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			httpClient,
 			baseURL+AdminServiceUpdateNodeProcedure,
 			connect.WithSchema(adminServiceMethods.ByName("UpdateNode")),
+			connect.WithClientOptions(opts...),
+		),
+		renewNodeBilling: connect.NewClient[v1.RenewNodeBillingRequest, v1.RenewNodeBillingResponse](
+			httpClient,
+			baseURL+AdminServiceRenewNodeBillingProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("RenewNodeBilling")),
 			connect.WithClientOptions(opts...),
 		),
 		batchUpdateNodeTags: connect.NewClient[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse](
@@ -857,6 +872,7 @@ type adminServiceClient struct {
 	listNodes                *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
 	createNode               *connect.Client[v1.CreateNodeRequest, v1.CreateNodeResponse]
 	updateNode               *connect.Client[v1.UpdateNodeRequest, v1.UpdateNodeResponse]
+	renewNodeBilling         *connect.Client[v1.RenewNodeBillingRequest, v1.RenewNodeBillingResponse]
 	batchUpdateNodeTags      *connect.Client[v1.BatchUpdateNodeTagsRequest, v1.BatchUpdateNodeTagsResponse]
 	deleteNode               *connect.Client[v1.DeleteNodeRequest, v1.DeleteNodeResponse]
 	rotateNodeToken          *connect.Client[v1.RotateNodeTokenRequest, v1.RotateNodeTokenResponse]
@@ -995,6 +1011,11 @@ func (c *adminServiceClient) CreateNode(ctx context.Context, req *connect.Reques
 // UpdateNode calls heron.v1.AdminService.UpdateNode.
 func (c *adminServiceClient) UpdateNode(ctx context.Context, req *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error) {
 	return c.updateNode.CallUnary(ctx, req)
+}
+
+// RenewNodeBilling calls heron.v1.AdminService.RenewNodeBilling.
+func (c *adminServiceClient) RenewNodeBilling(ctx context.Context, req *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error) {
+	return c.renewNodeBilling.CallUnary(ctx, req)
 }
 
 // BatchUpdateNodeTags calls heron.v1.AdminService.BatchUpdateNodeTags.
@@ -1307,6 +1328,12 @@ type AdminServiceHandler interface {
 	// 整体替换可编辑字段（名称、是否公开、备注、周期重置日、离线宽限期、计费与到期、国家、标签、维护状态）。计费字段有变化时，
 	// 返回之前按新值做一次到期扫描（自动续期推后、到期规则评估），响应里的到期日与 days_left 是扫描之后的值。
 	UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error)
+	// 把节点的到期日按计费周期推后，用于"已续费"：与自动续期同一推后规则（§9.4）——从当前到期日起按周期步进到
+	// 不早于 hub 时区（--timezone）的今天为止，未过期的节点恰好推后一个周期，已过期多个周期的一次跳过；日号超过目标月
+	// 天数时钳到月末。不要求开着自动续期。节点没有周期或没有到期日返回 InvalidArgument 并点名缺的字段；hub 读到的周期
+	// 与到期日在写入时已被并发修改返回 FailedPrecondition，刷新后重试。写入后与 UpdateNode 一样做一次到期扫描，
+	// 响应里的到期日与 days_left 是扫描之后的值。API token 经 ExecuteChange 的 renew_node_billing 调用。
+	RenewNodeBilling(context.Context, *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error)
 	// 原子修改指定节点的标签关联，不覆盖其它标签或节点字段；成功时同步刷新探测与告警的动态覆盖。
 	// 任一节点不存在返回 NotFound；标签超限返回 InvalidArgument，探测任务超限返回 ResourceExhausted，整批回滚。
 	BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error)
@@ -1540,6 +1567,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		AdminServiceUpdateNodeProcedure,
 		svc.UpdateNode,
 		connect.WithSchema(adminServiceMethods.ByName("UpdateNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminServiceRenewNodeBillingHandler := connect.NewUnaryHandler(
+		AdminServiceRenewNodeBillingProcedure,
+		svc.RenewNodeBilling,
+		connect.WithSchema(adminServiceMethods.ByName("RenewNodeBilling")),
 		connect.WithHandlerOptions(opts...),
 	)
 	adminServiceBatchUpdateNodeTagsHandler := connect.NewUnaryHandler(
@@ -1896,6 +1929,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceCreateNodeHandler.ServeHTTP(w, r)
 		case AdminServiceUpdateNodeProcedure:
 			adminServiceUpdateNodeHandler.ServeHTTP(w, r)
+		case AdminServiceRenewNodeBillingProcedure:
+			adminServiceRenewNodeBillingHandler.ServeHTTP(w, r)
 		case AdminServiceBatchUpdateNodeTagsProcedure:
 			adminServiceBatchUpdateNodeTagsHandler.ServeHTTP(w, r)
 		case AdminServiceDeleteNodeProcedure:
@@ -2077,6 +2112,10 @@ func (UnimplementedAdminServiceHandler) CreateNode(context.Context, *connect.Req
 
 func (UnimplementedAdminServiceHandler) UpdateNode(context.Context, *connect.Request[v1.UpdateNodeRequest]) (*connect.Response[v1.UpdateNodeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.UpdateNode is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) RenewNodeBilling(context.Context, *connect.Request[v1.RenewNodeBillingRequest]) (*connect.Response[v1.RenewNodeBillingResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("heron.v1.AdminService.RenewNodeBilling is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) BatchUpdateNodeTags(context.Context, *connect.Request[v1.BatchUpdateNodeTagsRequest]) (*connect.Response[v1.BatchUpdateNodeTagsResponse], error) {

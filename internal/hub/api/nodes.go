@@ -288,6 +288,58 @@ func (s *Service) UpdateNode(ctx context.Context, req *connect.Request[heronv1.U
 	return connect.NewResponse(&heronv1.UpdateNodeResponse{Node: nodeProto(n, s.today())}), nil
 }
 
+// RenewNodeBilling 是"已续费"（§9.4）。推后的日期只由 alert.RenewedExpiry 算出，与自动续期共用步进与月末钳制；
+// 今天是 hub 时区的今天（s.today），与同一响应里的 days_left 同一口径。写回经 store.RenewNodeBilling 的条件写：
+// 这里读到节点到写入之间计费若被改过（并发的 UpdateNode、日界扫描的自动续期），条件不成立、什么都不写，回答
+// FailedPrecondition，调用方刷新后按新值再决定是否续费。写入后与 UpdateNode 改计费一样立刻扫描一次（§9.2），到期
+// 告警在续费后即恢复；修改已提交，扫描失败只记日志，日界扫描会补上。不经 nodeops：只写到期日一列，不碰流量账本与
+// 标签作用域，nodeops.mu 守护的不变式与它无关。
+func (s *Service) RenewNodeBilling(ctx context.Context, req *connect.Request[heronv1.RenewNodeBillingRequest]) (*connect.Response[heronv1.RenewNodeBillingResponse], error) {
+	id := req.Msg.GetNodeId()
+	n, err := s.store.GetNode(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, notFound(id)
+	}
+	if err != nil {
+		s.log.Error("reading node for renewal failed", "err", err)
+		return nil, internalError("reading node for renewal failed")
+	}
+	to, err := alert.RenewedExpiry(n.Billing, s.today())
+	switch {
+	case errors.Is(err, alert.ErrRenewNoCycle):
+		return nil, invalid("billing.billing_cycle: node %d has no billing cycle to renew by; set one with UpdateNode first", id)
+	case errors.Is(err, alert.ErrRenewNoExpiry):
+		return nil, invalid("billing.expires_on: node %d has no expiry date to renew from; set one with UpdateNode first", id)
+	case err != nil:
+		// 写入口都校验日期，读不懂的值只可能来自手改的库：请求本身没错，是节点的当前状态不能续费。
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("billing.expires_on: node %d stores %q, not a YYYY-MM-DD date; correct it with UpdateNode first", id, n.Billing.ExpiresOn))
+	}
+	err = s.store.RenewNodeBilling(ctx, id, n.Billing.Cycle, n.Billing.ExpiresOn, to)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return nil, notFound(id)
+	case errors.Is(err, store.ErrPrecondition):
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	case err != nil:
+		// 类型化变更的预览、重放与拒绝由 runChange 按 Change.Err 回答，这里的返回值不影响它们。
+		s.log.Error("renewing node billing failed", "err", err)
+		return nil, internalError("renewing node billing failed")
+	}
+	s.log.Info("node billing renewed", "node", id, "cycle", string(n.Billing.Cycle), "from", n.Billing.ExpiresOn, "to", to)
+	if err := s.alerts.SweepExpiry(context.WithoutCancel(ctx)); err != nil {
+		s.log.Error("expiry sweep after node renewal failed", "node", id, "err", err)
+	}
+	n, err = s.store.GetNode(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, notFound(id)
+	}
+	if err != nil {
+		s.log.Error("reading renewed node failed", "err", err)
+		return nil, internalError("reading renewed node failed")
+	}
+	return connect.NewResponse(&heronv1.RenewNodeBillingResponse{Node: nodeProto(n, s.today())}), nil
+}
+
 // DeleteNode 返回成功同时意味着持久化删除完成与进程内状态清除（见 nodeops.Service.Delete）。
 func (s *Service) DeleteNode(ctx context.Context, req *connect.Request[heronv1.DeleteNodeRequest]) (*connect.Response[heronv1.DeleteNodeResponse], error) {
 	err := s.nodes.Delete(ctx, req.Msg.GetId())

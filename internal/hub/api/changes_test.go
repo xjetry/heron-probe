@@ -1111,6 +1111,9 @@ var changeExpectations = map[string]struct {
 	"cancel_update": {store.ActionCancelUpdate, func(f changeFixture) *heronv1.ExecuteChangeRequest {
 		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_CancelUpdate{CancelUpdate: &heronv1.CancelUpdateRequest{NodeId: f.other, Id: "queued-task"}}}
 	}},
+	"renew_node_billing": {store.ActionRenewNodeBilling, func(f changeFixture) *heronv1.ExecuteChangeRequest {
+		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_RenewNodeBilling{RenewNodeBilling: &heronv1.RenewNodeBillingRequest{NodeId: f.node}}}
+	}},
 	"delete_tag": {store.ActionDeleteTag, func(changeFixture) *heronv1.ExecuteChangeRequest {
 		return &heronv1.ExecuteChangeRequest{Change: &heronv1.ExecuteChangeRequest_DeleteTag{DeleteTag: &heronv1.DeleteTagRequest{Name: "fixture-tag"}}}
 	}},
@@ -1126,7 +1129,9 @@ func TestExecuteChangeCoversEveryOneofField(t *testing.T) {
 	var f changeFixture
 	f.node, _ = h.createNode(t, "target")
 	f.other, _ = h.createNode(t, "queued")
-	h.update(t, &heronv1.UpdateNodeRequest{Id: f.node, Name: "target", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Tags: []string{"fixture-tag"}})
+	// 带周期与到期日：renew_node_billing 的预览要走到写边界，没有这两项的节点在 handler 里就被拒绝。
+	h.update(t, &heronv1.UpdateNodeRequest{Id: f.node, Name: "target", TrafficResetDay: 1, OfflineGraceS: proto.Uint32(0), Tags: []string{"fixture-tag"},
+		Billing: &heronv1.Billing{BillingCycle: heronv1.BillingCycle_BILLING_CYCLE_MONTHLY, ExpiresOn: "2026-03-01"}})
 	saved, err := h.admin.SaveProbeTask(t.Context(), connect.NewRequest(&heronv1.SaveProbeTaskRequest{Task: validProbeTask(), NodeIds: []int64{f.node}}))
 	if err != nil {
 		t.Fatal(err)
