@@ -44,6 +44,45 @@ test('注册命令复制与移动端布局', async ({ page, context, browserName
   await expect(page.getByRole('button', { name: '复制 wget 命令' })).toHaveCount(0);
 });
 
+// 覆盖地址存在真实浏览器的 localStorage 里：重载页面后再开窗口仍沿用，不合法的输入不覆盖它，清空即回到当前域名。
+// 注册 key 只在开启的响应里出现一次，重载后要关掉再开才重新看到命令；窗口是全库共享的状态，开着会让后面的用例
+// 点不了"开启接入窗口"，所以由 hub fixture 在拆除阶段关掉，用例中途失败也不留下开着的窗口。
+test('安装命令的 Hub 连接地址只存浏览器，重载后沿用', async ({ page, hub }) => {
+  hub.atEnd('CloseRegisterWindow', async () => must(await hub.rpc(AdminService.method.closeRegisterWindow, {})));
+  const openWindow = async () => {
+    await page.getByRole('button', { name: '开启接入窗口' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '开启', exact: true }).click();
+    await expect(page.getByLabel('curl 安装命令')).toBeVisible();
+  };
+  await page.goto('/admin/login');
+  await login(page);
+  await page.goto('/admin/register');
+  await openWindow();
+  const origin = new URL(page.url()).origin;
+  const hubInput = page.getByRole('textbox', { name: 'Hub 连接地址' });
+  await expect(hubInput).toHaveAttribute('placeholder', origin);
+  await expect(page.getByLabel('curl 安装命令')).toContainText(`--hub ${origin} --key `);
+  await hubInput.fill('https://heron-panel.example:28080/');
+  await expect(page.getByLabel('curl 安装命令')).toContainText('--hub https://heron-panel.example:28080 --key ');
+  await expect(page.getByLabel('wget 安装命令')).toContainText('--hub https://heron-panel.example:28080 --key ');
+  await hubInput.fill('https://heron-panel.example:28080/admin');
+  await expect(page.getByRole('alert')).toContainText('Hub 连接地址须为');
+  await expect(page.getByLabel('curl 安装命令')).toHaveCount(0);
+  await expect(page.getByLabel('wget 安装命令')).toHaveCount(0);
+
+  await page.reload();
+  await page.getByRole('button', { name: '关闭接入窗口' }).click();
+  await expect(page.getByText('当前没有开启的接入窗口。')).toBeVisible();
+  await openWindow();
+  await expect(hubInput).toHaveValue('https://heron-panel.example:28080');
+  await expect(page.getByLabel('curl 安装命令')).toContainText('--hub https://heron-panel.example:28080 --key ');
+  await hubInput.fill('');
+  await expect(page.getByLabel('curl 安装命令')).toContainText(`--hub ${origin} --key `);
+  expect(await page.evaluate(() => localStorage.getItem('heron-install-hub'))).toBeNull();
+  await page.getByRole('button', { name: '关闭接入窗口' }).click();
+  await expect(page.getByRole('button', { name: '复制 curl 命令' })).toHaveCount(0);
+});
+
 test('后台明暗、双栈、编辑与计费、移动导航和键盘交互', async ({ page, context, browserName, hub }, testInfo) => {
   const ids: bigint[] = [];
   await page.emulateMedia({ reducedMotion: 'reduce' });
