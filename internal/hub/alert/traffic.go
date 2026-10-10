@@ -48,9 +48,11 @@ func trafficSummary(n store.Node, r store.AlertRule, o TrafficObservation, tr *s
 		}
 		return fmt.Sprintf("节点 %s 本周期流量用量 %.2f%% 已低于阈值 %.2f%%（规则 %s）", n.Name, o.Percent, r.Threshold, r.Name)
 	}
-	mode := map[string]string{"sum": "收+发", "rx": "只收", "tx": "只发", "max": "收发取大者"}[n.TrafficQuotaMode]
-	return fmt.Sprintf("节点 %s 本周期流量已用 %.2f%%（%s / %s，%s，规则 %s）", n.Name, o.Percent, quotaBytesText(o.UsedBytes), quotaBytesText(o.QuotaBytes), mode, r.Name)
+	return fmt.Sprintf("节点 %s 本周期流量已用 %.2f%%（%s / %s，%s，规则 %s）", n.Name, o.Percent, quotaBytesText(o.UsedBytes), quotaBytesText(o.QuotaBytes), quotaModeText[n.TrafficQuotaMode], r.Name)
 }
+
+// quotaModeText 是配额口径在通知文案里的写法，流量告警与流量报告共用。
+var quotaModeText = map[string]string{"sum": "收+发", "rx": "只收", "tx": "只发", "max": "收发取大者"}
 
 func (e *Engine) SweepTraffic(ctx context.Context) error {
 	e.writeMu.Lock()

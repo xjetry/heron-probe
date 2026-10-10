@@ -427,8 +427,10 @@ func (q *Queue) retryAfterFailure(ctx context.Context, delay *time.Duration) err
 // 渠道在批次待发期间被改成 Webhook 时仍按合并文案发一次请求（Node 为逐个列出的节点名，Value 为 0）——"一个批次
 // 一次发送"是尝试次数与结果能整批记账的前提，优先于模板字段的逐事件含义。
 //
-// 系统事件（登录、备份）的标签与种类按 transition 给出（store.SystemEventKind），不按 0/0 推断。它们的批次只有这一个
-// 事件：写侧每个渠道新开一批（store.systemTargets），Engine 只把告警转换并进它自己开的批次。
+// 系统事件（登录、备份、流量报告）的标签与种类按 transition 给出（store.SystemEventKind），不按 0/0 推断。它们的批次
+// 只有这一个事件：写侧每个渠道新开一批（store.systemTargets），Engine 只把告警转换并进它自己开的批次——所以登录通知与
+// 流量报告发往同一个渠道也各发一条，种类与正文各是各的。正文就是落库的摘要：流量报告的摘要是整条报告
+// （TrafficReportText），Telegram 原样发它，Webhook 的 summary 字段是它、kind 与 transition 都是 traffic_report。
 func (q *Queue) message(ctx context.Context, b store.DeliveryBatch) (Message, error) {
 	first := b.Events[0]
 	if kind, ok := store.SystemEventKind(first.Transition); ok {
