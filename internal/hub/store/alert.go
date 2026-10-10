@@ -674,7 +674,8 @@ func (s *Store) SaveAlertRule(ctx context.Context, r AlertRule) (AlertRule, erro
 		}
 		// 基线行只属于自适应基线的规则，且描述的是这条规则的任务（task_fingerprint 只比任务的种类与目标，换成目标相同的
 		// 另一个任务认不出来）：身份变化或不再是自适应基线时随规则一起提交删除。基线窗口与最小样本数不是身份，行沿用，
-		// 引擎在保存后的下一轮重算按新值重算（Engine.SaveRule 标记）。作用域与任务分配收缩留下的行由重算轮次删除。
+		// 引擎在保存后的下一轮重算按新值重算（Engine.SaveRule 标记）。作用域与任务分配收缩留下的行由重算轮次删除
+		// （它只处理启用的规则：停用期间这些行留着，不被评估，规则删除或重新启用后的第一轮重算时消失）。
 		if identityChanged || !r.AdaptiveBaseline() {
 			if _, err := tx.Exec("DELETE FROM alert_baseline WHERE rule_id = ?", r.ID); err != nil {
 				return err
