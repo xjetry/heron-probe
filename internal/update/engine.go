@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -65,6 +66,11 @@ type Engine struct {
 	working     bool
 	maintenance bool
 	ctx         context.Context
+	// log 收任务的状态迁移、取回结果、失败原因与回滚恢复（serve 指向 stderr，systemd 收进 journal）。行只在任务
+	// 推进时产生：一次任务至多走完固定的状态序列（见 transition 与 recover），任务之间串行（submit 拒绝并发任务），
+	// 每个任务要消耗一个新的任务 ID；被拒绝的 submit、状态查询都不记行。行数因此是每个任务的一个小常数乘任务数，
+	// 不需要 agentlog 那样的速率上界。更新器不经手 token，行里没有凭据。
+	log *slog.Logger
 }
 
 type journal struct {
@@ -73,8 +79,11 @@ type journal struct {
 	Restart bool      `json:"restart"`
 }
 
-func newEngine(ctx context.Context, path, role, arch string, choice sourceChoice, keys []ed25519.PublicKey, m machine) (*Engine, error) {
-	e := &Engine{ctx: ctx, path: path, role: role, arch: arch, choice: choice, keys: keys, machine: m, readyTimeout: 90 * time.Second}
+func newEngine(ctx context.Context, log *slog.Logger, path, role, arch string, choice sourceChoice, keys []ed25519.PublicKey, m machine) (*Engine, error) {
+	if log == nil {
+		return nil, errors.New("updater engine needs a logger")
+	}
+	e := &Engine{ctx: ctx, log: log, path: path, role: role, arch: arch, choice: choice, keys: keys, machine: m, readyTimeout: 90 * time.Second}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		var stored journal
@@ -89,6 +98,7 @@ func newEngine(ctx context.Context, path, role, arch string, choice sourceChoice
 		e.restart = stored.Restart
 		e.job = &j
 		if j.Active() {
+			log.Warn("update interrupted; recovering", "task", j.ID, "version", j.Version, "state", j.State)
 			if err = e.recover(); err != nil {
 				return nil, err
 			}
@@ -103,6 +113,7 @@ func newEngine(ctx context.Context, path, role, arch string, choice sourceChoice
 			if err = e.save(*e.job); err != nil {
 				return nil, err
 			}
+			log.Info("update service restarted after interrupted recovery", "task", e.job.ID, "version", e.job.Version)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -165,8 +176,17 @@ func (e *Engine) save(j Job) error {
 	if err = atomicWrite(e.path, b, 0600); err != nil {
 		return err
 	}
+	// 每个状态都经这里持久化，迁移在这一处记行，不会有哪条路径（新任务、推进、恢复、确认）漏记；记在落盘之后，
+	// 日志里的状态都是重启后能读回的状态。
+	prev := e.job
 	e.job = &j
 	e.history = history
+	switch {
+	case prev == nil || prev.ID != j.ID:
+		e.log.Info("update state", "task", j.ID, "version", j.Version, "state", j.State)
+	case prev.State != j.State:
+		e.log.Info("update state", "task", j.ID, "version", j.Version, "from", prev.State, "state", j.State)
+	}
 	return nil
 }
 
@@ -267,7 +287,11 @@ func (e *Engine) run() {
 		}
 		j := *e.job
 		j.Error = boundedError(cause)
-		_ = e.save(j)
+		saveErr := e.save(j)
+		e.log.Error("update failed", "task", j.ID, "version", j.Version, "state", j.State, "error", j.Error)
+		if saveErr != nil {
+			e.log.Error("persist update failure", "task", j.ID, "err", saveErr)
+		}
 	}
 }
 
@@ -277,11 +301,16 @@ func (e *Engine) execute() error {
 	}
 	j := e.status().Job
 	downloadCtx, cancelDownload := context.WithTimeout(e.ctx, e.choice.limit)
+	start := time.Now()
 	a, err := e.choice.src.Fetch(downloadCtx, j.Request, e.role, e.arch)
+	elapsed := time.Since(start)
 	cancelDownload()
 	if err != nil {
 		return err
 	}
+	n := len(a.Sums) + len(a.Signature) + len(a.Archive)
+	e.log.Info("update download complete", "task", j.ID, "version", j.Version, "source", e.choice.name,
+		"bytes", n, "elapsed", roundDuration(elapsed), "bytes_per_second", int64(float64(n)/max(elapsed.Seconds(), 1e-3)))
 	data, err := Accept(e.keys, e.role, e.arch, j.Version, a)
 	if err != nil {
 		return err
@@ -369,6 +398,7 @@ func (e *Engine) ready(ctx context.Context, pid int, version string) error {
 	e.version = version
 	if err := e.machine.Gate(false); err != nil {
 		e.recoveryError = boundedError("clear committed update gate: " + err.Error())
+		e.log.Error("update committed but gate not cleared", "task", j.ID, "version", j.Version, "error", e.recoveryError)
 		return err
 	}
 	return nil
@@ -392,6 +422,7 @@ func (e *Engine) recover() error {
 		if err := e.machine.Restore(); err != nil {
 			return fmt.Errorf("restore backup: %w", err)
 		}
+		e.log.Info("update backup restored", "task", j.ID, "version", j.Version)
 	}
 	e.restart = changed || j.State == "stopping"
 	j.State = "failed"
@@ -410,6 +441,7 @@ func (e *Engine) recover() error {
 		if err := e.machine.Start(ctx); err != nil {
 			return fmt.Errorf("restart original: %w", err)
 		}
+		e.log.Info("update original service restarted", "task", j.ID, "version", j.Version)
 		e.restart = false
 		return e.save(j)
 	}

@@ -71,7 +71,7 @@ func testEngine(t *testing.T, m *fakeMachine, s fakeSource) *Engine {
 
 func testEngineWith(t *testing.T, m *fakeMachine, choice sourceChoice) *Engine {
 	t.Helper()
-	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", choice, testKeys(), m)
+	e, err := newEngine(context.Background(), discardLog(), filepath.Join(t.TempDir(), "state.json"), "hub", "amd64", choice, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestEngineInterruptedRecovery(t *testing.T) {
 			if err := e.save(Job{Request: request(), State: state}); err != nil {
 				t.Fatal(err)
 			}
-			r, err := newEngine(context.Background(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
+			r, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ func TestFailedRollbackCannotConfirmCandidate(t *testing.T) {
 		t.Fatal("rollback intent was not durable")
 	}
 	m.fail = ""
-	restarted, err := newEngine(context.Background(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
+	restarted, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestConsumedTaskCannotReplayAfterAnotherFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitEngine(t, e)
-	reloaded, err := newEngine(context.Background(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
+	reloaded, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestRecoveryStartFailureDoesNotRestoreTwice(t *testing.T) {
 		t.Fatal("expected restart failure")
 	}
 	m.fail = ""
-	if _, err := newEngine(context.Background(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m); err != nil {
+	if _, err := newEngine(context.Background(), discardLog(), e.path, "hub", "amd64", githubChoice(fakeSource{}), testKeys(), m); err != nil {
 		t.Fatal(err)
 	}
 	count := 0
@@ -365,7 +365,7 @@ func TestEngineReportsSource(t *testing.T) {
 
 func TestEngineSourceConfigErrorDisablesUpdates(t *testing.T) {
 	m := &fakeMachine{version: "v0.2.0"}
-	e, err := newEngine(context.Background(), filepath.Join(t.TempDir(), "state.json"), "agent", "amd64",
+	e, err := newEngine(context.Background(), discardLog(), filepath.Join(t.TempDir(), "state.json"), "agent", "amd64",
 		sourceChoice{err: "update source config " + sourceConfigPath + " is unusable: bad"}, testKeys(), m)
 	if err != nil {
 		t.Fatal(err)

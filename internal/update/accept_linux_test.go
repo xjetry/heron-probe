@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/user"
@@ -109,7 +110,7 @@ func TestSystemDaemon(t *testing.T) {
 	if _, err := os.Stat("/var/lib/heron-update-accept"); err != nil {
 		t.Fatal("missing disposable machine marker")
 	}
-	if err := serve(context.Background(), os.Getenv("HERON_UPDATE_ROLE"), acceptanceSource{}, testKeys()); err != nil {
+	if err := serve(context.Background(), os.Getenv("HERON_UPDATE_ROLE"), slog.New(slog.NewTextHandler(os.Stderr, nil)), acceptanceSource{}, testKeys()); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,7 +30,8 @@ func main() {
 	} else if *maintenance {
 		err = update.NewClient(*role).Maintenance(ctx)
 	} else {
-		err = update.Serve(ctx, *role)
+		// stderr 由 systemd 收进 journal：任务的状态迁移与失败原因在 journalctl -u heron-updater-<role> 里可查。
+		err = update.Serve(ctx, *role, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
