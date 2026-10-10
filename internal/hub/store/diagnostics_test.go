@@ -209,7 +209,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 				}
 			}
 		}
-		if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=25"); err != nil {
+		if _, err := db.Exec("DROP TABLE IF EXISTS cleanup_job; UPDATE snapshot_meta SET schema_version=25"); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.Close(); err != nil {

@@ -228,6 +228,7 @@ func TestQueryMetricsRebucketsAndKeepsNoData(t *testing.T) {
 func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
+	seedProbeTasks(t, s, 1)
 	ctx := context.Background()
 	now := clk.Now().Truncate(time.Hour)
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
@@ -300,10 +301,11 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 	if n, err := s.Prune(ctx, r); err != nil || n != 0 {
 		t.Fatalf("second prune = %d %v, want 0 nil", n, err)
 	}
+	// 孤儿节点的行不出现在任何查询结果里（family.live），剩余行按表直接数。
 	for _, node := range []int64{id, orphan} {
-		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60, 0)
-		if err != nil || len(left) != 9 || left[0].TS != now.Unix()-8*86400 {
-			t.Fatalf("probe consumption boundary: node=%d rows=%s err=%v, want 9 from %d", node, formatProbeRows(left), err, now.Unix()-8*86400)
+		left := probeMinuteTS(t, s, node)
+		if len(left) != 9 || left[0] != now.Unix()-8*86400 {
+			t.Fatalf("probe consumption boundary: node=%d ts=%v, want 9 from %d", node, left, now.Unix()-8*86400)
 		}
 	}
 	if err := s.setRollupWatermark(t.Context(), "probe_5m", now.Unix()); err != nil {
@@ -313,11 +315,21 @@ func TestPruneDeletesBeyondRetentionInChunks(t *testing.T) {
 		t.Fatalf("consumed probe prune=%d err=%v, want 2", n, err)
 	}
 	for _, node := range []int64{id, orphan} {
-		left, err := s.QueryProbes(ctx, node, 0, now.Unix()+60, levels[0], 60, 0)
-		if err != nil || len(left) != 8 || left[0].TS != now.Unix()-7*86400 {
-			t.Fatalf("probe retention boundary: node=%d rows=%s err=%v, want 8 from %d", node, formatProbeRows(left), err, now.Unix()-7*86400)
+		left := probeMinuteTS(t, s, node)
+		if len(left) != 8 || left[0] != now.Unix()-7*86400 {
+			t.Fatalf("probe retention boundary: node=%d ts=%v, want 8 from %d", node, left, now.Unix()-7*86400)
 		}
 	}
+}
+
+// probeMinuteTS 按升序列出节点在 probe_1m 里的全部 ts，含孤儿行；查询接口按配置层过滤，看不到孤儿行。
+func probeMinuteTS(t *testing.T, s *Store, node int64) []int64 {
+	t.Helper()
+	ts, err := scanIDs(s.r.QueryContext(t.Context(), "SELECT ts FROM probe_1m WHERE node_id = ? ORDER BY ts", node))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
 }
 
 func TestRetentionValidate(t *testing.T) {
@@ -518,6 +530,7 @@ func TestSumColumnsRoundTripAndRollUp(t *testing.T) {
 func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
+	seedProbeTasks(t, s, 7, 9)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	base := clk.Now().Truncate(time.Hour).Unix()
@@ -590,6 +603,7 @@ func TestProbeRollupIsExactIdempotentAndIndependentOfMetrics(t *testing.T) {
 func TestQueriesReadSelectedFamilyLevel(t *testing.T) {
 	t.Parallel()
 	s, _ := open(t)
+	seedProbeTasks(t, s, 1)
 	ctx := t.Context()
 	id, _, _ := s.CreateNode(ctx, "n", Billing{}, hash(1))
 	// 各级故意写不同的值，避免读错表后又经二次聚合得到相同结果而掩盖路由错误。

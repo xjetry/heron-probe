@@ -670,8 +670,8 @@ task_version=$(jq -r '.version' "$work/ListProbeTasks.json")
 jq -e --arg version "$task_version" --arg icmp "$icmp_task" '(.version | tonumber) > ($version | tonumber) and (.tasks | length) == 1 and .tasks[0].task.id == $icmp' "$work/ListProbeTasks.json" > /dev/null || { echo "FAIL: task deletion not reflected"; cat "$work/ListProbeTasks.json"; exit 1; }
 [ "$(rpc QueryProbes "$probe_body")" = 200 ] || { echo "FAIL: QueryProbes after deletion"; exit 1; }
 echo "probe task version after deletion: $(jq -r '.version' "$work/ListProbeTasks.json")"
-# 删除清单中的任务不删除历史，重启前采集的两个任务仍须可查询。
-jq -e --arg icmp "$icmp_task" --arg tcp "$tcp_task" '([.series[].taskId] | sort) == ([$icmp, $tcp] | sort)' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe history lost"; cat "$work/QueryProbes.json"; exit 1; }
+# 删除任务即对读者消失：它的历史行在清理作业完成前仍在库里，但不出现在查询结果里；留下的任务的历史照常可查。
+jq -e --arg icmp "$icmp_task" '[.series[].taskId] == [$icmp]' "$work/QueryProbes.json" > /dev/null || { echo "FAIL: probe history after deleting a task"; cat "$work/QueryProbes.json"; exit 1; }
 [ "$(rpc GetTraffic '{}')" = 200 ] || { echo "FAIL: GetTraffic after restart"; exit 1; }
 # 总量不因周期滚动清零；agent 已退出，同周期的用量不再变化，跨周期则为零。
 jq -e --arg id "$node1" --arg tx "$tx_before" --argjson before "$traffic_before" '.nodes[] | select(.nodeId == $id) |
@@ -728,6 +728,8 @@ sed -n '/^db_bytes: /d; s/^\([a-z0-9_]*\): [0-9][0-9]*$/\1/p' "$work/stats.txt" 
 [ "$(get traffic)" = 2 ] || { echo "FAIL: traffic rows"; exit 1; }
 [ "$(get node_facts)" = 2 ] || { echo "FAIL: facts count"; exit 1; }
 [ "$(get metric_1m)" -ge 2 ] || { echo "FAIL: no minute rows"; exit 1; }
+# 删掉的那个探测任务登记了一个清理作业；停机前维护循环可能已把它清完，也可能还没轮到，两种都对，多了不对。
+case "$(get cleanup.pending)" in 0|1) ;; *) echo "FAIL: cleanup.pending"; exit 1 ;; esac
 [ "$(get admin)" = 1 ] || { echo "FAIL: admin row"; exit 1; }
 [ "$(get admin_session)" = 0 ] || { echo "FAIL: session not removed by logout"; exit 1; }
 [ "$(grep -c 'node registered' "$work/hub.log")" = 2 ] || { echo "FAIL: registration log count"; exit 1; }

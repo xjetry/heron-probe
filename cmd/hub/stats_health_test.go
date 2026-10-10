@@ -37,18 +37,30 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	task, _, err := st.SaveProbeTask(ctx, &heronv1.ProbeTask{Kind: heronv1.ProbeKind_PROBE_KIND_ICMP, Target: "192.0.2.1", IntervalS: 60, TimeoutMs: 1000}, store.NodeSelector{AllNodes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ts := clk.Now().Add(-time.Hour).Unix()
 	b := metric.NewBucket()
 	b.Add(&heronv1.Metrics{CpuPct: proto.Float64(5)})
 	batch := metric.Batch{
 		Rows:   []metric.Row{{NodeID: node, TS: ts, CoverageStart: ts, Bucket: b}},
-		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: 1, Bucket: &metric.ProbeBucket{Sent: 1}}},
+		Probes: []metric.ProbeRow{{NodeID: node, TS: ts, TaskID: task.Task.Id, Bucket: &metric.ProbeBucket{Sent: 1}}},
 	}
 	if _, err := st.WriteMinuteBatch(ctx, batch); err != nil {
 		t.Fatal(err)
 	}
 	// 只上卷、不清理：CLI 与响应里 rollup 有值、prune 缺失，两种形态都要对上。
 	if err := st.Rollup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// 删一个节点、不跑清理：留下一个待清理作业，两边的 cleanup.pending 都要是 1 而不是零值。
+	gone, _, err := st.CreateNode(ctx, "gone", store.Billing{}, append(make([]byte, 31), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteNode(ctx, gone); err != nil {
 		t.Fatal(err)
 	}
 	plain, hash := auth.NewAPIToken()
@@ -114,13 +126,14 @@ func TestStatsHealthLinesMatchGetStorageStats(t *testing.T) {
 		}
 	}
 	want = append(want, "prune.finished_at: "+orNoneOf(msg.LastPruneAt != nil, msg.GetLastPruneAt()),
-		"rollup.finished_at: "+orNoneOf(msg.LastRollupAt != nil, msg.GetLastRollupAt()))
+		"rollup.finished_at: "+orNoneOf(msg.LastRollupAt != nil, msg.GetLastRollupAt()),
+		fmt.Sprintf("cleanup.pending: %d", msg.GetCleanupPending()))
 	if !slices.Equal(cli, want) {
 		t.Fatalf("CLI health lines:\n%s\nAPI response as lines:\n%s", strings.Join(cli, "\n"), strings.Join(want, "\n"))
 	}
 	// 两边一致之外，内容本身也要是这次造的数据：否则两边一起为空也会相等。
 	for _, line := range []string{fmt.Sprintf("metric_1m.oldest: %d", ts-ts%60), fmt.Sprintf("probe_1m.oldest: %d", ts-ts%60),
-		fmt.Sprintf("rollup.finished_at: %d", clk.Now().Unix()), "prune.finished_at: none", "metric_1h.oldest: none"} {
+		fmt.Sprintf("rollup.finished_at: %d", clk.Now().Unix()), "prune.finished_at: none", "metric_1h.oldest: none", "cleanup.pending: 1"} {
 		if !slices.Contains(cli, line) {
 			t.Errorf("CLI health lines lack %q:\n%s", line, strings.Join(cli, "\n"))
 		}

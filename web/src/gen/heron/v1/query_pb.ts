@@ -317,7 +317,9 @@ export type QueryProbesResponse = Message<"heron.v1.QueryProbesResponse"> & {
   stepS: number;
 
   /**
-   * 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除任务排在现有任务之后、按 task_id 升序。
+   * 每个任务一条，按当前展示顺序；只含窗口内有结果的任务。已删除的任务不出现：删除一提交，它的历史就不再返回，
+   * 库里的残留行由维护循环随后删掉。AdminService 上调用方看不到的任务（受限 token 的范围之外）排在可见任务之后、
+   * 按 task_id 升序。
    *
    * @generated from field: repeated heron.v1.ProbeSeries series = 3;
    */
@@ -349,9 +351,9 @@ export type ProbeSeries = Message<"heron.v1.ProbeSeries"> & {
 
   /**
    * 任务的种类与目标，查询时从任务清单读取；不标注时 kind 为 PROBE_KIND_UNSPECIFIED、target 为空串，
-   * 客户端退回用 task_id 称呼。AdminService.QueryProbes 按任务当前的配置标注：改过目标的任务整段历史按新目标标注，
-   * 已删除的任务不标注。PublicService.QueryProbes 只标注当前分配给被查节点的任务：节点公开即公开它正在探测的目标，
-   * 已从该节点撤下的任务，当前目标不一定被该节点探测过，不标注。
+   * 客户端退回用 task_id 称呼。AdminService.QueryProbes 按调用方可见的任务当前的配置标注：改过目标的任务整段历史按新目标
+   * 标注，调用方看不到的任务不标注（已删除的任务不出现在序列里）。PublicService.QueryProbes 只标注当前分配给被查节点的
+   * 任务：节点公开即公开它正在探测的目标，已从该节点撤下的任务，当前目标不一定被该节点探测过，不标注。
    *
    * @generated from field: heron.v1.ProbeKind kind = 3;
    */

@@ -558,8 +558,9 @@ func (s *Store) MoveNodes(ctx context.Context, ids []int64, position uint32) err
 	})
 }
 
-// DeleteNode 在同一写事务中显式删除节点及从属行；schema 未声明级联外键，
-// 因而清理必须由本函数完成，不依赖连接是否开启外键约束。
+// DeleteNode 在同一写事务中删除节点行与配置层从属行（nodeConfigTables），并登记 kind=node 的清理作业；时序行
+// （nodeHistoryTables）不在这个事务里删，由维护循环分块清理（cleanup.go），事务的大小因此与节点的历史长度无关。
+// schema 未声明级联外键，清理必须由本函数显式完成，不依赖连接是否开启外键约束。
 func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 	return s.writeChange(ctx, ChangeTarget{Action: ActionDeleteNode, ResourceID: id}, func(tx *sql.Tx) error {
 		res, err := tx.Exec("DELETE FROM node WHERE id = ?", id)
@@ -569,12 +570,12 @@ func (s *Store) DeleteNode(ctx context.Context, id int64) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
 		}
-		for _, t := range nodeDependentTables {
+		for _, t := range nodeConfigTables {
 			if _, err := tx.Exec("DELETE FROM "+t+" WHERE node_id = ?", id); err != nil {
 				return err
 			}
 		}
-		return nil
+		return enqueueCleanup(tx, cleanupKindNode, id, 0, s.clk.Now().Unix())
 	})
 }
 

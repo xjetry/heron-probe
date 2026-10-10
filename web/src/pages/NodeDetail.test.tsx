@@ -480,7 +480,8 @@ describe("NodeDetail", () => {
   });
 });
 
-it("探测图每个任务一张图，已删除任务用编号，且与指标查询共用同一窗口", async () => {
+// hub 不标注的序列（受限 token 看不到的任务；已删除的任务不出现在序列里）用编号称呼，也不给对比入口。
+it("探测图每个任务一张图，未标注的任务用编号，且与指标查询共用同一窗口", async () => {
   const windows: { name: string; from: bigint; to: bigint }[] = [];
   renderWithAdmin({ ...defaultImpl,
     listNodes,
@@ -495,8 +496,8 @@ it("探测图每个任务一张图，已删除任务用编号，且与指标查�
   }, [{ path: "/nodes/:id", Component: NodeDetail }], "/nodes/7");
   const active = await screen.findByRole("heading", { name: "ICMP 1.1.1.1" });
   expect(within(active).getByRole("link")).toHaveAttribute("href", "/probes/3/compare");
-  const gone = screen.getByRole("heading", { name: "任务 #9" });
-  expect(within(gone).queryByRole("link")).toBeNull();
+  const unlabeled = screen.getByRole("heading", { name: "任务 #9" });
+  expect(within(unlabeled).queryByRole("link")).toBeNull();
   expect(screen.getAllByTestId("chart")).toHaveLength(12);
   await waitFor(() => expect(windows.filter((w) => w.name === "probes")).toHaveLength(1));
   const m = windows.find((w) => w.name === "metrics")!;

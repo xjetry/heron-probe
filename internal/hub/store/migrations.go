@@ -62,6 +62,38 @@ var migrations = map[int]func(*sql.Tx) error{
 	35: migrateV35,
 	36: execAll(migrationV36Config),
 	37: execAll(migrationV37),
+	38: execAll(append(append([]string{}, migrationV38Config...), migrationV38OrphanTasks...)),
+}
+
+// 清理作业表只在配置层。迁移前删节点是同步删历史的，库里没有节点的孤儿行；删任务却从不删历史，已删任务的行一直
+// 留到保留期。读侧从这一版起按 probe_task 过滤掉它们，迁移给每个这样的任务补登记作业，由维护循环清掉，不再等保留期。
+// 任务 id 沿 (task_id, node_id, ts) 索引（迁移 33 起恒存在）逐个跳读，不扫描全部行。
+var migrationV38OrphanTasks = []string{
+	migrationV38OrphanTaskJobs("probe_1m"),
+	migrationV38OrphanTaskJobs("probe_5m"),
+	migrationV38OrphanTaskJobs("probe_1h"),
+}
+
+func migrationV38OrphanTaskJobs(table string) string {
+	return `INSERT OR IGNORE INTO cleanup_job (kind, node_id, task_id, created_at)
+WITH RECURSIVE seen(id) AS (
+  SELECT min(task_id) FROM ` + table + `
+  UNION ALL
+  SELECT (SELECT min(task_id) FROM ` + table + ` WHERE task_id > seen.id) FROM seen WHERE seen.id IS NOT NULL
+)
+SELECT 'task', 0, id, CAST(strftime('%s', 'now') AS INTEGER) FROM seen WHERE id IS NOT NULL AND id NOT IN (SELECT id FROM probe_task)`
+}
+
+var migrationV38Config = []string{
+	`CREATE TABLE cleanup_job (
+  kind TEXT NOT NULL,
+  node_id INTEGER NOT NULL DEFAULT 0,
+  task_id INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (kind, node_id, task_id)
+) WITHOUT ROWID`,
 }
 
 // 离线变更代数只对读它的那个 hub 进程有意义（hub 启动时先读起点，再加载缓存，见 coordination.go），起点取多少

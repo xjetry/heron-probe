@@ -226,6 +226,9 @@ func TestLightScanCapRetriesStalledTailsOnHistoryPool(t *testing.T) {
 		tailM5  = 10 * 12
 		tailM1  = 10 * 60
 	)
+	for task := uint64(1); task <= tasks; task++ {
+		seedProbeTasks(t, s, task)
+	}
 	lv, _ := LevelByName("1h")
 	from, to := base, base+hours*3600
 	if est := scanEstimate(from, to-1, lv, 64); est > lightScanRows {
@@ -273,7 +276,7 @@ func countLightCounts(events []poolEvent) int {
 }
 
 // 任务更替：节点当前只有 2 个任务（调用方按它估，30 天 1h 级 720 桶 × 2 = 1440 行，在分界之下），窗口里却留着 50 个
-// 历史 task_id 的行。三层（1h 主体 + 5m 尾 + 1m 尾）合计远超 lightScanRows：轻池上只计数、按跨层累计的余量封顶，
+// 历史 task_id 的行（从这个节点撤下、仍存在的任务，历史照常可读；已删任务的行在清理完成前同样被读到，只是不出现在结果里）。三层（1h 主体 + 5m 尾 + 1m 尾）合计远超 lightScanRows：轻池上只计数、按跨层累计的余量封顶，
 // 第三层触顶后回滚，聚合只在历史池执行；结果与同一数据按序列上限估、直接走历史池的结果逐行相同。
 func TestLightScanCapCatchesTaskTurnover(t *testing.T) {
 	t.Parallel()
@@ -292,6 +295,9 @@ func TestLightScanCapCatchesTaskTurnover(t *testing.T) {
 		tailM5  = 6 * 12
 		tailM1  = 12 * 60
 	)
+	for task := uint64(1); task <= tasks; task++ {
+		seedProbeTasks(t, s, task)
+	}
 	lv, _ := LevelByName("1h")
 	from, to := base, base+days*86400
 	if est := scanEstimate(from, to-1, lv, current); est > lightScanRows || scanEstimate(from, to-1, lv, 64) <= lightScanRows {

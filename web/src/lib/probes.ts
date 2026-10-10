@@ -72,7 +72,8 @@ export function taskIdsOf(resp: QueryProbesResponse): bigint[] {
 }
 
 // 序列自带任务的种类与目标（hub 查询时从任务清单读出）。kind 为 UNSPECIFIED 表示 hub 未标注，退回编号；
-// 未标注的原因见 ProbeSeries 的注释：管理端是任务已删除，公开端另含已从该节点撤下的任务，所以不能当成"已删除"显示。
+// 未标注的原因见 ProbeSeries 的注释：管理端是调用方看不到这个任务（受限 token 的范围之外），公开端是任务已从该节点撤下；
+// 已删除的任务根本不出现在序列里，所以未标注不能当成"已删除"显示。
 // hub 的任务准入只放行 PROBE_KINDS 里的种类（probelimit.CheckTask），所以其余取值只会是 UNSPECIFIED。
 export function seriesLabel(s: ProbeSeries): string {
   return s.kind === ProbeKind.UNSPECIFIED ? `任务 #${s.taskId}` : `${kindLabel(s.kind)} ${s.target}`;

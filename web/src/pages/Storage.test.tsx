@@ -58,6 +58,18 @@ it("缺失的读数按各自含义显示：空表、没有水位、从未成功"
   expect(screen.getByText(/上次清理完成/)).toHaveTextContent(`上次清理完成：从未成功；上次上卷完成：${at(1_767_225_000n)}`);
 });
 
+it.each([3n, 0n])("显示待清理作业数 %s，0 也照实显示", async (pending) => {
+  const response = create(GetStorageStatsResponseSchema, { dbBytes: 4096n, cleanupPending: pending });
+  renderWithAdmin({ getStorageStats: async () => response }, routes, "/storage");
+  expect(await screen.findByText(/^待清理的已删除节点与任务：/)).toHaveTextContent(`待清理的已删除节点与任务：${pending}`);
+});
+
+it("旧 hub 没有待清理作业数：不显示，不当成 0", async () => {
+  renderWal();
+  await screen.findByText(/数据库逻辑大小/);
+  expect(screen.queryByText(/待清理的已删除节点与任务/)).toBeNull();
+});
+
 const observedAt = 1_767_230_000n;
 
 // 逻辑大小固定为 4096（显示 4.0 KiB），避免和 WAL 的 0 B 混在同一段文本里。

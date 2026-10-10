@@ -96,6 +96,7 @@ func assertHistoryMinutes(t *testing.T, s *Store, f *family, batch metric.Batch,
 func TestHistoryTailMatchesMinuteTruth(t *testing.T) {
 	t.Parallel()
 	s, clk := open(t)
+	seedProbeTasks(t, s, 7, 9)
 	id, _, err := s.CreateNode(t.Context(), "history", Billing{}, hash(1))
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +162,7 @@ func TestHistoryTailReadsOneSnapshot(t *testing.T) {
 			t.Run(f.name+"/"+lv.Name, func(t *testing.T) {
 				t.Parallel()
 				s, clk := open(t)
+				seedProbeTasks(t, s, 7, 9)
 				id, _, err := s.CreateNode(t.Context(), "snapshot", Billing{}, hash(1))
 				if err != nil {
 					t.Fatal(err)

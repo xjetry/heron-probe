@@ -22,15 +22,17 @@ type TableRows struct {
 // StorageStats 是库的规模与健康读数，GetStorageStats 与 heron-hub stats 都从它取：DBBytes 为
 // page_count × page_size，即数据库的逻辑大小，等于 WAL 检查点之后主文件的大小（检查点之前主文件可能远小于它）；
 // 不含 -wal 与 -shm 文件。Tables 按表名升序。Series 按 metric_1m、5m、1h、probe_1m、5m、1h 的固定顺序。
-// LastPrune、LastRollup 是 maintenance_state 里的完成时刻（Unix 秒），nil 即从未整轮成功过。
+// LastPrune、LastRollup 是 maintenance_state 里的完成时刻（Unix 秒），nil 即从未整轮成功过。CleanupPending 是尚未完成的
+// 清理作业数（cleanup.go）：删除节点或探测任务后登记、复扫为零才删，非零表示还有已删主体的时序行在表里。
 type StorageStats struct {
-	SQLObservedAt int64
-	DBBytes       int64
-	Tables        []TableRows
-	Series        []SeriesHealth
-	LastPrune     *int64
-	LastRollup    *int64
-	WAL           WALObservation
+	SQLObservedAt  int64
+	DBBytes        int64
+	Tables         []TableRows
+	Series         []SeriesHealth
+	LastPrune      *int64
+	LastRollup     *int64
+	CleanupPending int64
+	WAL            WALObservation
 }
 
 // 存储页与 API 读者只需分钟级新鲜度。成功计算之间至少空出此窗口，让耗时 S 的整库
@@ -257,6 +259,9 @@ func (s *Store) computeStorageStats(ctx context.Context) (StorageStats, error) {
 	}
 	if at, ok := last[MaintenanceRollup]; ok {
 		out.LastRollup = &at
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM cleanup_job").Scan(&out.CleanupPending); err != nil {
+		return StorageStats{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return StorageStats{}, err

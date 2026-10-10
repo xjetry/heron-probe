@@ -353,6 +353,9 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 	if m, _ := s.FactsHashes(ctx); len(m) != 0 {
 		t.Fatalf("facts survived delete: %v", m)
 	}
+	if _, err := s.CleanupDeleted(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if rows, _ := s.ReadMinuteRows(ctx, id, 0, 1000); len(rows) != 0 {
 		t.Fatalf("metric rows survived delete: %v", rows)
 	}
@@ -360,10 +363,12 @@ func TestDeleteNodeRemovesDependentRows(t *testing.T) {
 
 // keptOnNodeDelete 是带 node_id 列、删节点时按设计保留的表。alert_event 是告警历史，只按保留期
 // （deleteExpiredAlertEvents）清理：节点删了，它当时发生过的告警仍可查（TestDeleteNodeCleansAlertScopeAndState）。
-var keptOnNodeDelete = []string{"alert_event"}
+// cleanup_job 的 node_id 指向已删节点本身，是删节点时登记的待办，作业完成才删。
+var keptOnNodeDelete = []string{"alert_event", "cleanup_job"}
 
-// DeleteNode 遍历共享的 nodeDependentTables；这里逐表写入两节点的行，验证删除确实发生，
-// 且 keptOnNodeDelete 中的历史与另一个节点的行都保留。
+// DeleteNode 在事务里删 nodeConfigTables、登记作业，nodeHistoryTables 由清理作业删；这里逐表写入两节点的行，
+// 验证删除事务只动配置层、清理之后时序行也没了，且 keptOnNodeDelete 中的历史与另一个节点的行都保留。
+// cleanup_job 不预先写：它的行由 DeleteNode 登记、由清理在完成时删，正是要观察的对象。
 // schema 与清单的集合完备性由 TestNodeDependentTablesComplete 校验。
 func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
 	t.Parallel()
@@ -379,25 +384,46 @@ func TestDeleteNodeCoversEveryTableWithNodeID(t *testing.T) {
 		}
 	}
 	for _, table := range tables {
+		if table == "cleanup_job" {
+			continue
+		}
 		for _, id := range []int64{gone, kept} {
 			insertRowFor(t, s, table, id)
+		}
+	}
+	check := func(stage string, want func(table string) int64) {
+		t.Helper()
+		for _, table := range tables {
+			if n := nodeRows(t, s, table, gone); n != want(table) {
+				t.Fatalf("%s: %s has %d rows of the deleted node, want %d", stage, table, n, want(table))
+			}
+			wantKept := int64(1)
+			if table == "cleanup_job" {
+				wantKept = 0
+			}
+			if n := nodeRows(t, s, table, kept); n != wantKept {
+				t.Fatalf("%s: %s has %d rows of the other node, want %d", stage, table, n, wantKept)
+			}
 		}
 	}
 	if err := s.DeleteNode(ctx, gone); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range tables {
-		want := int64(0)
-		if slices.Contains(keptOnNodeDelete, table) {
-			want = 1
+	check("after delete", func(table string) int64 {
+		if slices.Contains(nodeConfigTables, table) {
+			return 0
 		}
-		if n := nodeRows(t, s, table, gone); n != want {
-			t.Fatalf("%s: %d rows of the deleted node, want %d", table, n, want)
-		}
-		if n := nodeRows(t, s, table, kept); n != 1 {
-			t.Fatalf("%s: %d rows of the other node, want 1", table, n)
-		}
+		return 1 // 时序行等清理，alert_event 保留，cleanup_job 是刚登记的作业
+	})
+	if _, err := s.CleanupDeleted(ctx); err != nil {
+		t.Fatal(err)
 	}
+	check("after cleanup", func(table string) int64 {
+		if table == "alert_event" {
+			return 1
+		}
+		return 0
+	})
 }
 
 func tablesWithNodeID(t *testing.T, s *Store) []string {
@@ -680,6 +706,9 @@ func TestDeleteNodeClearsEveryLevel(t *testing.T) {
 		}
 	}
 	if err := s.DeleteNode(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CleanupDeleted(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, tbl := range append(append([]string{}, metricTables...), probeTables...) {

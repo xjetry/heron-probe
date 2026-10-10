@@ -125,7 +125,8 @@ func TestOfflineGenerationSnapshotRestore(t *testing.T) {
 							t.Fatalf("snapshot %s carries hub_coordination (count %d, err %v)", path, tables, err)
 						}
 						if version == 36 {
-							if _, err := db.Exec("UPDATE snapshot_meta SET schema_version=36"); err != nil {
+							// v36 的配置层还没有清理作业表；指标层本来就没有，IF EXISTS 让两层同一写法。
+							if _, err := db.Exec("DROP TABLE IF EXISTS cleanup_job; UPDATE snapshot_meta SET schema_version=36"); err != nil {
 								t.Fatal(err)
 							}
 						}

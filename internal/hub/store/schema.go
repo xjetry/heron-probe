@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/xjetry/heron-probe/internal/hub/metric"
@@ -135,16 +136,26 @@ const ddlTraffic = `CREATE TABLE traffic (
   net_counter_epoch TEXT NOT NULL DEFAULT ''
 )`
 
-// metricTables 按级别从细到粗，供建库、节点从属清单与上卷使用（rollup.go 的 metricFamily.tables，
+// metricTables 按级别从细到粗，供建库、节点从属清单、清理作业与上卷使用（rollup.go 的 metricFamily.tables，
 // 必须与 levels、states 同序同长，上卷按 levels 循环，多出的表不会被上卷也不报错）。新增级别要同步上卷配置，
 // 已有库还需对应的增量迁移。存储统计的行数按 sqlite_master 列表，不读它；存储健康经 families 读它。
 var metricTables = []string{"metric_1m", "metric_5m", "metric_1h"}
 
-// DeleteNode 与 Restore 共用节点从属清单，显式删除不依赖外键开启或级联行为。
-// alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。
-var nodeDependentTables = append(append([]string{
+// 节点从属行分两份清单，显式删除不依赖外键开启或级联行为。
+//   - nodeConfigTables 是配置层的从属行，DeleteNode 在删 node 行的同一写事务里删完：它们决定节点对读者是否存在、
+//     属于哪些任务与规则，必须与 node 行同时消失。
+//   - nodeHistoryTables 是时序行，体量随保留期增长，DeleteNode 只登记 kind=node 的清理作业（cleanup_job），
+//     由维护循环分块删除（cleanup.go）。作业完成前这些行是孤儿，读侧按配置层判定不让它们出现（rollup.go 的 family.live）。
+//
+// Restore 的孤儿清理遍历两份清单：恢复把 node 表整表替换，孤儿可能没有对应作业（节点在配置快照与指标快照之间被删、
+// 且清理已完成），不能指望作业兜底。node_coverage 在指标层，但它是每节点一行的覆盖起点而不是时序行，与 node 行同删。
+// alert_event 是审计历史，删节点时也保留；系统事件的 node_id=0，不属于节点从属状态。cleanup_job 的 node_id 指向的
+// 正是已删节点，它是待办而不是从属行，两份清单都不含它。
+var nodeConfigTables = []string{
 	"node_facts", "traffic", "probe_task_node", "alert_rule_node", "alert_state", "silence_node", "node_tag", "node_update", "api_token_node", "probe_cert", "probe_cert_presented", "node_coverage",
-}, metricTables...), probeTables...)
+}
+
+var nodeHistoryTables = append(slices.Clone(metricTables), probeTables...)
 
 // schemaStatements 是当前版本的完整 DDL：空库直接建到当前版本，不重放历史。
 func schemaStatements() []string {
@@ -167,8 +178,22 @@ func schemaStatements() []string {
 		ddlAdminSecurity, seedAdminSecurity, ddlProbeTaskTag, ddlProbeTaskTagIndex, ddlAlertRuleTag, ddlAlertRuleTagIndex, ddlNodeUpdate,
 		ddlSilence, ddlSilenceNode, ddlSilenceNodeByNode, ddlSilenceTag, ddlSilenceTagByTag,
 		ddlAPITokenNode, ddlOperation, ddlOperationByOwner, ddlOperationDetailsByTime, ddlProbeCert, ddlProbeCertPresented, ddlNodeCoverage,
-		ddlHubCoordination, seedHubCoordination)
+		ddlHubCoordination, seedHubCoordination, ddlCleanupJob)
 }
+
+// cleanup_job 是删除节点或探测任务后待清的时序行（cleanup.go）：kind 为 'node' 时 node_id 是被删节点、task_id 为 0，
+// 为 'task' 时 task_id 是被删任务、node_id 为 0。作业与删除同一写事务登记（INSERT OR IGNORE，同一主体重复登记是同一份
+// 待办），只在复扫确认该主体在全部时序表里没有剩余行时删除；失败只累加 attempts、记下 last_error，从不放弃——
+// 删掉未完成的作业等于留下无人认领的孤儿行。属于配置层快照：恢复后作业随删除记录一起回来，继续清理。
+const ddlCleanupJob = `CREATE TABLE cleanup_job (
+  kind TEXT NOT NULL,
+  node_id INTEGER NOT NULL DEFAULT 0,
+  task_id INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (kind, node_id, task_id)
+) WITHOUT ROWID`
 
 // hub_coordination 是运行中的 hub 与库外写者（离线子命令）之间的协调状态，不是站点配置，所以不放 setting 表，
 // 也不进任何备份层。offline_generation 是库外写者已提交的写事务计数：带 ExternalWriter 打开的 Store 在每个提交的
@@ -340,7 +365,7 @@ func probeDDL(table string) string {
 ) WITHOUT ROWID`
 }
 
-// probeTables 与 metricTables 同一口径：建库、DeleteNode 与上卷（rollup.go 的 probeFamily.tables，
+// probeTables 与 metricTables 同一口径：建库、节点从属清单、清理作业与上卷（rollup.go 的 probeFamily.tables，
 // 与 levels、states 同序同长）共用。
 var probeTables = []string{"probe_1m", "probe_5m", "probe_1h"}
 

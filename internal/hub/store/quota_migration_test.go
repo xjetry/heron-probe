@@ -67,6 +67,9 @@ func TestTrafficQuotaSnapshotRestore(t *testing.T) {
 							t.Fatal(err)
 						}
 						if path == config {
+							if _, err := db.Exec("DROP TABLE cleanup_job"); err != nil {
+								t.Fatal(err)
+							}
 							for _, column := range []string{"traffic_quota_bytes", "traffic_quota_mode"} {
 								if _, err := db.Exec("ALTER TABLE node DROP COLUMN " + column); err != nil {
 									t.Fatal(err)

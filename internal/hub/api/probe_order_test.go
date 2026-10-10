@@ -122,5 +122,6 @@ func TestProbeDisplayOrderAcrossAPIStorageAndAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	check([]uint64{c, b, d})
-	checkHistory([]uint64{c, b, d, a})
+	// 删除即对读者消失：a 的历史在清理完成前还在库里，两端的历史都不再有它。
+	checkHistory([]uint64{c, b, d})
 }

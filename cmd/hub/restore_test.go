@@ -287,6 +287,7 @@ func TestRestoreHistoricalSnapshotVersions(t *testing.T) {
 			config, metrics := restoreSnapshots(t)
 			cfg := restoreDB(t, config)
 			met := restoreDB(t, metrics)
+			removeV38Config(t, cfg)
 			removeV36Config(t, cfg)
 			removeV35Config(t, cfg)
 			removeV34Config(t, cfg)
@@ -346,6 +347,12 @@ func removeV26Config(t *testing.T, config *sql.DB) {
 // 33 只在指标层的探测表上加了对比索引；拆库读用不到它，回退就是删除三个索引。
 // 34 给 node_facts 加了 execution 与 facts_rev，给三张指标表加了 load1_per_core 的 sum/n。
 // 回填更早的版本号之前必须撤掉，否则配置层的 ADD COLUMN 会撞上重复列。
+// removeV38Config 撤掉清理作业表：38 之前的配置层没有它。
+func removeV38Config(t *testing.T, config *sql.DB) {
+	t.Helper()
+	restoreExec(t, config, "DROP TABLE cleanup_job")
+}
+
 func removeV37Coordination(t *testing.T, db *sql.DB) {
 	t.Helper()
 	restoreExec(t, db, "DROP TABLE hub_coordination")
@@ -410,6 +417,7 @@ func TestRestoreV28ConfigSnapshotAddsDNSServerColumn(t *testing.T) {
 	config, metrics := restoreSnapshots(t)
 	cfg := restoreDB(t, config)
 	restoreExec(t, cfg, "INSERT INTO probe_task (id,kind,target,interval_s,timeout_ms,created_at,all_nodes,sort_order,config_id) VALUES (8,1,'legacy.example',60,1000,0,0,0,x'02020202020202020202020202020202')")
+	removeV38Config(t, cfg)
 	removeV36Config(t, cfg)
 	removeV35Config(t, cfg)
 	removeV34Config(t, cfg)

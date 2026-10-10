@@ -13,8 +13,10 @@ var (
 	selectMinute = metricSelect("metric_1m")
 )
 
-// WriteMinuteBatch 是两族 1m 行的唯一写入口：同一事务里写指标行与探测行，节点存在性
-// 在事务内检查（与 DeleteNode 串行），各族按自己的 5m 水位做冻结检查——两族各自上卷，
+// WriteMinuteBatch 是两族 1m 行的唯一写入口：同一事务里写指标行与探测行，节点存在性与探测行的任务存在性
+// 在事务内检查（与 DeleteNode、DeleteProbeTask 串行）。删除事务提交之后到达的行——ingest 的待重试批次、删除前已累积
+// 的分钟桶——因此一律被拒，已删主体的时序行在删除提交后不再增加，清理作业的复扫（cleanup.go）不会被之后落库的行
+// 推翻。各族按自己的 5m 水位做冻结检查——两族各自上卷，
 // 一族的水位不能替另一族决定是否接受写入。被拒绝的行计数返回并记日志，其余行照常写入。
 // 比较的是已持久化的水位而不是时钟，墙钟回拨或重试旧桶都不能改写已冻结的历史。
 // 按行拒绝的判定都是确定性的（重试同一行必得同一结果）；只有 SQL 错误作为整批错误返回，留给调用方重试。
@@ -36,6 +38,18 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			ok, err := nodeExistsTx(tx, nodeID)
 			if err == nil {
 				existing[nodeID] = ok
+			}
+			return ok, err
+		}
+		existingTasks := map[uint64]bool{}
+		taskExists := func(taskID uint64) (bool, error) {
+			if ok, checked := existingTasks[taskID]; checked {
+				return ok, nil
+			}
+			var ok bool
+			err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM probe_task WHERE id = ?)", int64(taskID)).Scan(&ok)
+			if err == nil {
+				existingTasks[taskID] = ok
 			}
 			return ok, err
 		}
@@ -93,6 +107,13 @@ func (s *Store) WriteMinuteBatch(ctx context.Context, batch metric.Batch) (int, 
 			if !ok {
 				rejected++
 				s.log.Warn("probe row for deleted node dropped", "node", r.NodeID, "task", r.TaskID)
+				continue
+			}
+			if ok, err = taskExists(r.TaskID); err != nil {
+				return err
+			} else if !ok {
+				rejected++
+				s.log.Warn("probe row for deleted task dropped", "node", r.NodeID, "task", r.TaskID)
 				continue
 			}
 			if r.TS < probeUpto {
