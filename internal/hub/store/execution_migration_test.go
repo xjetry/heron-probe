@@ -98,6 +98,7 @@ func TestRestoreV33SnapshotsAddsExecutionColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removeV40Config(t, cfg)
 	removeV39Config(t, cfg)
 	if _, err := cfg.Exec("DROP TABLE cleanup_job; ALTER TABLE node DROP COLUMN traffic_quota_bytes; ALTER TABLE node DROP COLUMN traffic_quota_mode; DROP TABLE probe_cert_presented; ALTER TABLE probe_cert DROP COLUMN config_id; ALTER TABLE probe_task DROP COLUMN cert_spki_sha256; ALTER TABLE probe_task DROP COLUMN config_id; ALTER TABLE node_facts DROP COLUMN execution; ALTER TABLE node_facts DROP COLUMN facts_rev; UPDATE snapshot_meta SET schema_version=33"); err != nil {
 		t.Fatal(err)

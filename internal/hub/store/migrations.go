@@ -64,6 +64,13 @@ var migrations = map[int]func(*sql.Tx) error{
 	37: execAll(migrationV37),
 	38: execAll(append(append([]string{}, migrationV38Config...), migrationV38OrphanTasks...)),
 	39: execAll(migrationV39Config),
+	40: execAll(migrationV40Config),
+}
+
+// v40：节点的手填出口地址（§4.9 出口地址手填）。已有节点都是空串，即照旧显示 agent 探测值。只在配置层。
+var migrationV40Config = []string{
+	`ALTER TABLE node ADD COLUMN ipv4_pin TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE node ADD COLUMN ipv6_pin TEXT NOT NULL DEFAULT ''`,
 }
 
 // v39：rtt 规则的相对基线判定（§9.1）。已有 rtt 规则显式写成固定阈值，库里不以 NULL 代表它；已在 firing 的状态以进入

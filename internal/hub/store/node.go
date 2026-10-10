@@ -8,6 +8,7 @@ import (
 	"time"
 
 	heronv1 "github.com/xjetry/heron-probe/gen/heron/v1"
+	"github.com/xjetry/heron-probe/internal/netaddr"
 	"github.com/xjetry/heron-probe/internal/probelimit"
 )
 
@@ -61,6 +62,8 @@ type NodeEdit struct {
 	Billing           Billing
 	CountryPin        string // 手动指定的国家，空串表示不指定（回落到查得值）
 	Maintenance       bool   // 维护状态（§9.5）
+	// IPv4Pin 与 IPv6Pin 是手填的出口地址，空串即未填。存储层自己裁决取值（UpdateNodeTasks），调用方不必先校验。
+	IPv4Pin, IPv6Pin string
 	// Tags 整体替换节点的标签集合，空即清空。调用方已按 §10 校验每个名字、按 TagFold 去重并限定个数；
 	// 重复的名字会撞 node_tag 的主键而让整次更新失败。
 	Tags []string
@@ -94,6 +97,8 @@ type Node struct {
 	CountryPin string
 	// Maintenance 为真时该节点按维护静默语义（§9.5）暂停告警投递；在线判定不变。
 	Maintenance bool
+	// IPv4Pin 与 IPv6Pin 是管理员手填的出口地址（规范形），空串即未填；显示值见 DisplayNetwork。
+	IPv4Pin, IPv6Pin string
 	// Tags 是节点的标签名（先建的写法），按 TagFold 排序；没有标签时为 nil。
 	Tags []string
 }
@@ -129,14 +134,106 @@ func (n Node) DisplayCountry() (string, CountrySource) {
 	return "", CountryNone
 }
 
+// AddressSource 是出口地址显示值的来源。
+type AddressSource int
+
+const (
+	AddressNone AddressSource = iota
+	AddressDetected
+	AddressManual
+)
+
+// DisplayAddress 是一个地址族的出口地址显示值。Address 只在 State 为 AVAILABLE 时非空。
+type DisplayAddress struct {
+	Address string
+	Source  AddressSource
+	State   heronv1.AddressDetectionState
+}
+
+// DisplayNetwork 是面板与公开页显示的逐族出口地址，下标 0 为 IPv4、1 为 IPv6：手填非空取手填（AVAILABLE），否则取
+// agent 原报 Facts.Network 的该族（状态原样，含 DISABLED），原报没有该族或状态未指定即 AddressNone。这是显示值唯一的
+// 判定，管理端（Node.network）与公开端（PublicNetworkInfo 的投影输入）都经它取值，Facts.Network 本身不被改写。
+//
+// 不变式"AVAILABLE 的地址是该族的公网单播地址"在两个来源各由一处显式检查承载，用的是同一个谓词
+// netaddr.ParsePublicFamily：手填由写入口 UpdateNodeTasks 与快照恢复（validateSnapshotAddressPins）裁决，原报由
+// agentwire.ValidateNetwork 在上报准入、落库与读库时裁决。
+func (n Node) DisplayNetwork() [2]DisplayAddress {
+	pins := [2]string{n.IPv4Pin, n.IPv6Pin}
+	network := n.Facts.GetNetwork()
+	detected := [2]*heronv1.AddressDetection{network.GetIpv4(), network.GetIpv6()}
+	var out [2]DisplayAddress
+	for i := range out {
+		switch {
+		case pins[i] != "":
+			out[i] = DisplayAddress{Address: pins[i], Source: AddressManual, State: heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_AVAILABLE}
+		case detected[i].GetState() != heronv1.AddressDetectionState_ADDRESS_DETECTION_STATE_UNSPECIFIED:
+			out[i] = DisplayAddress{Address: detected[i].GetAddress(), Source: AddressDetected, State: detected[i].GetState()}
+		}
+	}
+	return out
+}
+
+// NetworkDetection 是 hub 让节点的 agent 采用的逐族探测开关：手填非空的族停用探测，空串的族照常探测（§4.9 出口
+// 地址手填）。手填到开关只有这一个推导，ingest 的启动加载（NetworkDetections）与 UpdateNode 提交后的发布都经它。
+func NetworkDetection(ipv4Pin, ipv6Pin string) *heronv1.NetworkDetection {
+	return &heronv1.NetworkDetection{SkipIpv4: ipv4Pin != "", SkipIpv6: ipv6Pin != ""}
+}
+
+// AddressPinError 是手填的出口地址不是该族的公网单播地址。IPv4 指出是哪一族，Got 是原文；字段路径与文案由协议层给出。
+type AddressPinError struct {
+	IPv4 bool
+	Got  string
+}
+
+func (e AddressPinError) Error() string {
+	family := "IPv6"
+	if e.IPv4 {
+		family = "IPv4"
+	}
+	return fmt.Sprintf("address pin %q is not a public %s address", e.Got, family)
+}
+
+// canonicalAddressPin 裁决一个手填出口地址：空串是未填，原样返回；否则必须是该族的公网单播地址（不带 zone、不是 IPv4
+// 映射写法），与 agent 自报出口同一个谓词 netaddr.ParsePublicFamily，返回规范形。写入口与快照恢复共用它。
+func canonicalAddressPin(text string, ipv4 bool) (string, error) {
+	if text == "" {
+		return "", nil
+	}
+	address, ok := netaddr.ParsePublicFamily(text, ipv4)
+	if !ok {
+		return "", AddressPinError{IPv4: ipv4, Got: text}
+	}
+	return address.String(), nil
+}
+
+// NetworkDetections 读出每个节点的逐族探测开关（见 NetworkDetection），供 ingest 启动时建立内存态；之后的变化由
+// UpdateNode 提交后发布。没有手填的节点不在结果里：缺失与两族都探测相同。
+func (s *Store) NetworkDetections(ctx context.Context) (map[int64]*heronv1.NetworkDetection, error) {
+	rows, err := s.r.QueryContext(ctx, "SELECT id, ipv4_pin, ipv6_pin FROM node WHERE ipv4_pin <> '' OR ipv6_pin <> ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]*heronv1.NetworkDetection{}
+	for rows.Next() {
+		var id int64
+		var v4, v6 string
+		if err := rows.Scan(&id, &v4, &v6); err != nil {
+			return nil, err
+		}
+		out[id] = NetworkDetection(v4, v6)
+	}
+	return out, rows.Err()
+}
+
 // selectNodes 是节点行唯一的读取语句：node 先在内层 SELECT 上按 (sort_order, id) 算全序名次，再 LEFT JOIN
 // node_facts。窗口函数在内层计算，先于外层 where 过滤——名次属于全部节点，where（标签交集、无标签、公开、
 // 监控范围）只筛行，不重排名次。
 const selectNodes = `SELECT n.id, n.name, n.public, n.note, n.sort_order, n.position, n.created_at, n.last_seen_at, n.traffic_reset_day, n.offline_grace_s,
-	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode,
+	n.price, n.currency, n.billing_cycle, n.expires_on, n.auto_renew, n.last_source, n.country, n.country_ip, n.country_pin, n.maintenance, n.public_remark, n.traffic_quota_bytes, n.traffic_quota_mode, n.ipv4_pin, n.ipv6_pin,
 	f.hostname, f.os, f.kernel, f.arch, f.virtualization, f.cpu_model, f.cpu_cores, f.agent_version, f.icmp_available, f.updated_at, f.network, f.diagnostics, f.execution
 	FROM (SELECT id, name, public, note, sort_order, created_at, last_seen_at, traffic_reset_day, offline_grace_s,
-		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode,
+		price, currency, billing_cycle, expires_on, auto_renew, last_source, country, country_ip, country_pin, maintenance, public_remark, traffic_quota_bytes, traffic_quota_mode, ipv4_pin, ipv6_pin,
 		ROW_NUMBER() OVER (ORDER BY sort_order, id) AS position FROM node) n
 	LEFT JOIN node_facts f ON f.node_id = n.id`
 
@@ -154,7 +251,7 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		var cores, icmp, factsUpdated sql.NullInt64
 		b := &n.Billing
 		if err := rows.Scan(&n.ID, &n.Name, &n.Public, &n.Note, &n.SortOrder, &n.Position, &created, &seen, &n.TrafficResetDay, &grace,
-			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode,
+			&b.Price, &b.Currency, &b.Cycle, &b.ExpiresOn, &b.AutoRenew, &n.LastSource, &n.Country, &n.CountryIP, &n.CountryPin, &n.Maintenance, &n.PublicRemark, &n.TrafficQuotaBytes, &n.TrafficQuotaMode, &n.IPv4Pin, &n.IPv6Pin,
 			&hostname, &os, &kernel, &arch, &virt, &cpuModel, &cores, &agentVersion, &icmp, &factsUpdated, &network, &diagnostics, &execution); err != nil {
 			return nil, err
 		}
@@ -300,16 +397,26 @@ type NodeUpdateResult struct {
 }
 
 // UpdateNodeTasks 在标签替换的同一事务内裁决任务上限、推进版本并读取新覆盖；注册表只发布这份已提交结果。
+// 手填出口地址在这里裁决（canonicalAddressPin）并以规范形写入，取值不合法返回 AddressPinError、什么都不写：节点的写入口
+// 只有这一个（UpdateNode 与 ExecuteChange 都经它），检查放在这里，任何调用方都绕不开。
 func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (result NodeUpdateResult, err error) {
 	if e.TrafficQuotaBytes == 0 {
 		e.TrafficQuotaMode = "sum"
 	}
 	err = s.writeChange(ctx, ChangeTarget{Action: ActionUpdateNode, ResourceID: id}, func(tx *sql.Tx) error {
+		v4, err := canonicalAddressPin(e.IPv4Pin, true)
+		if err != nil {
+			return err
+		}
+		v6, err := canonicalAddressPin(e.IPv6Pin, false)
+		if err != nil {
+			return err
+		}
 		var old Billing
 		var oldQuota uint64
 		var oldMode string
 		var oldDay int
-		err := tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day FROM node WHERE id = ?", id).
+		err = tx.QueryRow("SELECT price, currency, billing_cycle, expires_on, auto_renew, traffic_quota_bytes, traffic_quota_mode, traffic_reset_day FROM node WHERE id = ?", id).
 			Scan(&old.Price, &old.Currency, &old.Cycle, &old.ExpiresOn, &old.AutoRenew, &oldQuota, &oldMode, &oldDay)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -319,8 +426,8 @@ func (s *Store) UpdateNodeTasks(ctx context.Context, id int64, e NodeEdit) (resu
 		}
 		b := e.Billing
 		if _, err := tx.Exec(`UPDATE node SET name = ?, public = ?, note = ?, traffic_reset_day = ?, offline_grace_s = NULLIF(?, 0),
-			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ? WHERE id = ?`,
-			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, id); err != nil {
+			price = ?, currency = ?, billing_cycle = ?, expires_on = ?, auto_renew = ?, country_pin = ?, maintenance = ?, public_remark = ?, traffic_quota_bytes = ?, traffic_quota_mode = ?, ipv4_pin = ?, ipv6_pin = ? WHERE id = ?`,
+			e.Name, e.Public, e.Note, e.TrafficResetDay, e.OfflineGraceS, b.Price, b.Currency, b.Cycle, b.ExpiresOn, b.AutoRenew, e.CountryPin, e.Maintenance, e.PublicRemark, e.TrafficQuotaBytes, e.TrafficQuotaMode, v4, v6, id); err != nil {
 			return err
 		}
 		if err := setNodeTags(tx, id, e.Tags); err != nil {

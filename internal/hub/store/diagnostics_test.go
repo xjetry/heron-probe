@@ -169,6 +169,7 @@ func TestObservabilityMigrationAndOldSnapshotsPreserveUnknown(t *testing.T) {
 			t.Fatal(err)
 		}
 		if path == config {
+			removeV40Config(t, db)
 			removeV39Config(t, db)
 			for _, q := range []string{
 				"ALTER TABLE node DROP COLUMN traffic_quota_bytes", "ALTER TABLE node DROP COLUMN traffic_quota_mode",

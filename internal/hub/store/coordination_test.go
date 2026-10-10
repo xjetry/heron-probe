@@ -126,6 +126,7 @@ func TestOfflineGenerationSnapshotRestore(t *testing.T) {
 						}
 						if version == 36 {
 							if path == config {
+								removeV40Config(t, db)
 								removeV39Config(t, db)
 							}
 							// v36 的配置层还没有清理作业表；指标层本来就没有，IF EXISTS 让两层同一写法。

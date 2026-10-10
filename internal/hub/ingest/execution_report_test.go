@@ -181,6 +181,10 @@ func TestRestoredOldFactsAreRequestedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 迁移 40 的手填出口地址两列同理，否则回填 33 后迁移 40 撞上已有的列。
+	if _, err := raw.Exec("ALTER TABLE node DROP COLUMN ipv4_pin; ALTER TABLE node DROP COLUMN ipv6_pin"); err != nil {
+		t.Fatal(err)
+	}
 	// 迁移 39 的 rtt 相对判定列、fired_at 与 alert_baseline 也要撤回，否则回填 33 后迁移 39 撞上已有的列。
 	if _, err := raw.Exec("DROP TABLE alert_baseline; ALTER TABLE alert_state DROP COLUMN fired_at; ALTER TABLE alert_rule DROP COLUMN rtt_mode; ALTER TABLE alert_rule DROP COLUMN baseline_mode; ALTER TABLE alert_rule DROP COLUMN baseline_window_s; ALTER TABLE alert_rule DROP COLUMN baseline_min_samples; ALTER TABLE alert_rule DROP COLUMN upper_deviation_pct; ALTER TABLE alert_rule DROP COLUMN lower_deviation_pct; ALTER TABLE alert_rule DROP COLUMN cooldown_s; ALTER TABLE alert_rule DROP COLUMN fixed_baseline_ms"); err != nil {
 		t.Fatal(err)

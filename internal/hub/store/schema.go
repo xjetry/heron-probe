@@ -53,7 +53,13 @@ const ddlNode = `CREATE TABLE node (
   -- 至多 100 个码点、不含控制字符），与私有备注 note 并列。列序与迁移 32 的 ADD COLUMN 结果一致。
   public_remark TEXT NOT NULL DEFAULT '',
   traffic_quota_bytes INTEGER NOT NULL DEFAULT 0,
-  traffic_quota_mode TEXT NOT NULL DEFAULT 'sum'
+  traffic_quota_mode TEXT NOT NULL DEFAULT 'sum',
+  -- 管理员手填的出口地址（§4.9 出口地址手填），空串表示未填、显示 agent 探测值。非空即该族的公网单播地址的规范形：
+  -- 唯一的写者 UpdateNodeTasks 用 netaddr.ParsePublicFamily 裁决并写 String()，与 agent 自报出口同一个谓词，
+  -- 显示值"AVAILABLE 的地址是该族公网地址"由此成立。只决定显示值、公开标记与是否让 agent 停探该族，不参与国家查询
+  -- （查询按 last_source）。列序与迁移 40 的 ADD COLUMN 结果一致。
+  ipv4_pin TEXT NOT NULL DEFAULT '',
+  ipv6_pin TEXT NOT NULL DEFAULT ''
 )`
 
 const ddlNodeFacts = `CREATE TABLE node_facts (

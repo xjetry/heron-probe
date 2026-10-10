@@ -486,6 +486,11 @@ func migrateSnapshot(ctx context.Context, db *sql.DB, layer string, version int)
 			if layer == "config" {
 				statements = migrationV39Config
 			}
+		case 40:
+			// 节点的手填出口地址两列在配置层，指标层无变化。
+			if layer == "config" {
+				statements = migrationV40Config
+			}
 		default:
 			return fmt.Errorf("%s snapshot schema_version=%d: no reviewed migration to %d", layer, version, next)
 		}
@@ -610,6 +615,9 @@ func validateSnapshot(ctx context.Context, tx *sql.Tx, layer string, tables []st
 		if err := validateSnapshotCounterEpochs(ctx, tx); err != nil {
 			return 0, err
 		}
+		if err := validateSnapshotAddressPins(ctx, tx); err != nil {
+			return 0, err
+		}
 		var unmatched int
 		if err := tx.QueryRowContext(ctx, `SELECT
 				(SELECT count(*) FROM config.theme_version v WHERE NOT EXISTS(SELECT 1 FROM config.snapshot_theme s WHERE s.theme_id=v.theme_id AND s.digest=v.digest)) +
@@ -651,6 +659,33 @@ func validateSnapshotFacts(ctx context.Context, tx *sql.Tx) error {
 		}
 		if _, err := decodeExecution(execution); err != nil {
 			return fmt.Errorf("config node %d execution: %w", id, err)
+		}
+	}
+	return rows.Err()
+}
+
+// validateSnapshotAddressPins 让恢复进来的手填出口地址与写入口写出的一样：空串或该族公网单播地址的规范形。显示值把
+// 手填当作 AVAILABLE（Node.DisplayNetwork），快照里的值不经 UpdateNodeTasks，这里是它进库前唯一的检查。
+func validateSnapshotAddressPins(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id,ipv4_pin,ipv6_pin FROM config.node")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var pins [2]string
+		if err := rows.Scan(&id, &pins[0], &pins[1]); err != nil {
+			return err
+		}
+		for i, pin := range pins {
+			canonical, err := canonicalAddressPin(pin, i == 0)
+			if err == nil && canonical != pin {
+				err = fmt.Errorf("address pin %q is not in canonical form %q", pin, canonical)
+			}
+			if err != nil {
+				return fmt.Errorf("config node %d %s: %w", id, []string{"ipv4_pin", "ipv6_pin"}[i], err)
+			}
 		}
 	}
 	return rows.Err()
